@@ -1,10 +1,17 @@
 // Headless multiplayer test: boots the real Colyseus server in-process and
-// joins with a real colyseus.js client over WebSocket. Covers (Upgrades A/B/C):
+// joins with a real colyseus.js client over WebSocket. Covers:
 //   - match lifecycle: countdown -> playing after the first join
 //   - movement sync: input intent moves the server-authoritative position
 //   - power-up pickup: steering into one applies a timed effect
 //   - attack cooldown: a rapid second attack is rejected (no reset)
 //   - two-client visibility: both players see each other's state
+//   - automatic reconnection (same session + state after a socket drop)
+//   - GHOST: dead players cannot move / collect / score / attack / win
+//   - ATTACK GATE: swings only work while the match is playing
+//   - RESPAWN: effects cleared, hp restored, spawn invulnerability set
+//   - WIN: gameover only via score/timer with living players; play-again
+//     fully resets state; join-during-gameover auto-restarts an empty room
+//   - HEALTH: /healthz shape, /metrics, static whitelist + cache headers
 // Run: npm test
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -12,6 +19,9 @@ import { Server, WebSocketTransport } from 'colyseus';
 import { Client, CloseCode } from '@colyseus/sdk'; // 0.17 client
 import GameRoom from '../src/server/rooms/GameRoom.js';
 import { WorldState } from '../src/server/schema/StateSchema.js';
+import { SERVER } from '../src/server/config.js';
+import { buildHttpApp, attachHttpLogging } from '../src/server/http.js';
+import { resetRateLimit } from '../src/server/ratelimit.js';
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (cond, timeoutMs = 10000, label = 'condition') => {
@@ -23,10 +33,16 @@ const waitFor = async (cond, timeoutMs = 10000, label = 'condition') => {
   throw new Error('timeout waiting for ' + label);
 };
 
+// Tests join from one IP: raise the per-IP join bucket so the suite is not
+// rate-limited. (The bucket itself is verified by unit-level assertions.)
+SERVER.rateLimit.capacity = 10000;
+
 // Boot the real server on an ephemeral port (same wiring as src/server/index.js).
 const httpServer = http.createServer();
+attachHttpLogging(httpServer);
 const gameServer = new Server({
-  transport: new WebSocketTransport({ server: httpServer })
+  transport: new WebSocketTransport({ server: httpServer }),
+  express: (app) => buildHttpApp(app)
 });
 gameServer.define('game', GameRoom);
 await gameServer.listen(0);
@@ -140,11 +156,322 @@ assert.ok(resumed, 'state flows again after auto-reconnect');
 assert.equal(resumed.name, 'Tester1', 'player state survived the reconnect');
 assert.ok(resumed.score >= 0, 'score carried over');
 
-// Disconnect cleanly (exit=false so the test process survives shutdown).
+// Disconnect the first pair cleanly; later suites boot their own rooms.
 room.leave();
 room2.leave();
+await waitMs(200);
+
+// ============================================================================
+// Helpers for the gameplay-bug suites.
+// ============================================================================
+const roomOf = (r) => [...GameRoom.instances].find((x) => x.roomId === r.roomId);
+const newRoom = async (name) => {
+  const c = new Client(`ws://localhost:${port}`);
+  const r = await c.create('game', { name }, WorldState);
+  await waitFor(() => r.state?.matchState === 'playing', 8000, `${name}: playing phase`);
+  return { c, r };
+};
+const joinRoom = async (r, name) => {
+  const c = new Client(`ws://localhost:${port}`);
+  const r2 = await c.joinById(r.roomId, { name }, WorldState);
+  return { c, r: r2 };
+};
+const half = SERVER.world.size / 2;
+
+// ============================================================================
+// GHOST: a dead player (hp <= 0) is frozen, collects nothing, cannot attack
+// or win, and enemies ignore the corpse. Only the respawn click works.
+// ============================================================================
+{
+  const a = await newRoom('GhostHost');          // living player A
+  const b = await joinRoom(a.r, 'Corpse');       // soon-to-be corpse B
+  await waitFor(() => b.r.state?.players?.size >= 2, 5000, 'both players in room');
+
+  const sr = roomOf(a.r);
+  const aState = () => sr.state.players.get(a.r.sessionId);
+  const bState = () => sr.state.players.get(b.r.sessionId); // SERVER-side (authoritative)
+  const bClient = () => b.r.state.players.get(b.r.sessionId);
+
+  // Isolate: A in one corner, B in the opposite corner, A invulnerable so
+  // contact damage cannot kill the only living player mid-test.
+  aState().x = -half + 3; aState().z = -half + 3;
+  sr.invulnUntil.set(a.r.sessionId, Date.now() + 120000);
+
+  // Kill B (simulated enemy damage).
+  bState().hp = 0;
+  await waitFor(() => bClient().hp === 0, 3000, 'corpse hp 0 synced to client');
+
+  // 1. Frozen: movement input is ignored.
+  bState().x = half - 3; bState().z = half - 3; // settle the corpse corner first
+  await waitMs(120);
+  const bx = bClient().x, bz = bClient().z;
+  b.r.send('input', { dirX: 1, dirZ: 0, attack: false, anim: 'run' });
+  await waitMs(400);
+  assert.equal(bClient().x, bx, 'corpse x unchanged under movement input');
+  assert.equal(bClient().z, bz, 'corpse z unchanged under movement input');
+
+  // 2. Cannot collect orbs: drop one on the corpse, score must stay 0 and
+  //    the orb must NOT be consumed (no respawn teleport).
+  const orb = sr.state.orbs[0];
+  orb.x = bClient().x; orb.z = bClient().z;
+  await waitMs(250);
+  assert.equal(bClient().score, 0, 'corpse gains no orb score');
+  assert.ok(Math.hypot(orb.x - bClient().x, orb.z - bClient().z) < 0.01,
+    'orb is not consumed by the corpse');
+
+  // 3. Cannot pick up power-ups.
+  const pu = sr.state.powerUps[0];
+  pu.x = bClient().x; pu.z = bClient().z; pu.active = true;
+  await waitMs(250);
+  assert.equal(bClient().effects.size, 0, 'corpse gains no power-up effects');
+  assert.equal(pu.active, true, 'power-up not consumed by the corpse');
+
+  // 4. Cannot attack: an enemy in range + in front takes no damage, and no
+  //    cooldown is armed (the swing never happened).
+  const enemy = sr.state.enemies[0];
+  enemy.x = bClient().x + 1; enemy.z = bClient().z;
+  bState().rotY = Math.atan2(enemy.x - bClient().x, enemy.z - bClient().z); // face it
+  const ehp = enemy.hp;
+  b.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+  await waitMs(200);
+  assert.equal(enemy.hp, ehp, 'corpse swing does no damage');
+  assert.equal(bClient().attackCd, 0, 'corpse swing arms no cooldown');
+
+  // 5. Enemies ignore the corpse: they chase the living player (A), not B.
+  enemy.x = bClient().x + 1; enemy.z = bClient().z;
+  const dBefore = Math.hypot(bClient().x - enemy.x, bClient().z - enemy.z); // ~1
+  await waitMs(500);
+  const dAfter = Math.hypot(bClient().x - enemy.x, bClient().z - enemy.z);
+  assert.ok(dAfter > dBefore + 0.4,
+    `enemy left the corpse alone (dist ${dBefore.toFixed(2)} -> ${dAfter.toFixed(2)})`);
+  assert.equal(bClient().hp, 0, 'corpse takes no contact damage');
+  assert.equal(bClient().x, bx, 'corpse not knocked back');
+
+  // 6. RESPAWN: click-to-respawn restores hp, clears effects, sets invuln.
+  //    (Give the corpse a buff first — it must die with it.)
+  bState().effects.set('double', 10000);
+  b.r.send('respawn');
+  await waitFor(() => bClient().hp === 100, 3000, 'corpse respawned to full hp');
+  assert.equal(bClient().effects.size, 0, 'effects cleared on respawn');
+  assert.ok(sr.invulnUntil.get(b.r.sessionId) > Date.now(), 'spawn invulnerability set');
+  assert.equal(bClient().score, 0, 'respawn keeps score (still 0 here)');
+
+  // 7. Cannot win: kill again, hand it the target score — no game over.
+  bState().hp = 0;
+  bState().score = SERVER.match.targetScore;
+  await waitMs(700);
+  assert.equal(b.r.state.matchState, 'playing', 'dead player cannot trigger the win');
+
+  b.r.leave();
+  a.r.leave();
+}
+
+// ============================================================================
+// ATTACK GATE: melee is only valid while matchState === 'playing'.
+// ============================================================================
+{
+  // (a) CONTROL — swing during playing deals damage.
+  const { r } = await newRoom('Gate');
+  const sr = roomOf(r);
+  const p = () => sr.state.players.get(r.sessionId);
+  const enemy = sr.state.enemies[0];
+  enemy.x = p().x + 2; enemy.z = p().z;          // dist 2 < attackRange 2.6
+  p().rotY = Math.atan2(2, 0);                    // +X facing, enemy in front
+  const hp0 = enemy.hp;
+  r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+  await waitFor(() => enemy.hp < hp0, 2000, 'swing during playing deals damage');
+  assert.equal(enemy.hp, hp0 - 1, 'one melee hit during playing');
+  r.leave();
+}
+{
+  // (b) GAME OVER — swing on the results screen does nothing.
+  const { r } = await newRoom('Gate2');
+  const sr = roomOf(r);
+  const p = () => sr.state.players.get(r.sessionId);
+  p().score = SERVER.match.targetScore;
+  await waitFor(() => r.state.matchState === 'gameover', 3000, 'score win');
+  const enemy = sr.state.enemies[0];
+  enemy.x = p().x + 2; enemy.z = p().z;
+  p().rotY = Math.atan2(2, 0);
+  const hp = enemy.hp;
+  r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+  await waitMs(200);
+  assert.equal(enemy.hp, hp, 'swing on the gameover screen does no damage');
+  assert.equal(p().attackCd, 0, 'gameover swing arms no cooldown');
+  r.leave();
+}
+{
+  // (c) COUNTDOWN — swing during 3-2-1 does nothing. Reach the countdown
+  // deterministically: playAgain resets a finished match into countdown.
+  const { r } = await newRoom('Gate3');
+  const sr = roomOf(r);
+  const p = () => sr.state.players.get(r.sessionId);
+  p().score = SERVER.match.targetScore;
+  await waitFor(() => r.state.matchState === 'gameover', 3000, 'gameover for reset');
+  r.send('playAgain');
+  await waitFor(() => r.state.matchState === 'countdown', 3000, 'play again -> countdown');
+  const enemy = sr.state.enemies[0];
+  enemy.x = p().x + 2; enemy.z = p().z;
+  p().rotY = Math.atan2(2, 0);
+  const hp = enemy.hp;
+  r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+  await waitMs(200);
+  assert.equal(enemy.hp, hp, 'swing during countdown does no damage');
+  assert.equal(p().attackCd, 0, 'countdown swing arms no cooldown');
+  r.leave();
+}
+
+// ============================================================================
+// WIN: gameover only via score/timer with living players; play-again fully
+// resets state; join-during-gameover auto-restarts an empty room.
+// ============================================================================
+{
+  // 1. Score win with a living player.
+  const a = await newRoom('Winner');
+  const sr = roomOf(a.r);
+  sr.state.players.get(a.r.sessionId).score = SERVER.match.targetScore;
+  await waitFor(() => a.r.state.matchState === 'gameover', 3000, 'score win ends match');
+  assert.equal(a.r.state.winnerId, a.r.sessionId, 'winner sessionId broadcast');
+  assert.equal(a.r.state.winnerName, 'Winner', 'winner name broadcast');
+
+  // 2. Swing on the gameover screen (also covered above) + play-again reset.
+  const p = () => sr.state.players.get(a.r.sessionId);
+  p().effects.set('shield', 15000);
+  p().hp = 30;
+  a.r.send('playAgain');
+  await waitFor(() => a.r.state.matchState === 'countdown', 3000, 'play again -> countdown');
+  assert.equal(sr.state.winnerId, '', 'winnerId cleared on play again');
+  assert.equal(sr.state.winnerName, '', 'winnerName cleared on play again');
+  assert.equal(p().hp, 100, 'hp restored on play again');
+  assert.equal(p().score, 0, 'score reset on play again');
+  assert.equal(p().effects.size, 0, 'effects cleared on play again');
+  a.r.leave();
+}
+{
+  // 3. Timed mode ending with NO players in the room: guarded winnerId.
+  const prevDuration = SERVER.match.matchDurationSeconds;
+  SERVER.match.matchDurationSeconds = 2;
+  let timedRoom;
+  try {
+    const t = await newRoom('Timer');
+    timedRoom = t;
+    const sr = roomOf(t.r);
+    await t.r.leave(); // all players gone mid-match
+    await waitFor(() => sr.state.players.size === 0, 3000, 'player removed');
+    await waitFor(() => sr.state.matchState === 'gameover', 6000, 'timed end fires');
+    assert.equal(sr.state.winnerId, '', 'timed end with no players -> empty winnerId');
+    assert.equal(sr.state.winnerName, '', '...and empty winnerName');
+    assert.ok(!t.r.state?.winnerId || t.r.state.winnerId === '',
+      'client sees no null winnerId');
+
+    // 4. Join during gameover: an empty gameover room auto-restarts.
+    const late = await joinRoom(t.r, 'Latecomer');
+    await waitFor(() => roomOf(t.r).state.matchState === 'countdown', 3000,
+      'empty gameover room auto-restarts on join');
+    assert.equal(roomOf(t.r).state.winnerId, '', 'auto-restart clears the old winner');
+    assert.equal(roomOf(t.r).state.players.get(late.r.sessionId).hp, 100, 'latecomer at full hp');
+    late.r.leave();
+  } finally {
+    SERVER.match.matchDurationSeconds = prevDuration;
+    timedRoom?.r.leave();
+  }
+}
+
+// ============================================================================
+// HEALTH / OPS: healthz shape, metrics, static whitelist, cache headers.
+// ============================================================================
+{
+  const base = `http://localhost:${port}`;
+
+  // Keep one live player so /healthz + /metrics report non-zero counters.
+  const host = await newRoom('HealthHost');
+
+  const health = await fetch(`${base}/healthz`);
+  assert.equal(health.status, 200, '/healthz status');
+  const hb = await health.json();
+  assert.equal(hb.ok, true, '/healthz ok flag');
+  assert.ok(Number.isInteger(hb.rooms) && hb.rooms >= 1, `/healthz rooms (${hb.rooms})`);
+  assert.ok(Number.isInteger(hb.players) && hb.players >= 1, `/healthz players (${hb.players})`);
+  assert.ok(Number.isFinite(hb.uptime) && hb.uptime >= 0, `/healthz uptime (${hb.uptime})`);
+
+  const metrics = await fetch(`${base}/metrics`);
+  assert.equal(metrics.status, 200, '/metrics status');
+  const mtext = await metrics.text();
+  for (const key of ['opengame_rooms', 'opengame_players', 'opengame_tick_ms', 'opengame_inputs_per_sec']) {
+    assert.ok(mtext.includes(key), `/metrics exposes ${key}`);
+  }
+  host.r.leave();
+
+  // Client boot config injection.
+  const envjs = await fetch(`${base}/env.js`);
+  assert.equal(envjs.status, 200, '/env.js status');
+  const envText = await envjs.text();
+  assert.ok(envText.includes('window.__OPENGAME__'), '/env.js injects the boot config');
+
+  // Static whitelist: index.html + assets + client modules only.
+  const idx = await fetch(`${base}/`);
+  assert.equal(idx.status, 200, 'index.html served');
+  assert.match(idx.headers.get('cache-control') || '', /no-cache/, 'index.html no-cache');
+
+  const glb = await fetch(`${base}/assets/characters/adventurer.glb`);
+  assert.equal(glb.status, 200, 'assets served');
+  assert.match(glb.headers.get('cache-control') || '', /max-age/, 'assets cacheable');
+
+  const schema = await fetch(`${base}/src/server/schema/StateSchema.js`);
+  assert.equal(schema.status, 200, 'shared client/server schema served');
+
+  for (const leaked of ['/package.json', '/package-lock.json', '/README.md',
+    '/node_modules/express/package.json', '/src/server/config.js',
+    '/src/server/rooms/GameRoom.js', '/test/multiplayer.test.mjs']) {
+    const res = await fetch(`${base}${leaked}`);
+    assert.equal(res.status, 404, `${leaked} is NOT exposed`);
+  }
+}
+{
+  // Per-IP join rate limiting: with a tiny bucket, the third join from the
+  // same IP (all test clients share 127.0.0.1) is rejected at onAuth.
+  const prevCapacity = SERVER.rateLimit.capacity;
+  SERVER.rateLimit.capacity = 2;
+  let r1, r2;
+  try {
+    const c1 = new Client(`ws://localhost:${port}`);
+    r1 = await c1.create('game', { name: 'RL1' }, WorldState); // token 1
+    const c2 = new Client(`ws://localhost:${port}`);
+    r2 = await c2.create('game', { name: 'RL2' }, WorldState); // token 2
+    const c3 = new Client(`ws://localhost:${port}`);
+    await assert.rejects(() => c3.create('game', { name: 'RL3' }, WorldState),
+      /too many join attempts/, 'third join from one IP is rate-limited');
+    c3.connection?.close();
+  } finally {
+    SERVER.rateLimit.capacity = prevCapacity;
+    resetRateLimit(); // depleted buckets must not leak into later scenarios
+    r1?.leave();
+    r2?.leave();
+  }
+}
+{
+  // Empty-room cleanup: a room with no players is disposed after the TTL,
+  // so abandoned rooms (including stale gameover ones) cannot pile up.
+  const prevTtl = SERVER.match.emptyRoomTtlMs;
+  SERVER.match.emptyRoomTtlMs = 800;
+  try {
+    const c = new Client(`ws://localhost:${port}`);
+    const r = await c.create('game', { name: 'TTL' }, WorldState);
+    const rid = r.roomId;
+    await r.leave();
+    await waitFor(() => ![...GameRoom.instances].some((x) => x.roomId === rid), 5000,
+      'empty room disposed after TTL');
+  } finally {
+    SERVER.match.emptyRoomTtlMs = prevTtl;
+  }
+}
+
+// Disconnect cleanly (exit=false so the test process survives shutdown).
 await gameServer.gracefullyShutdown(false);
+// The health suite's fetch() left keep-alive sockets open; force-close them
+// so httpServer.close() can complete.
+httpServer.closeAllConnections();
 await new Promise((res) => httpServer.close(res));
 
-console.log(`ok — multiplayer.test.mjs: lifecycle + ${dist.toFixed(2)}u move + ${effectName} pickup + cooldown + reconnect verified`);
+console.log('ok — multiplayer.test.mjs: lifecycle + movement + power-ups + cooldown + reconnect + ghost + attack gate + respawn + win + health verified');
 process.exit(0);

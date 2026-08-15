@@ -1,0 +1,35 @@
+# opengame — app + optional Redis for presence.
+#
+# Redis is OPTIONAL: set REDIS_URL to enable multi-process matchmaking/
+# presence sharing. For a single-process deployment just drop the redis
+# service and the REDIS_URL line.
+services:
+  app:
+    build: .
+    ports:
+      - "2567:2567"
+    environment:
+      PORT: "2567"
+      # Public origin the clients load from. Behind a reverse proxy set this
+      # to the external URL (e.g. https://game.example.com) so /env.js
+      # injects the correct wss:// address and CORS is allowed for it.
+      PUBLIC_URL: "http://localhost:2567"
+      # Uncomment to run multiple app replicas behind a load balancer
+      # (shared matchmaking + room state require presence):
+      # REDIS_URL: "redis://redis:6379"
+      # Low-end clients can disable shadows via this flag (injected to /env.js):
+      # DISABLE_SHADOWS: "true"
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

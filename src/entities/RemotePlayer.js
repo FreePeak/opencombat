@@ -4,6 +4,8 @@
 // per spec). Power-up effects render from PlayerState.effects, and the
 // nametag div (name + HP) is updated by GameScene.
 import * as THREE from 'three';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import { attachSword } from './Sword.js';
 import { CONFIG } from '../config.js';
 
 export default class RemotePlayer {
@@ -13,16 +15,19 @@ export default class RemotePlayer {
 
     this.root = new THREE.Group();
     this.root.scale.setScalar(scale);
-    const mesh = model.clone(true);
+    // SkeletonUtils.clone: skinned GLB — see Player.js for why.
+    this.mesh = skeletonClone(model);
     this.materials = [];
-    mesh.traverse((o) => {
+    this.mesh.traverse((o) => {
       if (!o.isMesh) return;
       o.material = o.material.clone();
       o.material.color.copy(this.baseColor);
       o.castShadow = true;
       this.materials.push(o.material);
     });
-    this.root.add(mesh);
+    this.root.add(this.mesh);
+    // Remote players carry the same sword (melee is a sword slash).
+    this.sword = attachSword(this.mesh);
     scene.add(this.root);
 
     // SHIELD bubble, hidden until the effect is active.
@@ -39,7 +44,7 @@ export default class RemotePlayer {
     this.shieldMesh.visible = false;
     this.root.add(this.shieldMesh);
 
-    this.mixer = new THREE.AnimationMixer(mesh);
+    this.mixer = new THREE.AnimationMixer(this.mesh);
     this.clips = {};
     for (const [name, clipName] of Object.entries(CONFIG.anims.player)) {
       const clip = THREE.AnimationClip.findByName(anims, clipName);

@@ -4,6 +4,8 @@
 // model lerps toward the latest server x/z/rotY like every other player,
 // and power-up effects (shield bubble, double tint) render from state.
 import * as THREE from 'three';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import { attachSword } from './Sword.js';
 import StateMachine from '../fsm/StateMachine.js';
 import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
@@ -26,9 +28,12 @@ export default class Player {
     this.baseColor = new THREE.Color(color);
 
     // Clone of the shared GLB, materials cloned so the tint is per-player.
+    // SkeletonUtils.clone: the GLBs are skinned — Object3D.clone would keep
+    // the skeleton bound to the SOURCE hierarchy's bones (which never get
+    // updated), collapsing the character into nothing.
     this.root = new THREE.Group();
     this.root.scale.setScalar(scale);
-    this.mesh = model.clone(true);
+    this.mesh = skeletonClone(model);
     this.materials = [];
     this.mesh.traverse((o) => {
       if (!o.isMesh) return;
@@ -38,6 +43,9 @@ export default class Player {
       this.materials.push(o.material);
     });
     this.root.add(this.mesh);
+    // Everyone carries a sword: the melee attack is a sword slash and the
+    // GLB ships without a weapon.
+    this.sword = attachSword(this.mesh);
     scene.add(this.root);
 
     // SHIELD power-up bubble: translucent sphere, hidden until the effect.
@@ -100,21 +108,28 @@ export default class Player {
     for (const m of this.materials) m.color.copy(tint);
   }
 
-  /** Called every frame with the fixed dt and the camera (for direction). */
-  update(dt, camera) {
+  /** Called every frame with the fixed dt and the camera (unused: input is
+   *  character-relative, see below). */
+  update(dt, _camera) {
     const k = this.keys;
 
-    // --- Input: camera-relative movement --------------------------------
+    // --- Input: CHARACTER-relative ---------------------------------------
+    // W runs along the current facing, A/D strafe-turn. NOT camera-relative:
+    // the camera rig follows the server yaw, which the server derives from
+    // the movement direction — a camera-relative dir feeds back through
+    // server rotY -> camera orbit -> changed input, steering the player in
+    // unwanted arcs.
     const ix = (k.d.isDown || k.right.isDown ? 1 : 0) - (k.a.isDown || k.left.isDown ? 1 : 0);
     const iz = (k.w.isDown || k.up.isDown ? 1 : 0) - (k.s.isDown || k.down.isDown ? 1 : 0);
     this.moving = ix !== 0 || iz !== 0;
 
-    const fwd = camera.getWorldDirection(new THREE.Vector3());
-    const fl = Math.hypot(fwd.x, fwd.z) || 1;
-    const fx = -fwd.x / fl;           // forward on the ground plane
-    const fz = -fwd.z / fl;
-    this.dirX = -fz * ix + fx * iz;   // right = (-fz, fx), 90° rotated
-    this.dirZ = fx * ix + fz * iz;
+    // Facing/right from the RENDER yaw (matches the server's atan2(dirX,dirZ)
+    // convention, so holding W keeps rotY stable and the run stays straight).
+    const yaw = this.root.rotation.y;
+    const fx = Math.sin(yaw), fz = Math.cos(yaw); // forward
+    const rx = -fz, rz = fx;                      // screen-right
+    this.dirX = fx * iz + rx * ix;
+    this.dirZ = fz * iz + rz * ix;
 
     // --- Swing + FSM ----------------------------------------------------
     this.attackAnimT = Math.max(0, this.attackAnimT - dt);
@@ -141,16 +156,19 @@ export default class Player {
       }
     }
 
-    // --- Render: lerp toward server state + animation -------------------
+    // --- Render: smooth toward server state + animation ------------------
+    // Frame-rate independent exponential smoothing (1 - e^(-k dt)); big
+    // jumps (respawn teleports) snap instead of sliding across the arena.
     const s = this.state;
     if (s) {
-      const lerp = this.moving ? 0.5 : 0.25;
-      this.root.position.x += (s.x - this.root.position.x) * lerp;
-      this.root.position.z += (s.z - this.root.position.z) * lerp;
+      const jump = Math.hypot(s.x - this.root.position.x, s.z - this.root.position.z);
+      const t = jump > 4 ? 1 : 1 - Math.exp(-(this.moving ? 20 : 10) * dt);
+      this.root.position.x += (s.x - this.root.position.x) * t;
+      this.root.position.z += (s.z - this.root.position.z) * t;
       let dy = s.rotY - this.root.rotation.y;
       while (dy > Math.PI) dy -= Math.PI * 2;
       while (dy < -Math.PI) dy += Math.PI * 2;
-      this.root.rotation.y += dy * lerp;
+      this.root.rotation.y += dy * (1 - Math.exp(-18 * dt));
       this.updateEffects(s.effects);
     }
     this.playAnim(this.animName);

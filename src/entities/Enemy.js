@@ -4,6 +4,7 @@
 // when hit, and reports deaths (hp reset + teleport) so the scene can
 // spawn a pooled particle burst + floating damage number.
 import * as THREE from 'three';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { CONFIG } from '../config.js';
 
 export default class Enemy {
@@ -13,7 +14,8 @@ export default class Enemy {
 
     this.root = new THREE.Group();
     this.root.scale.setScalar(scale);
-    const mesh = model.clone(true);
+    // SkeletonUtils.clone: skinned GLB — see Player.js for why.
+    const mesh = skeletonClone(model);
     this.materials = [];
     mesh.traverse((o) => {
       if (!o.isMesh) return;

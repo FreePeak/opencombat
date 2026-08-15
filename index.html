@@ -80,6 +80,25 @@
   </div>
   <div id="loading">loading…</div>
 
+  <!-- Boot watchdog: if the game code (CDN + modules) cannot load at all,
+       show a clear error instead of a stuck "loading…" forever. -->
+  <script>
+    setTimeout(function () {
+      if (window.__OPENGAME_BOOTED) return;
+      var loading = document.getElementById('loading');
+      var login = document.getElementById('login');
+      var err = document.getElementById('login-error');
+      if (loading) loading.style.display = 'none';
+      if (err) {
+        err.textContent = 'Failed to load the game code (CDN unreachable?). Check your connection and refresh.';
+        err.style.display = 'block';
+      }
+      if (login) login.classList.add('visible');
+    }, 20000);
+  </script>
+  <!-- Server-injected runtime config (ws URL, renderer flags) — see src/server/http.js -->
+  <script src="./env.js"></script>
+
   <!-- three.js via ES module importmap, pinned (no bundler, no build step) -->
   <script type="importmap">
   {

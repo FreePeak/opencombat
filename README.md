@@ -11,10 +11,20 @@ everything.
 
 ## Run
 
+Bare (local dev):
+
 ```bash
 cd games/opengame
 npm install
 npm run serve        # server + client on http://localhost:2567
+```
+
+Docker (production-ish):
+
+```bash
+docker compose up --build
+# app on http://localhost:2567 (+ redis container for presence)
+# no docker? same thing: node src/server/index.js
 ```
 
 Open **http://localhost:2567 in two browser tabs** to test multiplayer —
@@ -25,6 +35,38 @@ Tooling: `npm run check` (node --check on every file) and
 For browser-only regressions (schema API misuse, scene wiring errors)
 run the Playwright e2e against a running server:
 `python3 test/browser.test.py`.
+
+## Environment
+
+All optional; the defaults run a single-process game on :2567.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PORT` | `2567` | HTTP + WebSocket port |
+| `PUBLIC_URL` | *(empty)* | Public origin clients load from (e.g. `https://game.example.com`). Injected into `/env.js`; the client connects to its `ws(s)://` twin. Also the only allowed CORS origin. Empty = same-origin only |
+| `DISABLE_SHADOWS` | *(unset)* | `1`/`true` disables shadow maps for low-end clients (injected into `/env.js`) |
+| `REDIS_URL` | *(empty)* | Redis URL → Colyseus `RedisPresence` (multi-process matchmaking). Empty = in-memory presence |
+| `TICK_MS` | `50` | Fixed simulation timestep |
+
+## Deployment notes
+
+- **TLS / WSS**: terminate TLS at a reverse proxy (nginx/Caddy/Traefik) in
+  front of :2567, set `PUBLIC_URL=https://game.example.com`, and proxy both
+  HTTP and the `ws`/`wss` upgrade for `/` (the WebSocket path is the same
+  origin). The client then connects with `wss://` automatically — it never
+  hardcodes a host.
+- **Scaling**: set `REDIS_URL` and run multiple replicas behind a load
+  balancer (presence keeps matchmaking + room state consistent across
+  processes). Health check: `GET /healthz` (used by the Docker healthcheck).
+- **Security defaults**: only `index.html`, `/assets`, `/env.js` and the
+  client modules under `/src` are served — `node_modules/`, `package.json`,
+  server internals, tests and docs all 404. Fresh joins are rate-limited per
+  IP (token bucket at the connection/`onAuth` layer — Colyseus 0.17 routes
+  `/matchmake*` through its own dispatcher, so express middleware cannot see
+  them) and input is validated server-side (see "Server hardening"). CORS is
+  denied for every origin except `PUBLIC_URL`.
+- **Observability**: everything logs as JSON lines; `GET /metrics` exposes
+  Prometheus-style gauges (rooms, players, tick duration, inputs/sec).
 
 ## Controls
 
@@ -48,8 +90,33 @@ clients only render `matchState` + the countdown number.
   Alternatively set `match.matchDurationSeconds` for a timed match (highest
   score wins). Winner + final scores are broadcast; the results overlay has
   a **play again** button that resets orbs/enemies/scores/effects in place
-  and starts a new countdown — same room, same players.
-- Death mid-match is not game over: click to respawn.
+  and starts a new countdown — same room, same players. A timed match that
+  ends with no players left broadcasts an empty winner (never `null`).
+- Death mid-match is not game over: click to respawn. Respawn clears
+  power-up effects, restores full HP and grants 1s spawn invulnerability.
+
+## Design decisions (documented per the production-readiness checklist)
+
+- **Dead players are ghosts-in-reverse**: at `hp <= 0` a player is frozen
+  (movement input ignored), cannot collect orbs/power-ups, cannot attack,
+  is excluded from enemy targeting and cannot trigger the win condition.
+  Only the respawn click works.
+- **Attacks are match-gated**: melee is only valid while
+  `matchState === 'playing'` — no swinging during the countdown or on the
+  game-over screen.
+- **Join during game-over**: a player joining a room where everyone else
+  left gets an instant fresh match (the room resets itself and starts a new
+  countdown). If other players are present, anyone can click PLAY AGAIN.
+- **Room cap**: `match.maxClients` (default 12) — a room never fills
+  without bound. New players get a fresh room instead.
+- **Empty-room cleanup**: rooms with 0 players are disposed after
+  `match.emptyRoomTtlMs` (default 60s; Colyseus' 1s auto-dispose is
+  disabled so game-over rooms survive for latecomers).
+- **Presence**: single process uses the in-memory presence; set `REDIS_URL`
+  to share matchmaking + room state across processes.
+- **Fixed timestep**: the simulation runs on `tickMs` (50ms) but `dt` is
+  computed from real elapsed time (clock-drift compensation, clamped at
+  0.25s) so effects/movement stay correct under load.
 
 ## Power-ups
 
@@ -106,6 +173,15 @@ lowpass). Mute with **M**; volume persists in localStorage
 - Server hardening: input messages are rate-capped (30/s, excess dropped
   with a warning) and movement deltas are validated (finite, magnitude ≤ 1)
   so a hostile client cannot move faster than the server's own speed.
+  Fresh joins are additionally rate-limited per IP (token bucket,
+  `SERVER.rateLimit`, enforced in the room's `onAuth` — see
+  `src/server/ratelimit.js`), names are sanitized server-side and the
+  leaderboard HTML is escaped client-side — these are security boundaries,
+  not tuning knobs.
+- Resilience: model loading has a timeout with a clear error message; a
+  missing WebGL context or a failed boot surfaces in the login overlay; a
+  watchdog shows an error if the CDN never loads at all; the canvas follows
+  window resizes.
 
 ## Layout
 
@@ -113,34 +189,42 @@ lowpass). Mute with **M**; volume persists in localStorage
 opengame/
 |-- index.html                    # importmap (three) + UMD (colyseus.js) + HUD/overlays
 |-- package.json                  # serve / check / test scripts
+|-- Dockerfile                    # node:20-alpine, npm ci, healthcheck
+|-- docker-compose.yml            # app + optional redis (presence)
 |-- assets/
 |   |-- characters/adventurer.glb # player model (CC0, Quaternius)
 |   |-- enemies/orc.glb           # enemy model (CC0, Quaternius)
 |   |-- props/tree.glb, rock.glb  # arena props (CC0, Quaternius)
 |   |-- credits/                  # metadata.json + credits.csv (licenses)
 |-- src/
-|   |-- main.js                   # rAF loop, delta clamp, tab-visibility pause
-|   |-- config.js                 # client visuals, camera, effects, renderer knobs
+|   |-- main.js                   # guarded boot: WebGL check, try/catch, rAF loop
+|   |-- config.js                 # client visuals + ws-url fallback chain + shadows flag
 |   |-- network.js                # join (with name), input, respawn, playAgain
 |   |-- audio/SoundManager.js     # procedural WebAudio synth (no files)
 |   |-- effects/
 |   |   |-- ParticlePool.js       # pooled THREE.Points burst system
 |   |   |-- FloatingTextPool.js   # pooled damage-number divs
-|   |-- scenes/GameScene.js       # world, camera rig, match UI, nametags, board
+|   |-- scenes/GameScene.js       # world, camera rig, resize, match UI, nametags, board
 |   |-- entities/
 |   |   |-- Player.js             # local controller: input + FSM + effects
 |   |   |-- RemotePlayer.js       # lerped view + effects + nametag
 |   |   |-- Enemy.js              # visual only — logic is server-side
 |   |-- fsm/                      # StateMachine + Idle/Run (termgame API)
 |   |-- server/
-|   |   |-- index.js              # colyseus Server + express static :2567
-|   |   |-- config.js             # SERVER tunables (authoritative numbers)
+|   |   |-- index.js              # colyseus Server + graceful shutdown :2567
+|   |   |-- config.js             # SERVER tunables + env overrides
+|   |   |-- log.js                # JSON-lines structured logging
+|   |   |-- ratelimit.js          # per-IP token bucket (join flood guard)
+|   |   |-- http.js               # /healthz, /metrics, /env.js, CORS,
+|   |   |                         #   whitelisted static serving
 |   |   |-- schema/StateSchema.js # WorldState/PlayerState/OrbState/...
 |   |   |-- rooms/GameRoom.js     # lifecycle + fixed-timestep simulation
 |-- test/
 |   |-- fsm.test.mjs              # node:assert FSM unit test
 |   |-- multiplayer.test.mjs      # headless: lifecycle, sync, power-ups,
-|   |                             #   cooldown enforcement, reconnect
+|   |                             #   cooldown, reconnect, ghost players,
+|   |                             #   attack gate, respawn, win edge cases,
+|   |                             #   healthz/metrics/static whitelist
 ```
 
 ## Artwork
@@ -159,6 +243,16 @@ skeletal animations (idle/run/attack/hit) played via `THREE.AnimationMixer`.
    applying its timed effect, attack-cooldown rejection (second rapid swing
    does not reset the cooldown), two-client visibility, and automatic
    reconnection after a simulated socket drop (same session + state).
-4. `npm run serve` + curl: the client HTML loads (200), the matchmake
-   endpoint answers (200), the WebSocket upgrade responds (101), and static
-   assets (JS modules, GLBs) are served.
+   Gameplay-bug suites: **GHOST** (hp ≤ 0 → frozen, no pickup/score/attack/
+   win, enemies ignore the corpse), **ATTACK GATE** (countdown/game-over
+   swings deal no damage and arm no cooldown; playing swings do),
+   **RESPAWN** (effects cleared, hp restored, spawn invulnerability set),
+   **WIN** (score win with living players only, timed end with no players
+   broadcasts an empty winner, play-again fully resets state, join during
+   game-over auto-restarts), **HEALTH** (/healthz shape, /metrics keys,
+   static whitelist 404s, cache headers, /env.js injection).
+4. `npm run serve` + curl: the client HTML loads (200, `no-cache`), the
+   matchmake endpoint answers (200), the WebSocket upgrade responds (101),
+   static assets (JS modules, GLBs) are served, `package.json`/`node_modules`
+   return 404, `/healthz` and `/metrics` answer, and SIGTERM shuts the
+   server down cleanly (no "Error: disposing" noise).

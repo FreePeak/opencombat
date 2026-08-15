@@ -1,28 +1,57 @@
 // Bootstrap: one process serves both the game (WebSocket + matchmaking)
-// and the static client files (index.html + assets) over HTTP on the same
-// port, so `npm run serve` is all it takes to play.
+// and the static client files over HTTP on the same port, so `npm run serve`
+// is all it takes to play.
 //
 // Colyseus 0.17 wiring: the Server takes a WebSocketTransport bound to our
 // own http.Server, plus an express callback that configures the transport's
-// express app (matchmaking routes + our static file serving share it).
+// express app (matchmaking routes + health/metrics + static serving share
+// it — see http.js).
+//
+// Graceful shutdown: SIGTERM/SIGINT stop the matchmaker, dispose every room
+// and close the server (gracefullyShutdown(true) also exits the process).
 import http from 'node:http';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import express from 'express';
-import { Server, WebSocketTransport } from 'colyseus';
+import { Server, WebSocketTransport, RedisPresence } from 'colyseus';
 import { SERVER } from './config.js';
+import { buildHttpApp, attachHttpLogging } from './http.js';
 import GameRoom from './rooms/GameRoom.js';
+import { log } from './log.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const clientDir = path.resolve(__dirname, '../..'); // game root: index.html lives there
+const httpServer = http.createServer();
+// Raw request logger: sees every HTTP request, including /matchmake* which
+// express middleware never reaches (Colyseus 0.17 routes those itself).
+attachHttpLogging(httpServer);
 
 const gameServer = new Server({
-  transport: new WebSocketTransport({ server: http.createServer() }),
-  express: (app) => app.use(express.static(clientDir))
+  transport: new WebSocketTransport({ server: httpServer }),
+  express: (app) => buildHttpApp(app),
+  // Presence: Redis when REDIS_URL is set (multi-process deploys share
+  // matchmaking + room state through it); otherwise the in-memory
+  // LocalPresence keeps the single-process default.
+  presence: SERVER.redis.url ? new RedisPresence(SERVER.redis.url) : undefined
 });
 
 gameServer.define('game', GameRoom);
 
 await gameServer.listen(SERVER.port);
-console.log(`[opengame] listening on http://localhost:${SERVER.port}`);
-console.log('[opengame] open http://localhost:' + SERVER.port + ' in two browser tabs to test multiplayer');
+log('server_listening', { port: SERVER.port, publicUrl: SERVER.publicUrl || '(same-origin)', redis: SERVER.redis.url ? 'yes' : 'no' });
+
+// Startup self-check: the express callback must have mounted, otherwise the
+// port answers with Colyseus' default app ("Colyseus 0.17.50" on /) and the
+// browser client silently never loads. Fail fast instead of serving nothing.
+{
+  const res = await fetch(`http://127.0.0.1:${SERVER.port}/`);
+  const body = await res.text();
+  if (!body.includes('<!DOCTYPE html>')) {
+    log('static_serving_broken', { status: res.status, bodyStart: body.slice(0, 40) });
+    console.error('[opengame] static serving is NOT mounted — restart the process');
+    process.exit(1);
+  }
+}
+
+// Graceful shutdown: Colyseus registers its own SIGINT/SIGTERM/SIGUSR2
+// handlers (Server option `gracefullyShutdown`, default true) which dispose
+// rooms, close the transport and exit the process. We only log it — adding
+// our own signal handlers here would double-fire the shutdown.
+gameServer.onBeforeShutdown((err) => {
+  log('shutdown', { reason: err ? 'error' : 'signal', message: err?.message });
+});

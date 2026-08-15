@@ -1,18 +1,34 @@
 // Client-side configuration. The server (src/server/config.js) owns the
 // simulation; this file only mirrors the numbers the client needs for
 // rendering, the camera rig and the HUD. Keep the two in sync by hand.
+//
+// Server URL fallback chain (never hardcode ws://localhost:2567):
+//   1. window.__OPENGAME__.wsUrl  — injected by the server via /env.js
+//      (PUBLIC_URL env var), so deployed clients talk to their own origin;
+//   2. same-origin host           — reverse-proxy deploys (ws(s)://this page);
+//   3. ws://localhost:2567        — local dev default.
+const env = (typeof window !== 'undefined' && window.__OPENGAME__) || {};
+const locationHost = typeof window !== 'undefined' && window.location ? window.location.host : '';
+const wsScheme = typeof window !== 'undefined' && window.location?.protocol === 'https:' ? 'wss' : 'ws';
+const serverUrl = env.wsUrl || (locationHost ? `${wsScheme}://${locationHost}` : 'ws://localhost:2567');
+
 export const CONFIG = {
-  serverUrl: 'ws://localhost:2567',
+  serverUrl,
 
   world: { size: 60 },          // square arena, matches SERVER.world.size
 
-  // Renderer quality knobs (Upgrade F): dpr clamp avoids fill-rate blowups
-  // on retina screens; the shadow map size trades quality for memory.
+  // Renderer quality knobs: dpr clamp avoids fill-rate blowups on retina
+  // screens; shadows can be disabled for low-end clients (DISABLE_SHADOWS
+  // env -> /env.js -> window.__OPENGAME__.shadows).
   renderer: {
     dprMax: 2,
     shadowMapSize: 2048,
-    shadows: true
+    shadows: env.shadows !== false
   },
+
+  // Loading guard: the join click fails with a clear message if the GLB
+  // models (or their CDN) take longer than this.
+  loadTimeoutMs: 15000,
 
   match: {
     countdownSeconds: 3,        // mirror of SERVER.match.countdownSeconds

@@ -35,6 +35,14 @@ export default class GameScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
+    // Window resize: keep the canvas + camera aspect in sync (previously the
+    // canvas was sized once and resizing distorted the view).
+    window.addEventListener('resize', () => {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb); // sky
     this.camera = new THREE.PerspectiveCamera(
@@ -154,7 +162,10 @@ export default class GameScene {
       this.wireRoom();
     } catch (err) {
       console.error(err);
-      this.loginError.textContent = 'cannot reach server — run npm run serve on :2567';
+      const msg = (err && err.message) || '';
+      this.loginError.textContent = msg.includes('timed out')
+        ? `${msg} — check your connection and retry.`
+        : 'cannot reach server — run `npm run serve` on :2567 (or check the URL).';
       this.loginError.style.display = 'block';
     }
     this.joining = false;
@@ -163,11 +174,18 @@ export default class GameScene {
   loadModels() {
     const loader = new GLTFLoader();
     const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
-    return Promise.all([
-      load('assets/characters/adventurer.glb'), // player model (shared)
-      load('assets/enemies/orc.glb'),           // enemy model
-      load('assets/props/tree.glb'),            // arena props
-      load('assets/props/rock.glb')
+    // Timeout guard: an unreachable CDN / dead link must not leave the
+    // client stuck on "loading…" forever (see onJoinClick error surface).
+    const timeout = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('timed out loading models — network too slow or unreachable')), CONFIG.loadTimeoutMs));
+    return Promise.race([
+      Promise.all([
+        load('assets/characters/adventurer.glb'), // player model (shared)
+        load('assets/enemies/orc.glb'),           // enemy model
+        load('assets/props/tree.glb'),            // arena props
+        load('assets/props/rock.glb')
+      ]),
+      timeout
     ]).then(([player, enemy, tree, rock]) => ({
       player: player.scene, playerAnims: player.animations,
       enemy: enemy.scene, enemyAnims: enemy.animations,

@@ -4,9 +4,20 @@
 // knockback. Clients only send input intents — every outcome below is
 // authoritative, including the state transitions (clients just render
 // matchState + countdown).
+//
+// SECURITY BOUNDARIES (do not regress):
+//   - input direction is validated (finite, magnitude clamped to <= 1) — the
+//     server integrates with its own speed, positions never come from clients
+//   - input messages are rate-capped per session (net.maxInputPerSecond)
+//   - per-IP join rate limiting runs in onAuth below (ratelimit.js token
+//     bucket) — the only layer with a trustworthy IP in Colyseus 0.17
+//   - names are sanitized (trim, length cap) and the leaderboard HTML is
+//     escaped client-side — no XSS surface from user input
 import { Room, CloseCode } from 'colyseus';
 import { WorldState, PlayerState, OrbState, PowerUpState, EnemyState } from '../schema/StateSchema.js';
 import { SERVER } from '../config.js';
+import { log, warn } from '../log.js';
+import { takeToken, normalizeIp } from '../ratelimit.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -18,7 +29,21 @@ function nameHash(name) {
 }
 
 export default class GameRoom extends Room {
+  // Hard cap so one room cannot be overloaded (README "Design decisions").
+  maxClients = SERVER.match.maxClients;
+
+  // Live-room registry + observability stats, shared with /healthz + /metrics
+  // and used by the headless test suite to reach authoritative server state.
+  static instances = new Set();
+  static stats = { lastTickMs: 0, inputTimes: [] };
+
   onCreate() {
+    GameRoom.instances.add(this);
+    // Empty-room cleanup is ours (configurable TTL, documented in README);
+    // disable Colyseus' 1s auto-dispose so a gameover room survives for
+    // latecomers and the matchmaker reuse logic stays deterministic.
+    this.autoDispose = false;
+
     this.setState(new WorldState());
 
     // Per-session scratch state, kept out of the schema (no reason to
@@ -34,6 +59,7 @@ export default class GameRoom extends Room {
 
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
+    this.lastActiveAt = Date.now(); // empty-room TTL anchor
 
     this.spawnOrbs();
     this.spawnEnemies();
@@ -44,8 +70,30 @@ export default class GameRoom extends Room {
     this.onMessage('respawn', (client) => this.onRespawn(client));
     this.onMessage('playAgain', (client) => this.onPlayAgain(client));
 
-    // --- Fixed-timestep loop --------------------------------------------
-    this.clock.setInterval(() => this.update(SERVER.tickMs / 1000), SERVER.tickMs);
+    // --- Fixed-timestep loop, dt from REAL elapsed time ------------------
+    // this.clock.setInterval drifts under load (GC, event-loop stalls); the
+    // simulation must integrate with the actual time between ticks so
+    // movement/effects stay correct. dt is clamped so a long stall cannot
+    // teleport the world.
+    this.lastTickAt = Date.now();
+    this.clock.setInterval(() => {
+      const now = Date.now();
+      const dt = Math.min((now - this.lastTickAt) / 1000, 0.25);
+      this.lastTickAt = now;
+      const t0 = performance.now();
+      this.update(dt);
+      GameRoom.stats.lastTickMs = performance.now() - t0;
+    }, SERVER.tickMs);
+
+    this.logEvent('room_create');
+  }
+
+  logEvent(event, fields = {}) {
+    log(event, { roomId: this.roomId, ...fields });
+  }
+
+  warnEvent(event, fields = {}) {
+    warn(event, { roomId: this.roomId, ...fields });
   }
 
   /** Sanitize the pre-join name (join options) for display everywhere. */
@@ -78,12 +126,27 @@ export default class GameRoom extends Room {
     }
   }
 
+  /**
+   * Per-IP connection rate limiting (security boundary, see ratelimit.js):
+   * every fresh join consumes a token from the IP's bucket; over-limit IPs
+   * are rejected here, before any seat/player state is created. Reconnects
+   * keep their client.auth and never reach this hook.
+   */
+  onAuth(_client, _options, authContext) {
+    const ip = normalizeIp(authContext?.ip);
+    if (!takeToken(ip)) {
+      this.warnEvent('join_rate_limited', { ip });
+      throw new Error('too many join attempts — slow down');
+    }
+    return true; // accept (truthy auth)
+  }
+
   onJoin(client, options = {}) {
     // Reconnect path: a player with a live seat rejoins — keep their
     // position/score/hp, just refresh the connection-scoped scratch state.
     let player = this.state.players.get(client.sessionId);
     if (player) {
-      console.log(`[game] ${client.sessionId} reconnected as '${player.name}'`);
+      this.logEvent('player_reconnect', { sid: client.sessionId, name: player.name });
     } else {
       const name = this.sanitizeName(options.name);
       const p = this.randomPos();
@@ -91,7 +154,7 @@ export default class GameRoom extends Room {
       player.name = name;
       player.color = SERVER.colors[nameHash(name) % SERVER.colors.length];
       this.state.players.set(client.sessionId, player);
-      console.log(`[game] '${name}' joined (${this.state.players.size} online)`);
+      this.logEvent('player_join', { sid: client.sessionId, name, players: this.state.players.size });
     }
 
     this.inputs.set(client.sessionId, { dirX: 0, dirZ: 0 });
@@ -106,6 +169,12 @@ export default class GameRoom extends Room {
     // minPlayers threshold is met — default 1, i.e. the first player.
     if (this.state.matchState === 'lobby' && this.state.players.size >= SERVER.match.minPlayers) {
       this.startCountdown();
+    } else if (this.state.matchState === 'gameover' && this.state.players.size === 1) {
+      // JOIN DURING GAME_OVER (documented choice): a player joining a room
+      // where everyone else left gets an instant fresh match — no stranded
+      // waiting for a "play again" click that nobody can make.
+      this.logEvent('match_auto_restart', { sid: client.sessionId, reason: 'join_during_gameover' });
+      this.resetMatch();
     }
   }
 
@@ -121,10 +190,14 @@ export default class GameRoom extends Room {
       return;
     }
     if (!this.graceTimers.has(sid)) {
-      this.allowReconnection(client, SERVER.match.reconnectGraceMs / 1000);
+      // allowReconnection() rejects with "disposing" while the room is being
+      // torn down (server shutdown / test teardown). Swallow that rejection
+      // — it used to surface as an unhandled "Error: disposing" stack dump.
+      const p = this.allowReconnection(client, SERVER.match.reconnectGraceMs / 1000);
+      if (p?.catch) p.catch(() => this.removePlayer(sid));
       const timer = setTimeout(() => this.removePlayer(sid), SERVER.match.reconnectGraceMs);
       this.graceTimers.set(sid, timer);
-      console.log(`[game] ${sid} dropped, seat held for ${SERVER.match.reconnectGraceMs}ms`);
+      this.logEvent('player_drop_grace', { sid, graceMs: SERVER.match.reconnectGraceMs });
     }
   }
 
@@ -137,11 +210,12 @@ export default class GameRoom extends Room {
     this.msgTimes.delete(sid);
     const t = this.graceTimers.get(sid);
     if (t) { clearTimeout(t); this.graceTimers.delete(sid); }
-    console.log(`[game] ${sid} removed (${this.state.players.size} online)`);
+    this.logEvent('player_remove', { sid, players: this.state.players.size });
   }
 
   onDispose() {
-    console.log('[game] room disposed');
+    GameRoom.instances.delete(this);
+    this.logEvent('room_dispose');
   }
 
   /** Uniform random position inside the arena, away from the walls. */
@@ -154,7 +228,7 @@ export default class GameRoom extends Room {
   startCountdown() {
     this.state.matchState = 'countdown';
     this.state.countdown = SERVER.match.countdownSeconds;
-    console.log('[game] countdown ' + SERVER.match.countdownSeconds + '...');
+    this.logEvent('match_countdown', { seconds: SERVER.match.countdownSeconds });
   }
 
   /** COUNTDOWN -> PLAYING (the only place the GO transition happens). */
@@ -162,22 +236,23 @@ export default class GameRoom extends Room {
     this.state.matchState = 'playing';
     this.state.countdown = 0;
     this.matchElapsed = 0;
-    console.log('[game] GO!');
+    this.logEvent('match_start');
   }
 
   /** End the match: pick the winner, broadcast, freeze the simulation. */
   endMatch(winnerSid) {
     this.state.matchState = 'gameover';
     this.state.countdown = 0;
-    this.state.winnerId = winnerSid;
-    const w = this.state.players.get(winnerSid);
+    // Guard: a timed match can end with no players left — never broadcast
+    // a null winner id (schema expects a string).
+    this.state.winnerId = winnerSid || '';
+    const w = winnerSid ? this.state.players.get(winnerSid) : undefined;
     this.state.winnerName = w ? w.name : '';
-    console.log(`[game] game over — winner '${this.state.winnerName}'`);
+    this.logEvent('match_over', { winnerSid: this.state.winnerId, winnerName: this.state.winnerName });
   }
 
-  /** "Play again": reset the match in place, keep the room + players. */
-  onPlayAgain(client) {
-    if (this.state.matchState !== 'gameover') return; // only after a match
+  /** Reset the match in place (play again / auto-restart), keep room + players. */
+  resetMatch() {
     const state = this.state;
     for (const player of state.players.values()) {
       const p = this.randomPos();
@@ -186,7 +261,15 @@ export default class GameRoom extends Room {
       player.hp = SERVER.player.maxHp;
       player.score = 0;
       player.anim = 'idle';
-      player.effects.clear();
+      player.attackCd = 0;
+      player.effects.clear(); // buffs never carry into the next match
+    }
+    // Scratch state: no stale cooldowns/input intents across matches.
+    for (const sid of state.players.keys()) {
+      this.inputs.set(sid, { dirX: 0, dirZ: 0 });
+      this.attackAt.set(sid, 0);
+      this.invulnUntil.set(sid, 0);
+      this.animUntil.set(sid, 0);
     }
     state.winnerId = '';
     state.winnerName = '';
@@ -209,8 +292,16 @@ export default class GameRoom extends Room {
       pu.active = true;
     }
     this.powerUpTimers.clear();
-    console.log('[game] match reset — new countdown');
+    this.matchElapsed = 0;
+    this.logEvent('match_reset');
     this.startCountdown();
+  }
+
+  /** "Play again": reset the match in place, keep the room + players. */
+  onPlayAgain(client) {
+    if (this.state.matchState !== 'gameover') return; // only after a match
+    this.logEvent('match_play_again', { sid: client.sessionId });
+    this.resetMatch();
   }
 
   /**
@@ -228,7 +319,16 @@ export default class GameRoom extends Room {
     times.push(now);
     while (times.length && times[0] < now - 1000) times.shift();
     if (times.length > SERVER.net.maxInputPerSecond) {
-      console.warn(`[game] dropping input from ${sid} (> ${SERVER.net.maxInputPerSecond}/s)`);
+      this.warnEvent('input_dropped_rate', { sid, perSecond: SERVER.net.maxInputPerSecond });
+      return;
+    }
+    GameRoom.stats.inputTimes.push(now);
+
+    // GHOST PLAYERS: a dead player can only click respawn — all movement,
+    // attack and pickup intents are ignored.
+    const player = this.state.players.get(sid);
+    if (!player || player.hp <= 0) {
+      this.warnEvent('input_rejected_dead', { sid });
       return;
     }
 
@@ -241,14 +341,22 @@ export default class GameRoom extends Room {
     if (len > 1) { dirX /= len; dirZ /= len; } // clamp diagonal input
     this.inputs.set(sid, { dirX, dirZ });
 
-    // Attack: server-enforced cooldown — swings inside the window are
-    // rejected (no anim, no melee).
-    if (msg.attack && now >= this.attackAt.get(sid)) {
-      this.attackAt.set(sid, now + SERVER.player.attackCooldownMs);
-      this.animUntil.set(sid, now + SERVER.player.attackAnimMs);
-      this.melee(sid);
-    } else if (msg.attack) {
-      console.warn(`[game] ${sid} attack rejected (cooldown ${this.attackAt.get(sid) - now}ms left)`);
+    // Attack: only valid while the match is PLAYING (no swinging during the
+    // countdown or on the game-over screen), and server-enforced cooldown —
+    // swings inside the window are rejected (no anim, no melee).
+    if (msg.attack) {
+      if (this.state.matchState !== 'playing') {
+        this.warnEvent('input_attack_rejected', { sid, reason: `match_${this.state.matchState}` });
+        return;
+      }
+      if (now >= this.attackAt.get(sid)) {
+        this.attackAt.set(sid, now + SERVER.player.attackCooldownMs);
+        this.animUntil.set(sid, now + SERVER.player.attackAnimMs);
+        this.melee(sid);
+      } else {
+        this.warnEvent('input_attack_rejected', { sid, reason: 'cooldown',
+          cooldownMs: this.attackAt.get(sid) - now });
+      }
     }
   }
 
@@ -261,14 +369,20 @@ export default class GameRoom extends Room {
     player.x = p.x;
     player.z = p.z;
     player.hp = SERVER.player.maxHp;
+    player.anim = 'idle';
+    player.attackCd = 0;
+    player.effects.clear(); // RESPAWN LEAK: buffs die with the player
+    this.inputs.set(client.sessionId, { dirX: 0, dirZ: 0 });
+    this.attackAt.set(client.sessionId, 0);
+    this.animUntil.set(client.sessionId, 0);
     this.invulnUntil.set(client.sessionId, Date.now() + 1000); // spawn grace
-    console.log(`[game] ${client.sessionId} respawned`);
+    this.logEvent('player_respawn', { sid: client.sessionId });
   }
 
   /** Melee swing from one player: damage every enemy in range + in front. */
   melee(sid) {
     const player = this.state.players.get(sid);
-    if (!player) return;
+    if (!player || player.hp <= 0) return; // ghosts cannot swing
     const cfg = SERVER.player;
     // Facing vector from rotY (atan2 convention: +Z is 0).
     const fx = Math.sin(player.rotY);
@@ -295,6 +409,20 @@ export default class GameRoom extends Room {
   /** One fixed timestep of the simulation, dispatched by match phase. */
   update(dt) {
     const state = this.state;
+
+    // Empty-room cleanup: dispose rooms with no players after the TTL so
+    // abandoned rooms (including stale gameover ones) cannot pile up.
+    if (state.players.size === 0) {
+      const idleMs = Date.now() - this.lastActiveAt;
+      if (idleMs > SERVER.match.emptyRoomTtlMs) {
+        this.logEvent('room_empty_dispose', { idleMs });
+        this.disconnect();
+        return;
+      }
+    } else {
+      this.lastActiveAt = Date.now();
+    }
+
     switch (state.matchState) {
       case 'lobby':
         // Free movement so players can warm up; no pickups, no enemies.
@@ -318,6 +446,12 @@ export default class GameRoom extends Room {
   movePlayers(dt) {
     const now = Date.now();
     for (const [sid, player] of this.state.players) {
+      // GHOST PLAYERS: corpses are frozen — no movement, no anim, no cooldown.
+      if (player.hp <= 0) {
+        player.anim = 'idle';
+        player.attackCd = 0;
+        continue;
+      }
       const { dirX, dirZ } = this.inputs.get(sid);
       const speed = SERVER.player.speed *
         (player.effects.has('speed') ? SERVER.powerUps.speed.multiplier : 1);
@@ -346,11 +480,12 @@ export default class GameRoom extends Room {
     this.movePlayers(dt);
     this.updateEffects(msec);
 
-    // --- Orbs: first player within radius collects (server decides) -----
+    // --- Orbs: first LIVING player within radius collects (server decides)
     const orbScore = (player) =>
       SERVER.orb.score * (player.effects.has('double') ? SERVER.powerUps.double.multiplier : 1);
     for (const orb of state.orbs) {
       for (const player of state.players.values()) {
+        if (player.hp <= 0) continue; // corpses cannot collect
         const dx = orb.x - player.x;
         const dz = orb.z - player.z;
         if (dx * dx + dz * dz < SERVER.orb.radius * SERVER.orb.radius) {
@@ -380,29 +515,31 @@ export default class GameRoom extends Room {
       }
       const cfg = SERVER.powerUps[pu.type];
       for (const player of state.players.values()) {
+        if (player.hp <= 0) continue; // corpses cannot collect
         const dx = pu.x - player.x;
         const dz = pu.z - player.z;
         if (dx * dx + dz * dz < SERVER.powerUps.radius * SERVER.powerUps.radius) {
           player.effects.set(pu.type, cfg.durationMs); // replace timer on re-pickup
           pu.active = false;
           this.powerUpTimers.set(pu, SERVER.powerUps.respawnSeconds);
-          console.log(`[game] '${player.name}' picked up ${pu.type}`);
+          this.logEvent('player_pickup', { name: player.name, type: pu.type });
           break;
         }
       }
     }
 
-    // --- Enemies: chase the nearest player, hurt on contact -------------
+    // --- Enemies: chase the nearest LIVING player, hurt on contact -------
     for (const enemy of state.enemies) {
       // 'hit'/'attack' anim overrides outlive the tick that set them;
       // while one is active the movement anim may not overwrite it.
       const animOverride = now < (this.enemyAnimUntil.get(enemy) || 0);
       if (!animOverride) this.enemyAnimUntil.delete(enemy);
 
-      let targetSid = null;   // sessionId of the nearest player
+      let targetSid = null;   // sessionId of the nearest living player
       let target = null;
       let best = Infinity;
       for (const [sid, player] of state.players) {
+        if (player.hp <= 0) continue; // corpses are not targets
         const dx = enemy.x - player.x;
         const dz = enemy.z - player.z;
         const d2 = dx * dx + dz * dz;
@@ -424,7 +561,7 @@ export default class GameRoom extends Room {
             target.effects.delete('shield');
             this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
             enemy.anim = 'attack';
-            console.log(`[game] '${target.name}' shield absorbed a hit`);
+            this.logEvent('shield_absorb', { sid: targetSid });
           } else {
             this.invulnUntil.set(targetSid, now + SERVER.player.invulnMs);
             this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
@@ -443,9 +580,10 @@ export default class GameRoom extends Room {
       }
     }
 
-    // --- Win conditions ---------------------------------------------------
+    // --- Win conditions (living players only — corpses cannot win) --------
     if (SERVER.match.targetScore > 0) {
       for (const [sid, player] of state.players) {
+        if (player.hp <= 0) continue;
         if (player.score >= SERVER.match.targetScore) {
           this.endMatch(sid);
           return;
@@ -458,8 +596,11 @@ export default class GameRoom extends Room {
         let winnerSid = null;
         let bestScore = -1;
         for (const [sid, player] of state.players) {
+          if (player.hp <= 0) continue;
           if (player.score > bestScore) { bestScore = player.score; winnerSid = sid; }
         }
+        // endMatch(null) is guarded: timed matches can end with no living
+        // players (or none at all) — winnerId/winnerName stay empty.
         this.endMatch(winnerSid);
       }
     }
