@@ -1,0 +1,42 @@
+{
+  "exportTimestamp": "2026-08-14T16-30-00",
+  "project": "opengame — multiplayer 3D arena",
+  "policy": "CC0 preferred; CC-BY only with attribution. No unlicensed assets.",
+  "assets": [
+    {
+      "name": "Adventurer",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/5EGWBMpuXq",
+      "license": "CC0 1.0",
+      "file": "assets/characters/adventurer.glb",
+      "role": "player character (shared by all players, tinted per player)",
+      "animations": ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Sword_Slash"]
+    },
+    {
+      "name": "Orc",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/5vO2YJsPEf",
+      "license": "CC0 1.0",
+      "file": "assets/enemies/orc.glb",
+      "role": "enemy character (server-side AI, visual only on clients)",
+      "animations": ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Punch", "CharacterArmature|HitReact"]
+    },
+    {
+      "name": "Tree",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/aVOxaHRPWe",
+      "license": "CC0 1.0",
+      "file": "assets/props/tree.glb",
+      "role": "arena prop (scattered deterministically on every client)"
+    },
+    {
+      "name": "Rock",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/4MUaQTcDdc",
+      "license": "CC0 1.0",
+      "file": "assets/props/rock.glb",
+      "role": "arena prop (scattered deterministically on every client)"
+    }
+  ],
+  "notes": "All four assets are CC0 1.0 — no attribution required, none displayed in-game. Kenney Nature Kit (CC0) was evaluated for props but ships as 2D isometric PNGs, unsuitable for this 3D scene; poly.pizza Quaternius GLBs were used instead."
+}

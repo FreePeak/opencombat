@@ -1,0 +1,642 @@
+// GameScene: builds the whole 3D world (renderer, lights, ground, props),
+// owns the camera rig + HUD + overlays, and maps server state onto
+// entities. Nothing here simulates gameplay — the server is authoritative;
+// this scene renders matchState/countdown, renders power-up effects,
+// shows nametags + leaderboard, plays feedback (shake, flash, particles,
+// floating numbers) and handles reconnects.
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { CONFIG } from '../config.js';
+import Player from '../entities/Player.js';
+import RemotePlayer from '../entities/RemotePlayer.js';
+import Enemy from '../entities/Enemy.js';
+import SoundManager from '../audio/SoundManager.js';
+import ParticlePool from '../effects/ParticlePool.js';
+import FloatingTextPool from '../effects/FloatingTextPool.js';
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain } from '../network.js';
+
+// Deterministic LCG: scatters props identically on every client so the
+// arena looks the same for all players, without a network round trip.
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+
+export default class GameScene {
+  constructor(container) {
+    // --- Renderer (quality knobs from config, Upgrade F) -----------------
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, CONFIG.renderer.dprMax));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.shadowMap.enabled = CONFIG.renderer.shadows;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(this.renderer.domElement);
+
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x87ceeb); // sky
+    this.camera = new THREE.PerspectiveCamera(
+      60, window.innerWidth / window.innerHeight, 0.1, 200);
+
+    // --- Lights ---------------------------------------------------------
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x446622, 0.75);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+    sun.position.set(20, 30, 10);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(CONFIG.renderer.shadowMapSize, CONFIG.renderer.shadowMapSize);
+    sun.shadow.camera.left = -35;
+    sun.shadow.camera.right = 35;
+    sun.shadow.camera.top = 35;
+    sun.shadow.camera.bottom = -35;
+    sun.shadow.camera.far = 80;
+    this.scene.add(hemi, sun);
+
+    // --- FX: pooled particles + floating numbers (Upgrade C/F) ----------
+    this.sound = new SoundManager();
+    this.particles = new ParticlePool(this.scene, 256);
+    this.floatTexts = new FloatingTextPool(document.getElementById('float-layer'), 24);
+
+    // --- World state holders --------------------------------------------
+    this.keys = {};
+    this.buildKeyboard();
+    this.buildGround();
+    this.props = [];
+
+    this.local = null;             // Player (ours)
+    this.remotePlayers = new Map();// sessionId -> RemotePlayer
+    this.enemies = new Map();      // enemy index -> Enemy
+    this.orbViews = [];            // { mesh, state } pairs
+    this.powerUpViews = [];        // { mesh, state } pairs
+    this.nametags = new Map();     // sessionId -> { div, state }
+    this.wired = false;
+    this.cameraRigged = false;     // camera snapped to the player yet?
+    this.models = null;
+    this.name = '';
+
+    // Feedback timers.
+    this.shakeT = 0;               // camera-shake seconds left
+    this.flashT = 0;               // red-flash seconds left
+    this.lastHp = 100;
+    this.lastScore = 0;
+    this.lastEffects = new Map();  // effect name -> ms, for pickup detection
+    this.lastCountdown = -1;
+    this.lastMatchState = '';
+    this.deadShown = false;
+
+    // HUD handles (index.html).
+    this.hudFill = document.getElementById('hp-fill');
+    this.hudText = document.getElementById('hud-text');
+    this.cooldownFill = document.getElementById('cooldown-fill');
+    this.countdownEl = document.getElementById('countdown');
+    this.flashEl = document.getElementById('flash');
+    this.leaderboardEl = document.getElementById('leaderboard');
+    this.overlay = document.getElementById('gameover');
+    this.overlayTitle = document.getElementById('gameover-title');
+    this.overlaySub = document.getElementById('gameover-sub');
+    this.reconnectEl = document.getElementById('reconnect');
+    this.loginEl = document.getElementById('login');
+    this.loginName = document.getElementById('login-name');
+    this.loginError = document.getElementById('login-error');
+    this.loginBtn = document.getElementById('login-btn');
+
+    // One overlay serves both ends: death (respawn) and match end (again).
+    this.overlay.addEventListener('click', () => {
+      if (!this.room) return;
+      if (this.room.state.matchState === 'gameover') {
+        this.overlay.classList.remove('visible');
+        sendPlayAgain(this.room);
+      } else if (this.local?.state?.hp <= 0) {
+        this.overlay.classList.remove('visible');
+        this.deadShown = false;
+        sendRespawn(this.room);
+      }
+    });
+  }
+
+  /**
+   * Entities (Player/RemotePlayer/Enemy) receive this wrapper as their
+   * "scene" — they need .keys/.sound — so delegate object insertion to the
+   * underlying THREE.Scene for them.
+   */
+  add(object) {
+    this.scene.add(object);
+  }
+
+  // ============================ Boot =====================================
+
+  async init() {
+    // Remember the last name; the form is always shown before connecting.
+    this.name = localStorage.getItem('opengame.name') ?? '';
+    this.loginName.value = this.name;
+    this.loginEl.classList.add('visible');
+    this.loginBtn.addEventListener('click', () => this.onJoinClick());
+    this.loginName.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
+  }
+
+  async onJoinClick() {
+    if (this.joining) return;
+    this.joining = true;
+    this.name = this.loginName.value.trim().slice(0, 16) || 'player';
+    localStorage.setItem('opengame.name', this.name);
+    // First user gesture: unlock audio (browser requirement) + start pad.
+    this.sound.init();
+    try {
+      if (!this.models) {
+        this.models = await this.loadModels();
+        this.scatterProps();
+      }
+      document.getElementById('loading').style.display = 'none';
+      this.loginEl.classList.remove('visible');
+      this.loginError.style.display = 'none';
+      this.room = await joinGame(this.name);
+      this.wireRoom();
+    } catch (err) {
+      console.error(err);
+      this.loginError.textContent = 'cannot reach server — run npm run serve on :2567';
+      this.loginError.style.display = 'block';
+    }
+    this.joining = false;
+  }
+
+  loadModels() {
+    const loader = new GLTFLoader();
+    const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
+    return Promise.all([
+      load('assets/characters/adventurer.glb'), // player model (shared)
+      load('assets/enemies/orc.glb'),           // enemy model
+      load('assets/props/tree.glb'),            // arena props
+      load('assets/props/rock.glb')
+    ]).then(([player, enemy, tree, rock]) => ({
+      player: player.scene, playerAnims: player.animations,
+      enemy: enemy.scene, enemyAnims: enemy.animations,
+      tree: tree.scene, rock: rock.scene
+    }));
+  }
+
+  // ====================== Room / state wiring =============================
+
+  /**
+   * Wire room callbacks. Re-entrant: on reconnect (Upgrade F) the old
+   * entities are disposed and fresh ones are created from the new room's
+   * full state — no page reload.
+   */
+  wireRoom() {
+    this.disposeEntities();
+    this.wired = false;
+    this.room.onStateChange((state) => {
+      if (!this.wired) { this.wired = true; this.wireState(state); }
+    });
+
+    // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
+    // reconnection API). We just surface it to the player and keep a manual
+    // fallback for the cases the sdk gives up on.
+    this.room.onDrop(() => this.reconnectEl.classList.add('visible'));
+    this.room.onReconnect(() => {
+      this.reconnectEl.classList.remove('visible');
+      console.log('[client] auto-reconnected — state resynced');
+    });
+    // CONSENTED (4000) = deliberate leave; anything else means the sdk's
+    // automatic reconnection is not possible (room too young / retries
+    // exhausted) -> manual retry loop.
+    this.room.onLeave((code) => {
+      if (code !== 4000) this.handleDisconnect();
+    });
+  }
+
+  handleDisconnect() {
+    console.warn('[client] connection lost — reconnecting');
+    this.reconnectEl.classList.add('visible');
+    this.reconnectAttempts = 0;
+    this.tryReconnect();
+  }
+
+  async tryReconnect() {
+    this.reconnectAttempts = (this.reconnectAttempts ?? 0) + 1;
+    try {
+      // Preferred path: resume the same seat (position/score survive).
+      const room = await reconnectRoom(this.room, this.name);
+      this.room = room;
+      this.reconnectEl.classList.remove('visible');
+      this.wireRoom();
+      console.log('[client] reconnected with seat');
+    } catch (err) {
+      // Token invalid (room disposed / too young): after a few attempts,
+      // fall back to a fresh join so the player is never stuck.
+      if (this.reconnectAttempts > 3) {
+        try {
+          this.room = await joinGame(this.name);
+          this.reconnectEl.classList.remove('visible');
+          this.wireRoom();
+          console.log('[client] re-joined fresh');
+          return;
+        } catch { /* server down — keep retrying below */ }
+      }
+      setTimeout(() => this.tryReconnect(), 1500);
+    }
+  }
+
+  wireState(state) {
+    // Schema onAdd callbacks only fire for *future* changes, so entities
+    // for the initial state are created here, before the listeners.
+    for (const [sid, player] of state.players) this.addPlayer(sid, player);
+    for (let i = 0; i < state.enemies.length; i++) this.addEnemy(i, state.enemies[i]);
+    for (let i = 0; i < state.orbs.length; i++) this.addOrb(i, state.orbs[i]);
+    for (let i = 0; i < state.powerUps.length; i++) this.addPowerUp(i, state.powerUps[i]);
+
+    // Schema v4 removed the instance-method callbacks (state.players.onAdd
+    // no longer exists). The SDK bundles its own @colyseus/schema decoder,
+    // so callbacks MUST be registered through it — Colyseus.Callbacks
+    // (from the UMD global, same one network.js uses) reaches the room's
+    // real decoder. immediate=false keeps v3 semantics: the loops above
+    // already created the initial entities.
+    const $ = Colyseus.Callbacks.getLegacy(this.room);
+    $(state.players).onAdd((player, sid) => this.addPlayer(sid, player), false);
+    $(state.players).onRemove((_player, sid) => {
+      const rp = this.remotePlayers.get(sid);
+      if (rp) { rp.dispose(); this.remotePlayers.delete(sid); }
+      const tag = this.nametags.get(sid);
+      if (tag) { tag.div.remove(); this.nametags.delete(sid); }
+    });
+
+    $(state.enemies).onAdd((enemy, i) => this.addEnemy(i, enemy), false);
+    $(state.enemies).onRemove((_enemy, i) => {
+      const e = this.enemies.get(i);
+      if (e) { e.dispose(); this.enemies.delete(i); }
+    });
+
+    $(state.orbs).onAdd((orb, i) => this.addOrb(i, orb), false);
+    $(state.powerUps).onAdd((pu, i) => this.addPowerUp(i, pu), false);
+  }
+
+  /** Remove every entity + nametag (called before re-wiring on reconnect). */
+  disposeEntities() {
+    this.local?.dispose();
+    this.local = null;
+    for (const rp of this.remotePlayers.values()) rp.dispose();
+    this.remotePlayers.clear();
+    for (const e of this.enemies.values()) e.dispose();
+    this.enemies.clear();
+    for (const v of this.orbViews) this.scene.remove(v.mesh);
+    this.orbViews = [];
+    for (const v of this.powerUpViews) this.scene.remove(v.mesh);
+    this.powerUpViews = [];
+    for (const tag of this.nametags.values()) tag.div.remove();
+    this.nametags.clear();
+  }
+
+  /** Create the local or a remote player entity for a sessionId. */
+  addPlayer(sid, player) {
+    const color = player.color || CONFIG.colors.orb;
+    if (sid === this.room.sessionId) {
+      // Our own player: the camera follows this one.
+      this.local = new Player(this, this.room, this.models.player, this.models.playerAnims, color, 0.85);
+      this.local.state = player;
+      this.local.root.position.set(player.x, 0, player.z); // snap to spawn
+      this.cameraRigged = false;
+      this.lastHp = player.hp;
+      this.lastScore = player.score;
+    } else {
+      this.remotePlayers.set(sid, new RemotePlayer(this, player, this.models.player, this.models.playerAnims, color, 0.85));
+    }
+    this.nametagFor(sid, player, color);
+  }
+
+  /** Create an enemy entity. Orcs are bigger than the adventurer. */
+  addEnemy(i, enemy) {
+    const e = new Enemy(this, enemy, this.models.enemy, this.models.enemyAnims, 0.55);
+    e.onBurst = (pos, color) => this.particles.spawnBurst(pos, color, 26, 5.5, 0.8);
+    e.onDamage = (pos) => this.floatTexts.spawn(pos.x, pos.y, pos.z, '1', '#ffd54f');
+    this.enemies.set(i, e);
+  }
+
+  /** Create an orb mesh (positions are read from state every frame). */
+  addOrb(i, orb) {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.45, 1),
+      new THREE.MeshStandardMaterial({ color: CONFIG.colors.orb, emissive: 0x22aa22, emissiveIntensity: 0.6 })
+    );
+    mesh.position.set(orb.x, CONFIG.orb.y, orb.z);
+    this.scene.add(mesh);
+    this.orbViews[i] = { mesh, state: orb };
+  }
+
+  /** Create a power-up orb (pooled slot; pulsing + glow, per Upgrade B). */
+  addPowerUp(i, pu) {
+    const type = pu.type || 'speed';
+    const color = CONFIG.powerUps.colors[type] ?? 0xffffff;
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.5, 1),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8 })
+    );
+    mesh.position.set(pu.x, CONFIG.powerUps.y, pu.z);
+    this.scene.add(mesh);
+    this.powerUpViews[i] = { mesh, state: pu, color };
+  }
+
+  // ============================ World =====================================
+
+  /** Procedural grass ground: canvas texture, drawn once and reused. */
+  buildGround() {
+    const rng = makeRng(1337);
+    const size = 512;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#3f7d46';
+    ctx.fillRect(0, 0, size, size);
+    // darker grid + speckles so motion is readable
+    ctx.strokeStyle = 'rgba(20,60,25,0.35)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i <= 8; i++) {
+      ctx.beginPath(); ctx.moveTo(i * size / 8, 0); ctx.lineTo(i * size / 8, size); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * size / 8); ctx.lineTo(size, i * size / 8); ctx.stroke();
+    }
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = rng() > 0.5 ? 'rgba(30,80,35,0.5)' : 'rgba(120,180,90,0.4)';
+      ctx.fillRect(rng() * size, rng() * size, 3, 3);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(6, 6);
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(CONFIG.world.size, CONFIG.world.size),
+      new THREE.MeshStandardMaterial({ map: tex })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+
+    // Arena walls: faint translucent boxes so the bounds are visible.
+    const h = CONFIG.world.size / 2;
+    const wallMat = new THREE.MeshBasicMaterial({ color: 0x224466, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
+    const mk = (w, d, x, z) => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(w, 3, d), wallMat);
+      wall.position.set(x, 1.5, z);
+      this.scene.add(wall);
+    };
+    mk(CONFIG.world.size, 0.5, 0, h);  mk(CONFIG.world.size, 0.5, 0, -h);
+    mk(0.5, CONFIG.world.size, h, 0);  mk(0.5, CONFIG.world.size, -h, 0);
+  }
+
+  /** Scatter trees/rocks outside the central spawn zone, deterministically. */
+  scatterProps() {
+    const rng = makeRng(4242);
+    const h = CONFIG.world.size / 2 - 1;
+    const place = (model, scale) => {
+      for (let tries = 0; tries < 8; tries++) {
+        const x = -h + rng() * h * 2;
+        const z = -h + rng() * h * 2;
+        if (Math.abs(x) < 7 && Math.abs(z) < 7) continue;
+        const prop = model.clone(true);
+        prop.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+        prop.scale.setScalar(scale);
+        prop.position.set(x, 0, z);
+        prop.rotation.y = rng() * Math.PI * 2;
+        this.scene.add(prop);
+        this.props.push(prop);
+        return;
+      }
+    };
+    // Scales tuned from the GLB world AABBs (tree 7.6 tall, rock 0.2).
+    for (let i = 0; i < 9; i++) place(this.models.tree, 0.8 + rng() * 0.5);
+    for (let i = 0; i < 10; i++) place(this.models.rock, 3.5 + rng() * 2.5);
+  }
+
+  /** Keyboard state shared with Player: { isDown, justPressed } per key. */
+  buildKeyboard() {
+    const map = {
+      KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd',
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+      KeyJ: 'j', KeyM: 'm'
+    };
+    for (const name of Object.values(map)) {
+      this.keys[name] = { isDown: false, justPressed: false };
+    }
+    window.addEventListener('keydown', (e) => {
+      const k = this.keys[map[e.code]];
+      if (!k) return;
+      if (!k.isDown) k.justPressed = true;
+      k.isDown = true;
+      e.preventDefault();
+    });
+    window.addEventListener('keyup', (e) => {
+      const k = this.keys[map[e.code]];
+      if (k) k.isDown = false;
+    });
+  }
+
+  // ============================ Frame =====================================
+
+  /** One render frame. dt is the clamped delta from main.js. */
+  update(dt, _time) {
+    // M = mute toggle (Upgrade D).
+    if (this.keys.m.justPressed) {
+      this.keys.m.justPressed = false;
+      this.sound.toggleMute();
+    }
+
+    if (this.local) {
+      this.local.update(dt, this.camera);
+
+      // --- Camera rig: lerp behind the player, look at them -------------
+      const target = this.local.root.position;
+      const yaw = this.local.root.rotation.y;
+      const cfg = CONFIG.player.camera;
+      const desired = new THREE.Vector3(
+        target.x - Math.sin(yaw) * cfg.distance,
+        target.y + cfg.height,
+        target.z - Math.cos(yaw) * cfg.distance
+      );
+      if (!this.cameraRigged) {
+        this.camera.position.copy(desired); // snap on spawn, then lerp
+        this.cameraRigged = true;
+      }
+      this.camera.position.lerp(desired, cfg.lerp);
+
+      // Damage camera shake: small random offset, decaying over 0.3s.
+      if (this.shakeT > 0) {
+        this.shakeT = Math.max(0, this.shakeT - dt);
+        const amp = this.shakeT / CONFIG.player.shake.duration * CONFIG.player.shake.amplitude;
+        this.camera.position.x += (Math.random() - 0.5) * amp;
+        this.camera.position.y += (Math.random() - 0.5) * amp;
+      }
+      this.camera.lookAt(target);
+
+      this.updateMatchUi(dt);
+    }
+    for (const rp of this.remotePlayers.values()) rp.update(dt);
+    for (const e of this.enemies.values()) e.update(dt);
+    for (const view of this.orbViews) {
+      view.mesh.position.x = view.state.x;
+      view.mesh.position.z = view.state.z;
+      // Slow spin + bob sells the "collectible" look (purely cosmetic).
+      view.mesh.rotation.y += dt * 2;
+      view.mesh.position.y = CONFIG.orb.y + Math.sin(performance.now() / 400) * 0.15;
+    }
+
+    // Power-ups: pulsing scale while active; hidden while respawning.
+    const now = performance.now();
+    for (const view of this.powerUpViews) {
+      view.mesh.visible = view.state.active;
+      if (!view.state.active) continue;
+      view.mesh.position.x = view.state.x;
+      view.mesh.position.z = view.state.z;
+      const pulse = 1 + Math.sin(now / 180) * 0.18;
+      view.mesh.scale.setScalar(pulse);
+      view.mesh.position.y = CONFIG.powerUps.y + Math.sin(now / 350) * 0.15;
+      view.mesh.rotation.y += dt * 1.5;
+    }
+
+    // Speed power-up trail: emit particles behind any runner with it.
+    if (this.local?.state?.effects?.has('speed')) {
+      const p = this.local.root.position;
+      this.particles.spawnBurst(
+        { x: p.x - Math.sin(this.local.root.rotation.y) * 0.6, y: 0.6, z: p.z - Math.cos(this.local.root.rotation.y) * 0.6 },
+        CONFIG.effects.speed.color, 2, 1.2, 0.4);
+    }
+
+    this.particles.update(dt);
+    this.floatTexts.update(dt, this.camera, window.innerWidth, window.innerHeight);
+    this.updateNametags();
+    this.updateLeaderboard();
+
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Countdown, game-over overlay, red flash, HUD + cooldown bar. */
+  updateMatchUi(dt) {
+    const state = this.room.state;
+    const me = this.room.state.players.get(this.room.sessionId);
+    if (!me) return;
+
+    // --- Match lifecycle UI (server-driven, Upgrade A) ------------------
+    if (state.matchState !== this.lastMatchState) {
+      this.lastMatchState = state.matchState;
+      if (state.matchState === 'countdown') this.sound.tick();
+      if (state.matchState === 'playing') { this.sound.go(); this.countdownEl.textContent = ''; }
+      if (state.matchState === 'gameover') {
+        this.sound.gameOver();
+        this.overlayTitle.textContent = state.winnerId === this.room.sessionId
+          ? 'YOU WIN!' : state.winnerName + ' WINS!';
+        const scores = [...state.players.values()]
+          .sort((a, b) => b.score - a.score).slice(0, 3)
+          .map((p) => `${p.name}: ${p.score}`).join('   ');
+        this.overlaySub.textContent = scores + '   — PLAY AGAIN →';
+        this.overlay.classList.add('visible');
+        this.deadShown = true; // match end supersedes the death overlay
+      }
+    }
+    if (state.matchState === 'countdown') {
+      const c = Math.ceil(state.countdown);
+      this.countdownEl.textContent = c > 0 ? String(c) : '';
+      if (c !== this.lastCountdown && c > 0) { this.lastCountdown = c; this.sound.tick(); }
+    } else {
+      this.lastCountdown = -1;
+    }
+
+    // --- Death overlay (respawn) vs. match-over overlay -----------------
+    if (me.hp <= 0 && state.matchState === 'playing' && !this.deadShown) {
+      this.deadShown = true;
+      this.overlayTitle.textContent = 'YOU DIED';
+      this.overlaySub.textContent = 'click to respawn';
+      this.overlay.classList.add('visible');
+    }
+    if (me.hp > 0 && this.deadShown && state.matchState !== 'gameover') {
+      this.deadShown = false;
+      this.overlay.classList.remove('visible');
+    }
+
+    // --- HUD: hp bar, score, players, cooldown bar -----------------------
+    const pct = Math.max(0, me.hp) / CONFIG.player.maxHp * 100;
+    this.hudFill.style.width = pct + '%';
+    this.hudFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
+    this.hudText.textContent =
+      `score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
+      '   WASD move · J melee · M mute';
+    // Cooldown bar: drains while J is on cooldown (server mirrors it).
+    const cdMs = Math.max(me.attackCd, this.local.attackCd * 1000);
+    this.cooldownFill.style.width = Math.min(100, cdMs / CONFIG.player.attackCooldownMs * 100) + '%';
+
+    // --- Damage feedback: red flash + shake + sound + number ------------
+    if (me.hp < this.lastHp) {
+      const dmg = this.lastHp - me.hp;
+      this.flashT = 0.3;
+      this.shakeT = CONFIG.player.shake.duration;
+      this.sound.hit();
+      this.floatTexts.spawn(me.x, 2.4, me.z, String(dmg), '#ff5252');
+    }
+    this.lastHp = me.hp;
+    this.flashT = Math.max(0, this.flashT - dt);
+    this.flashEl.style.opacity = this.flashT > 0 ? (this.flashT / 0.3) * 0.35 : '0';
+
+    // --- Pickup detection for sounds -------------------------------------
+    if (me.score > this.lastScore) this.sound.pickup();
+    this.lastScore = me.score;
+    for (const [name, ms] of me.effects) {
+      if (!this.lastEffects.has(name)) {
+        this.sound.powerUp();
+        this.floatTexts.spawn(me.x, 2.6, me.z, name.toUpperCase(), '#ffffff');
+      }
+      this.lastEffects.set(name, ms);
+    }
+    for (const name of [...this.lastEffects.keys()]) {
+      if (!me.effects.has(name)) this.lastEffects.delete(name);
+    }
+  }
+
+  /** Billboarded nametags (name + HP) projected above each player. */
+  updateNametags() {
+    if (!this.room) return; // before joining
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const v = new THREE.Vector3();
+    for (const [sid, tag] of this.nametags) {
+      const root = sid === this.room.sessionId ? this.local?.root : this.remotePlayers.get(sid)?.root;
+      if (!root) continue;
+      v.set(root.position.x, root.position.y + 2.6, root.position.z);
+      v.project(this.camera);
+      const behind = v.z > 1;
+      const sx = (v.x * 0.5 + 0.5) * w;
+      const sy = (-v.y * 0.5 + 0.5) * h;
+      tag.div.style.display = behind ? 'none' : 'block';
+      if (behind) continue;
+      tag.div.style.transform = `translate(-50%, -100%) translate(${sx}px, ${sy}px)`;
+      tag.div.textContent = `${tag.state.name} ${tag.state.hp}`;
+      tag.div.style.borderColor = tag.color;
+    }
+  }
+
+  nametagFor(sid, player, color) {
+    const existing = this.nametags.get(sid);
+    if (existing) return existing;
+    const div = document.createElement('div');
+    div.className = 'nametag';
+    div.style.borderColor = '#' + new THREE.Color(color).getHexString();
+    document.getElementById('nametag-layer').appendChild(div);
+    const tag = { div, state: player, color: '#' + new THREE.Color(color).getHexString() };
+    this.nametags.set(sid, tag);
+    return tag;
+  }
+
+  /** Top 5 + you, sorted by score, refreshed at ~4Hz. */
+  updateLeaderboard() {
+    const state = this.room?.state;
+    if (!state?.players?.size) return;
+    if (performance.now() - (this.boardAt ?? 0) < 250) return;
+    this.boardAt = performance.now();
+    const me = this.room.sessionId;
+    const rows = [...state.players.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((p) => {
+        const you = p === state.players.get(me) ? ' ▶' : '';
+        return `<span>${esc(p.name)}${you} <b>${p.score}</b></span>`;
+      })
+      .join('');
+    this.leaderboardEl.innerHTML = 'LEADERBOARD<br>' + rows;
+  }
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

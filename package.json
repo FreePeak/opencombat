@@ -1,0 +1,17 @@
+{
+  "name": "opengame",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multiplayer 3D arena survival: Three.js client + Colyseus server. Server-authoritative movement, shared orbs, chasing enemies.",
+  "type": "module",
+  "scripts": {
+    "serve": "node src/server/index.js",
+    "check": "node --check src/server/index.js && node --check src/server/config.js && node --check src/server/schema/StateSchema.js && node --check src/server/rooms/GameRoom.js && node --check src/main.js && node --check src/config.js && node --check src/network.js && node --check src/audio/SoundManager.js && node --check src/effects/ParticlePool.js && node --check src/effects/FloatingTextPool.js && node --check src/scenes/GameScene.js && node --check src/entities/Player.js && node --check src/entities/RemotePlayer.js && node --check src/entities/Enemy.js && node --check src/fsm/StateMachine.js && node --check src/fsm/states/IdleState.js && node --check src/fsm/states/RunState.js && node --check test/fsm.test.mjs && node --check test/multiplayer.test.mjs",
+    "test": "node test/fsm.test.mjs && node test/multiplayer.test.mjs"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "0.17.43",
+    "colyseus": "0.17.10",
+    "express": "5.2.1"
+  }
+}

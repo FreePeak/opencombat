@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>opengame — multiplayer 3D arena</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%2366ff66'/></svg>">
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0e14; overflow: hidden; font-family: monospace; }
+    #game { position: fixed; inset: 0; }
+    #hud { position: fixed; top: 12px; left: 12px; color: #fff; z-index: 10; text-shadow: 0 1px 2px #000; }
+    #hp-bar { width: 220px; height: 14px; border: 1px solid #444; border-radius: 7px; background: #000a; overflow: hidden; }
+    #hp-fill { height: 100%; width: 100%; background: #4caf50; transition: width .15s; }
+    #cooldown-bar { width: 220px; height: 6px; margin-top: 3px; border-radius: 3px; background: #000a; overflow: hidden; }
+    #cooldown-fill { height: 100%; width: 0%; background: #ffd54f; }
+    #hud-text { margin-top: 6px; font-size: 13px; }
+    #leaderboard { position: fixed; top: 12px; right: 12px; z-index: 10; color: #ddd; font-size: 13px;
+      text-align: right; text-shadow: 0 1px 2px #000; }
+    #leaderboard span { display: block; }
+    #leaderboard b { color: #ffd54f; }
+    #countdown { position: fixed; inset: 0; display: grid; place-items: center; z-index: 15;
+      color: #fff; font-size: 120px; font-weight: bold; text-shadow: 0 4px 12px #000; pointer-events: none; }
+    #flash { position: fixed; inset: 0; z-index: 12; background: #f00; opacity: 0; pointer-events: none; }
+    #gameover { position: fixed; inset: 0; display: none; place-items: center; z-index: 20; background: #0008; cursor: pointer; }
+    #gameover.visible { display: grid; }
+    #gameover .card { text-align: center; color: #fff; font-size: 30px; text-shadow: 0 2px 4px #000; }
+    #gameover .sub { font-size: 15px; color: #ffd54f; margin-top: 12px; }
+    #login { position: fixed; inset: 0; display: none; place-items: center; z-index: 30; background: #0b0e14; }
+    #login.visible { display: grid; }
+    #login .card { text-align: center; color: #fff; }
+    #login h1 { font-size: 26px; margin: 0 0 6px; }
+    #login p { color: #888; font-size: 13px; margin: 0 0 16px; }
+    #login input { font: 15px monospace; padding: 8px 12px; width: 220px; border-radius: 6px; border: 1px solid #333; background: #161b22; color: #fff; }
+    #login button { margin-top: 12px; font: 14px monospace; padding: 8px 26px; border-radius: 6px; border: none;
+      background: #4caf50; color: #fff; cursor: pointer; }
+    #login-error { color: #ff6b6b; font-size: 13px; margin-top: 10px; display: none; }
+    #reconnect { position: fixed; inset: 0; display: none; place-items: center; z-index: 25; background: #000a; }
+    #reconnect.visible { display: grid; }
+    #reconnect .card { color: #fff; font-size: 20px; text-align: center; }
+    #reconnect .sub { color: #bbb; font-size: 13px; margin-top: 8px; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #ccc; font-size: 15px; z-index: 5; }
+    #nametag-layer { position: fixed; inset: 0; z-index: 8; pointer-events: none; }
+    .nametag { position: absolute; top: 0; left: 0; transform: translate(-50%, -100%);
+      color: #fff; font-size: 12px; background: rgba(0,0,0,0.55); border: 1px solid #fff;
+      border-radius: 4px; padding: 1px 6px; white-space: nowrap; text-shadow: none; }
+    #float-layer { position: fixed; inset: 0; z-index: 9; pointer-events: none; overflow: hidden; }
+    .float-text { position: absolute; top: 0; left: 0; font-size: 16px; font-weight: bold;
+      color: #fff; text-shadow: 0 1px 2px #000; will-change: transform, opacity; }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+  <div id="nametag-layer"></div>
+  <div id="float-layer"></div>
+
+  <div id="hud">
+    <div id="hp-bar"><div id="hp-fill"></div></div>
+    <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
+    <div id="hud-text">connecting…</div>
+  </div>
+  <div id="leaderboard"></div>
+  <div id="countdown"></div>
+  <div id="flash"></div>
+
+  <div id="gameover">
+    <div class="card"><div id="gameover-title">GAME OVER</div><div class="sub" id="gameover-sub">click to respawn</div></div>
+  </div>
+  <div id="reconnect">
+    <div class="card">connection lost<div class="sub">retrying…</div></div>
+  </div>
+  <div id="login">
+    <div class="card">
+      <h1>opengame</h1>
+      <p>multiplayer arena survival — open this page in two tabs to play together</p>
+      <input id="login-name" type="text" maxlength="16" placeholder="your name" autocomplete="off" />
+      <br/>
+      <button id="login-btn">JOIN</button>
+      <div id="login-error"></div>
+    </div>
+  </div>
+  <div id="loading">loading…</div>
+
+  <!-- three.js via ES module importmap, pinned (no bundler, no build step) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
+      "@colyseus/schema": "https://cdn.jsdelivr.net/npm/@colyseus/schema@4.0.13/build/index.mjs"
+    }
+  }
+  </script>
+  <!-- colyseus.js client (0.17 SDK, pairs with colyseus@0.17 server), UMD script tag -> global `Colyseus` -->
+  <script src="https://cdn.jsdelivr.net/npm/@colyseus/sdk@0.17.43/dist/colyseus.js"></script>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

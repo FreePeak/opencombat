@@ -1,0 +1,5 @@
+filename,notes,authors,licenses,urls
+"assets/characters/adventurer.glb","Low-poly animated adventurer with idle/run/sword-swing clips; player character, tinted per player on the client","Quaternius","CC0 1.0","https://poly.pizza/m/5EGWBMpuXq"
+"assets/enemies/orc.glb","Low-poly animated orc with idle/run/punch/hit-react clips; enemy AI target (logic is server-side)","Quaternius","CC0 1.0","https://poly.pizza/m/5vO2YJsPEf"
+"assets/props/tree.glb","Low-poly tree prop scattered around the arena","Quaternius","CC0 1.0","https://poly.pizza/m/aVOxaHRPWe"
+"assets/props/rock.glb","Low-poly rock prop scattered around the arena","Quaternius","CC0 1.0","https://poly.pizza/m/4MUaQTcDdc"
