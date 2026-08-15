@@ -13,7 +13,7 @@ import Enemy from '../entities/Enemy.js';
 import SoundManager from '../audio/SoundManager.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
-import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain } from '../network.js';
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, joinErrorMessage } from '../network.js';
 
 // Deterministic LCG: scatters props identically on every client so the
 // arena looks the same for all players, without a network round trip.
@@ -138,9 +138,33 @@ export default class GameScene {
     // Remember the last name; the form is always shown before connecting.
     this.name = localStorage.getItem('opengame.name') ?? '';
     this.loginName.value = this.name;
+    // Character choice persists like the name; the server clamps the index.
+    const saved = Number(localStorage.getItem('opengame.character'));
+    this.character = Number.isFinite(saved)
+      ? Math.max(0, Math.min(CONFIG.characters.length - 1, saved)) : 0;
+    this.buildCharacterPicker();
     this.loginEl.classList.add('visible');
     this.loginBtn.addEventListener('click', () => this.onJoinClick());
     this.loginName.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
+  }
+
+  /** Character cards on the login screen (CONFIG.characters drives it). */
+  buildCharacterPicker() {
+    const picker = document.getElementById('char-picker');
+    picker.innerHTML = '';
+    CONFIG.characters.forEach((c, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'char-card' + (i === this.character ? ' selected' : '');
+      btn.textContent = c.label;
+      btn.addEventListener('click', () => {
+        this.character = i;
+        localStorage.setItem('opengame.character', String(i));
+        for (const el of picker.children) el.classList.remove('selected');
+        btn.classList.add('selected');
+      });
+      picker.appendChild(btn);
+    });
   }
 
   async onJoinClick() {
@@ -158,14 +182,11 @@ export default class GameScene {
       document.getElementById('loading').style.display = 'none';
       this.loginEl.classList.remove('visible');
       this.loginError.style.display = 'none';
-      this.room = await joinGame(this.name);
+      this.room = await joinGame(this.name, this.character);
       this.wireRoom();
     } catch (err) {
       console.error(err);
-      const msg = (err && err.message) || '';
-      this.loginError.textContent = msg.includes('timed out')
-        ? `${msg} — check your connection and retry.`
-        : 'cannot reach server — run `npm run serve` on :2567 (or check the URL).';
+      this.loginError.textContent = joinErrorMessage(err);
       this.loginError.style.display = 'block';
     }
     this.joining = false;
@@ -180,17 +201,27 @@ export default class GameScene {
       setTimeout(() => rej(new Error('timed out loading models — network too slow or unreachable')), CONFIG.loadTimeoutMs));
     return Promise.race([
       Promise.all([
-        load('assets/characters/adventurer.glb'), // player model (shared)
-        load('assets/enemies/orc.glb'),           // enemy model
-        load('assets/props/tree.glb'),            // arena props
+        ...CONFIG.characters.map((c) => load(`assets/characters/${c.file}`)), // roster
+        load('assets/props/sword.glb'),   // swordsman weapon prop
+        load('assets/enemies/orc.glb'),   // enemy model
+        load('assets/props/tree.glb'),    // arena props
         load('assets/props/rock.glb')
       ]),
       timeout
-    ]).then(([player, enemy, tree, rock]) => ({
-      player: player.scene, playerAnims: player.animations,
-      enemy: enemy.scene, enemyAnims: enemy.animations,
-      tree: tree.scene, rock: rock.scene
-    }));
+    ]).then((all) => {
+      // Promise.all resolves FLAT: [char0..charN, sword, enemy, tree, rock].
+      const [sword, enemy, tree, rock] = all.slice(CONFIG.characters.length);
+      const characters = {};
+      CONFIG.characters.forEach((c, i) => {
+        characters[c.key] = { scene: all[i].scene, animations: all[i].animations };
+      });
+      return {
+        characters,
+        sword: sword.scene,
+        enemy: enemy.scene, enemyAnims: enemy.animations,
+        tree: tree.scene, rock: rock.scene
+      };
+    });
   }
 
   // ====================== Room / state wiring =============================
@@ -232,6 +263,11 @@ export default class GameScene {
 
   async tryReconnect() {
     this.reconnectAttempts = (this.reconnectAttempts ?? 0) + 1;
+    // Exponential backoff (1.5s -> 3s -> 6s -> capped 10s): a flapping
+    // connection must not hammer the server — and the fresh-join fallback
+    // below consumes per-IP rate-limit tokens, so a tight loop would lock
+    // this address out of joining entirely.
+    const backoff = Math.min(1500 * 2 ** (this.reconnectAttempts - 1), 10000);
     try {
       // Preferred path: resume the same seat (position/score survive).
       const room = await reconnectRoom(this.room, this.name);
@@ -239,19 +275,28 @@ export default class GameScene {
       this.reconnectEl.classList.remove('visible');
       this.wireRoom();
       console.log('[client] reconnected with seat');
+      return;
     } catch (err) {
       // Token invalid (room disposed / too young): after a few attempts,
       // fall back to a fresh join so the player is never stuck.
       if (this.reconnectAttempts > 3) {
         try {
-          this.room = await joinGame(this.name);
+          this.room = await joinGame(this.name, this.character);
           this.reconnectEl.classList.remove('visible');
           this.wireRoom();
           console.log('[client] re-joined fresh');
           return;
-        } catch { /* server down — keep retrying below */ }
+        } catch (joinErr) {
+          const jm = (joinErr && joinErr.message) || '';
+          if (jm.includes('too many join attempts')) {
+            // Rate-limited: wait well past the bucket refill (~1 token/2s)
+            // instead of retrying into the lockout.
+            this.reconnectEl.querySelector('.sub').textContent =
+              'too many join attempts — retrying in a few seconds…';
+          }
+        }
       }
-      setTimeout(() => this.tryReconnect(), 1500);
+      setTimeout(() => this.tryReconnect(), backoff);
     }
   }
 
@@ -307,16 +352,19 @@ export default class GameScene {
   /** Create the local or a remote player entity for a sessionId. */
   addPlayer(sid, player) {
     const color = player.color || CONFIG.colors.orb;
+    // The server clamps the index; defend against stale/patched clients too.
+    const def = CONFIG.characters[player.character] ?? CONFIG.characters[0];
+    const pack = this.models.characters[def.key];
     if (sid === this.room.sessionId) {
       // Our own player: the camera follows this one.
-      this.local = new Player(this, this.room, this.models.player, this.models.playerAnims, color, 0.85);
+      this.local = new Player(this, this.room, pack, def, color, this.models.sword);
       this.local.state = player;
       this.local.root.position.set(player.x, 0, player.z); // snap to spawn
       this.cameraRigged = false;
       this.lastHp = player.hp;
       this.lastScore = player.score;
     } else {
-      this.remotePlayers.set(sid, new RemotePlayer(this, player, this.models.player, this.models.playerAnims, color, 0.85));
+      this.remotePlayers.set(sid, new RemotePlayer(this, player, pack, def, color, this.models.sword));
     }
     this.nametagFor(sid, player, color);
   }

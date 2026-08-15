@@ -4,15 +4,19 @@
 // server and client share one definition of the wire format.
 import { CONFIG } from './config.js';
 import { WorldState } from './server/schema/StateSchema.js';
+import { joinErrorMessage } from './joinError.js';
+
+export { joinErrorMessage };
 
 export const client = new Colyseus.Client(CONFIG.serverUrl);
 
 /** Connect and join (or create) the arena room, carrying the chosen name. */
-export async function joinGame(name) {
+export async function joinGame(name, character) {
   // rootSchema lets the client decode the binary state patches; without it
-  // room.state stays undefined (schema-based serialization). The name rides
-  // the join options to the server, which stores it in PlayerState.name.
-  return client.joinOrCreate('game', { name }, WorldState);
+  // room.state stays undefined (schema-based serialization). The name and
+  // the chosen character index ride the join options to the server, which
+  // sanitizes both into PlayerState.
+  return client.joinOrCreate('game', { name, character }, WorldState);
 }
 
 /** Re-join a dropped connection using the colyseus reconnection token. */

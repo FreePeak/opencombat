@@ -3,3 +3,8 @@ filename,notes,authors,licenses,urls
 "assets/enemies/orc.glb","Low-poly animated orc with idle/run/punch/hit-react clips; enemy AI target (logic is server-side)","Quaternius","CC0 1.0","https://poly.pizza/m/5vO2YJsPEf"
 "assets/props/tree.glb","Low-poly tree prop scattered around the arena","Quaternius","CC0 1.0","https://poly.pizza/m/aVOxaHRPWe"
 "assets/props/rock.glb","Low-poly rock prop scattered around the arena","Quaternius","CC0 1.0","https://poly.pizza/m/4MUaQTcDdc"
+"assets/characters/knight.glb","Rigged low-poly knight; playable swordsman (no animation clips — client plays a procedural idle/run/swing)","Dawid2K","CC-BY 3.0","https://poly.pizza/m/isC73B8SKq"
+"assets/props/sword.glb","Low-poly sword prop attached to the swordsman's right hand","Quaternius","CC0 1.0","https://poly.pizza/m/ajOJ2NLz5m"
+"assets/characters/archer.glb","Hooded adventurer with idle/run/slash clips; playable archer (procedural bow)","Quaternius","CC0 1.0","https://poly.pizza/m/y9KWOVG21R"
+"assets/characters/mage.glb","Animated wizard with idle/run/staff-attack clips; playable mage","Quaternius","CC-BY 3.0","https://poly.pizza/m/kttbFvCl2C"
+"assets/characters/spike.glb","Horned demon with trident and idle/run/punch clips; playable spike man","Quaternius","CC0 1.0","https://poly.pizza/m/LnfIziKv4o"

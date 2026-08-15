@@ -36,6 +36,50 @@
       "license": "CC0 1.0",
       "file": "assets/props/rock.glb",
       "role": "arena prop (scattered deterministically on every client)"
+    },
+    {
+      "name": "Knight",
+      "author": "Dawid2K",
+      "source": "https://poly.pizza/m/isC73B8SKq",
+      "license": "CC-BY 3.0",
+      "file": "assets/characters/knight.glb",
+      "role": "selectable player character: swordsman (static rig — procedural idle/run/swing fallback)",
+      "animations": []
+    },
+    {
+      "name": "Sword",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/ajOJ2NLz5m",
+      "license": "CC0 1.0",
+      "file": "assets/props/sword.glb",
+      "role": "weapon prop attached to the swordsman's right hand bone"
+    },
+    {
+      "name": "Hooded Adventurer",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/y9KWOVG21R",
+      "license": "CC0 1.0",
+      "file": "assets/characters/archer.glb",
+      "role": "selectable player character: archer (carries a procedural bow)",
+      "animations": ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Sword_Slash"]
+    },
+    {
+      "name": "Animated Wizard",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/kttbFvCl2C",
+      "license": "CC-BY 3.0",
+      "file": "assets/characters/mage.glb",
+      "role": "selectable player character: mage",
+      "animations": ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Staff_Attack"]
+    },
+    {
+      "name": "Demon",
+      "author": "Quaternius",
+      "source": "https://poly.pizza/m/LnfIziKv4o",
+      "license": "CC0 1.0",
+      "file": "assets/characters/spike.glb",
+      "role": "selectable player character: spike man (horns + trident)",
+      "animations": ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Punch"]
     }
   ],
   "notes": "All four assets are CC0 1.0 — no attribution required, none displayed in-game. Kenney Nature Kit (CC0) was evaluated for props but ships as 2D isometric PNGs, unsuitable for this 3D scene; poly.pizza Quaternius GLBs were used instead."

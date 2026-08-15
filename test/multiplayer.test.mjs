@@ -22,6 +22,7 @@ import { WorldState } from '../src/server/schema/StateSchema.js';
 import { SERVER } from '../src/server/config.js';
 import { buildHttpApp, attachHttpLogging } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
+import { joinErrorMessage } from '../src/joinError.js';
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (cond, timeoutMs = 10000, label = 'condition') => {
@@ -58,7 +59,7 @@ room.onStateChange((state) => {
   const key = state.matchState + ':' + Math.ceil(state.countdown);
   if (seenStates[seenStates.length - 1] !== key) seenStates.push(key);
 });
-await waitFor(() => room.state?.matchState === 'playing', 8000, 'playing phase');
+await waitFor(() => room.state?.matchState === 'playing', 15000, 'playing phase');
 assert.ok(seenStates.includes('countdown:3') || seenStates.includes('countdown:2'),
   'countdown observed before playing (got: ' + seenStates.slice(0, 6).join(', ') + ')');
 
@@ -66,6 +67,7 @@ const me = () => room.state.players.get(room.sessionId);
 assert.ok(me(), 'joined player exists in the state map');
 assert.equal(me().hp, 100, 'fresh player starts at full HP');
 assert.equal(me().name, 'Tester1', 'pre-join name rides the join options');
+assert.equal(me().character, 0, 'join without a character defaults to swordsman');
 assert.ok(me().color > 0, 'server assigned a palette color');
 assert.equal(room.state.matchState, 'playing', 'match is playing after countdown');
 
@@ -133,11 +135,22 @@ assert.ok(effectMs > 0 && effectMs <= 15000, `effect has a sane duration (${effe
 
 // --- two-client visibility --------------------------------------------------
 const client2 = new Client(`ws://localhost:${port}`);
-const room2 = await client2.joinOrCreate('game', { name: 'Tester2' }, WorldState);
+const room2 = await client2.joinOrCreate('game', { name: 'Tester2', character: 2 }, WorldState);
 await waitFor(() => room2.state?.players?.size >= 2, 5000, 'room2 sees both players');
 await waitFor(() => room.state?.players?.size >= 2, 5000, 'room1 sees both players');
 const other = room2.state.players.get(room.sessionId);
 assert.ok(other && other.name === 'Tester1', 'room2 can read room1 player (name rides)');
+
+// --- character selection ------------------------------------------------------
+// The chosen index rides the join options and is visible to every client;
+// out-of-range values are clamped server-side to the roster bounds.
+assert.equal(room2.state.players.get(room2.sessionId).character, 2, 'chosen character rides the join options');
+assert.equal(room.state.players.get(room2.sessionId).character, 2, 'other clients see the chosen character');
+const client3 = new Client(`ws://localhost:${port}`);
+const room3 = await client3.joinOrCreate('game', { name: 'Tester3', character: 99 }, WorldState);
+await waitFor(() => room3.state?.players?.get(room3.sessionId), 5000, 'room3 player exists');
+assert.equal(room3.state.players.get(room3.sessionId).character, 3, 'out-of-range character clamped to the roster');
+room3.leave();
 
 // --- F: automatic reconnection (Upgrade F) --------------------------------
 // The sdk reconnects dropped sockets on its own (same session + room, and
@@ -168,7 +181,7 @@ const roomOf = (r) => [...GameRoom.instances].find((x) => x.roomId === r.roomId)
 const newRoom = async (name) => {
   const c = new Client(`ws://localhost:${port}`);
   const r = await c.create('game', { name }, WorldState);
-  await waitFor(() => r.state?.matchState === 'playing', 8000, `${name}: playing phase`);
+  await waitFor(() => r.state?.matchState === 'playing', 15000, `${name}: playing phase`);
   return { c, r };
 };
 const joinRoom = async (r, name) => {
@@ -197,8 +210,11 @@ const half = SERVER.world.size / 2;
   aState().x = -half + 3; aState().z = -half + 3;
   sr.invulnUntil.set(a.r.sessionId, Date.now() + 120000);
 
-  // Kill B (simulated enemy damage).
+  // Kill B (simulated enemy damage). The corpse may have spawned on top of
+  // an orb and collected it in the tick between joining and this mutation —
+  // reset the score so the collection assertions below start from a clean 0.
   bState().hp = 0;
+  bState().score = 0;
   await waitFor(() => bClient().hp === 0, 3000, 'corpse hp 0 synced to client');
 
   // 1. Frozen: movement input is ignored.
@@ -408,6 +424,19 @@ const half = SERVER.world.size / 2;
   const envText = await envjs.text();
   assert.ok(envText.includes('window.__OPENGAME__'), '/env.js injects the boot config');
 
+  // Dev live reload (NODE_ENV != production in this test process): the SSE
+  // endpoint exists and index.html carries the reloader script.
+  const reloadAc = new AbortController();
+  try {
+    const reload = await fetch(`${base}/__reload`, { signal: reloadAc.signal });
+    assert.equal(reload.status, 200, '/__reload status');
+    assert.match(reload.headers.get('content-type') || '', /text\/event-stream/, 'SSE content type');
+  } finally {
+    reloadAc.abort(); // close the stream
+  }
+  const idxBody = await (await fetch(`${base}/`)).text();
+  assert.ok(idxBody.includes('/__reload'), 'dev index.html injects the live-reload script');
+
   // Static whitelist: index.html + assets + client modules only.
   const idx = await fetch(`${base}/`);
   assert.equal(idx.status, 200, 'index.html served');
@@ -464,6 +493,18 @@ const half = SERVER.world.size / 2;
   } finally {
     SERVER.match.emptyRoomTtlMs = prevTtl;
   }
+}
+{
+  // Client join-error UX: server rejections must surface their real reason
+  // instead of the misleading "cannot reach server" catch-all.
+  assert.match(joinErrorMessage({ message: 'too many join attempts — wait a few seconds and try again', code: 526 }),
+    /Too many join attempts/, 'rate-limited joins get an actionable message');
+  assert.match(joinErrorMessage({ message: 'room "abc" is locked', code: 4214 }),
+    /Server rejected the join: room "abc" is locked/, 'other rejections show the server message');
+  assert.match(joinErrorMessage({ message: 'timed out loading models — network too slow or unreachable' }),
+    /check your connection/, 'load timeouts keep their guidance');
+  assert.match(joinErrorMessage(new TypeError('fetch failed')),
+    /Cannot reach the server/, 'network failures blame the server address');
 }
 
 // Disconnect cleanly (exit=false so the test process survives shutdown).

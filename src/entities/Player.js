@@ -5,7 +5,7 @@
 // and power-up effects (shield bubble, double tint) render from state.
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
-import { attachSword } from './Sword.js';
+import { attachWeapon, ProceduralAnim } from './Sword.js';
 import StateMachine from '../fsm/StateMachine.js';
 import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
@@ -16,15 +16,16 @@ export default class Player {
   /**
    * @param {THREE.Scene} scene  the game scene (render world)
    * @param {Room} room          the colyseus room (for sending input)
-   * @param {THREE.Group} model  cloned GLB scene shared by all players
-   * @param {THREE.AnimationClip[]} anims  animation clips from the GLB
+   * @param {THREE.Group} model  { scene, animations } GLB pack for this class
+   * @param {object} def         character def from CONFIG.characters
    * @param {number} color       server-assigned tint (PlayerState.color)
-   * @param {number} scale       model scale (Quaternius models vary in size)
+   * @param {THREE.Group|null} swordModel  loaded sword GLB (swordsman weapon)
    */
-  constructor(scene, room, model, anims, color, scale = 1) {
+  constructor(scene, room, model, def, color, swordModel = null) {
     this.scene = scene;
     this.room = room;
     this.state = null; // live PlayerState ref, set by the scene on join
+    this.def = def;
     this.baseColor = new THREE.Color(color);
 
     // Clone of the shared GLB, materials cloned so the tint is per-player.
@@ -32,8 +33,8 @@ export default class Player {
     // the skeleton bound to the SOURCE hierarchy's bones (which never get
     // updated), collapsing the character into nothing.
     this.root = new THREE.Group();
-    this.root.scale.setScalar(scale);
-    this.mesh = skeletonClone(model);
+    this.root.scale.setScalar(def.scale);
+    this.mesh = skeletonClone(model.scene);
     this.materials = [];
     this.mesh.traverse((o) => {
       if (!o.isMesh) return;
@@ -43,9 +44,8 @@ export default class Player {
       this.materials.push(o.material);
     });
     this.root.add(this.mesh);
-    // Everyone carries a sword: the melee attack is a sword slash and the
-    // GLB ships without a weapon.
-    this.sword = attachSword(this.mesh);
+    // Per-class weapon: sword GLB / procedural bow / none (built-in).
+    this.weapon = attachWeapon(this.mesh, def, swordModel);
     scene.add(this.root);
 
     // SHIELD power-up bubble: translucent sphere, hidden until the effect.
@@ -62,13 +62,16 @@ export default class Player {
     this.shieldMesh.visible = false;
     this.root.add(this.shieldMesh);
 
-    // Animation clips, keyed by our logical names (see CONFIG.anims).
+    // Animation clips, keyed by our logical names (see CONFIG.characters).
+    // Models that ship no clips (the knight) get ProceduralAnim instead.
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.clips = {};
-    for (const [name, clipName] of Object.entries(CONFIG.anims.player)) {
-      const clip = THREE.AnimationClip.findByName(anims, clipName);
+    for (const [name, clipName] of Object.entries(def.anims)) {
+      if (!clipName) continue;
+      const clip = THREE.AnimationClip.findByName(model.animations, clipName);
       if (clip) this.clips[name] = this.mixer.clipAction(clip);
     }
+    this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
 
     // Keys: state objects updated by GameScene's window listeners.
     this.keys = scene.keys;
@@ -171,8 +174,11 @@ export default class Player {
       this.root.rotation.y += dy * (1 - Math.exp(-18 * dt));
       this.updateEffects(s.effects);
     }
-    this.playAnim(this.animName);
-    this.mixer.update(dt);
+    if (this.proc) this.proc.update(dt, this.moving, this.attackAnimT > 0);
+    else {
+      this.playAnim(this.animName);
+      this.mixer.update(dt);
+    }
   }
 
   dispose() {

@@ -1,7 +1,8 @@
 // Server-side tunables — authoritative gameplay numbers and deployment
 // configuration. Anything that affects the simulation lives here because the
 // server is authoritative. Environment overrides (see README "Environment"):
-//   PORT, PUBLIC_URL, DISABLE_SHADOWS, REDIS_URL, TICK_MS.
+//   PORT, PUBLIC_URL, DISABLE_SHADOWS, REDIS_URL, TICK_MS,
+//   RATE_LIMIT_CAPACITY.
 const env = process.env;
 
 const publicUrl = (env.PUBLIC_URL || '').replace(/\/+$/, '');
@@ -14,6 +15,8 @@ export const SERVER = {
   publicWsUrl,          // ws(s)://... (null = client falls back to its own host)
   disableShadows: ['1', 'true'].includes((env.DISABLE_SHADOWS || '').toLowerCase()),
   redis: { url: env.REDIS_URL || '' },  // '' = LocalPresence (single process)
+  // Dev-only live reload (see liveReload.js): off in production / LIVE_RELOAD=0.
+  liveReload: env.NODE_ENV !== 'production' && env.LIVE_RELOAD !== '0',
 
   // Fixed-timestep loop: the room updates every tickMs. dt is computed from
   // REAL elapsed time (clock drift compensation), clamped to avoid a giant
@@ -81,6 +84,10 @@ export const SERVER = {
   // (stable across joins/reconnects).
   colors: [0xff8a65, 0xffd54f, 0xce93d8, 0xa5d6a7, 0xf48fb1, 0x90caf9, 0x4fc3f7],
 
+  // Playable character roster size — mirrors the length of CONFIG.characters
+  // in the client config (src/config.js). Join options are clamped to this.
+  characters: { count: 4 },
+
   // --- Security boundaries ------------------------------------------------
   // These are abuse-hardening limits, not gameplay: hostile clients must not
   // be able to move faster than the server speed, spam input, or flood joins.
@@ -91,7 +98,7 @@ export const SERVER = {
   // requests): blunts join-flooding. In-memory per process — fine for one
   // instance; put a real rate limiter in front for multi-instance deploys.
   rateLimit: {
-    capacity: 10,             // burst of joins allowed immediately
+    capacity: Number(env.RATE_LIMIT_CAPACITY || 10), // burst of joins allowed
     refillPerSec: 0.5         // then one new token every 2s
   }
 };

@@ -102,6 +102,13 @@ export default class GameRoom extends Room {
     return name || 'player';
   }
 
+  /** Sanitize the pre-join character index: integer clamped to the roster. */
+  sanitizeCharacter(raw) {
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(SERVER.characters.count - 1, n));
+  }
+
   spawnOrbs() {
     for (let i = 0; i < SERVER.orb.count; i++) {
       const p = this.randomPos();
@@ -136,7 +143,10 @@ export default class GameRoom extends Room {
     const ip = normalizeIp(authContext?.ip);
     if (!takeToken(ip)) {
       this.warnEvent('join_rate_limited', { ip });
-      throw new Error('too many join attempts — slow down');
+      // Message contract: must contain "too many join attempts" — the client
+      // (joinErrorMessage in src/network.js) matches on it to explain the
+      // lockout and how long to wait.
+      throw new Error('too many join attempts — wait a few seconds and try again');
     }
     return true; // accept (truthy auth)
   }
@@ -152,6 +162,7 @@ export default class GameRoom extends Room {
       const p = this.randomPos();
       player = new PlayerState(p.x, p.z);
       player.name = name;
+      player.character = this.sanitizeCharacter(options.character);
       player.color = SERVER.colors[nameHash(name) % SERVER.colors.length];
       this.state.players.set(client.sessionId, player);
       this.logEvent('player_join', { sid: client.sessionId, name, players: this.state.players.size });

@@ -21,6 +21,7 @@ export class PlayerState extends Schema {
     this.score = 0;
     this.anim = 'idle';       // 'idle' | 'run' | 'attack' — drives AnimationMixer
     this.name = '';           // chosen pre-join, rides the join options
+    this.character = 0;       // chosen pre-join: index into CONFIG.characters
     this.color = 0xffffff;    // server-assigned from SERVER.colors palette
     this.effects = new MapSchema(); // power-up name -> remaining ms
     this.attackCd = 0;        // ms until J works again (HUD bar + anti-cheat)
@@ -33,6 +34,7 @@ defineTypes(PlayerState, {
   score: 'number',
   anim: 'string',
   name: 'string',
+  character: 'number',
   color: 'number',
   effects: { map: 'number' },
   attackCd: 'number'

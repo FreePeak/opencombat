@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>opengame — multiplayer 3D arena</title>
+  <!-- @live-reload -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%2366ff66'/></svg>">
   <style>
     html, body { margin: 0; height: 100%; background: #0b0e14; overflow: hidden; font-family: monospace; }
@@ -31,6 +32,12 @@
     #login h1 { font-size: 26px; margin: 0 0 6px; }
     #login p { color: #888; font-size: 13px; margin: 0 0 16px; }
     #login input { font: 15px monospace; padding: 8px 12px; width: 220px; border-radius: 6px; border: 1px solid #333; background: #161b22; color: #fff; }
+    #char-picker { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+    /* #login .char-card must outrank the generic "#login button" rule below. */
+    #login .char-card { font: 13px monospace; padding: 8px 10px; border-radius: 6px; border: 1px solid #333;
+      background: #161b22; color: #bbb; cursor: pointer; }
+    #login .char-card:hover { border-color: #555; color: #fff; }
+    #login .char-card.selected { border-color: #4caf50; color: #fff; background: #1d2a1e; }
     #login button { margin-top: 12px; font: 14px monospace; padding: 8px 26px; border-radius: 6px; border: none;
       background: #4caf50; color: #fff; cursor: pointer; }
     #login-error { color: #ff6b6b; font-size: 13px; margin-top: 10px; display: none; }
@@ -73,6 +80,7 @@
       <h1>opengame</h1>
       <p>multiplayer arena survival — open this page in two tabs to play together</p>
       <input id="login-name" type="text" maxlength="16" placeholder="your name" autocomplete="off" />
+      <div id="char-picker"></div>
       <br/>
       <button id="login-btn">JOIN</button>
       <div id="login-error"></div>

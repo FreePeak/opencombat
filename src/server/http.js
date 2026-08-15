@@ -8,14 +8,33 @@
 // ratelimit.js) — Colyseus 0.17 routes /matchmake* through its own router
 // dispatcher, bypassing express middleware entirely.
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { SERVER } from './config.js';
 import GameRoom from './rooms/GameRoom.js';
 import { log } from './log.js';
+import { createLiveReload } from './liveReload.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
+
+// index.html is static, but in dev mode the live-reload script is injected
+// at the <!-- @live-reload --> placeholder (a no-op comment in production).
+const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const RELOADER_SCRIPT = `<script>
+(function () {
+  if (!window.EventSource) return;
+  var opened = false;
+  var es = new EventSource('/__reload');
+  es.onopen = function () { if (opened) location.reload(); opened = true; };
+  es.onmessage = function (e) { if (e.data === 'reload') location.reload(); };
+})();
+</script>`;
+const servedIndex = () =>
+  SERVER.liveReload && indexHtml.includes('<!-- @live-reload -->')
+    ? indexHtml.replace('<!-- @live-reload -->', RELOADER_SCRIPT)
+    : indexHtml;
 
 const headerIp = (req) =>
   (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
@@ -96,9 +115,26 @@ export function buildHttpApp(app) {
       })};`);
   });
 
+  // --- Dev live reload (SSE): pages subscribe, watcher broadcasts on
+  // client-file changes; server restarts show up as a reconnect -> reload.
+  const liveReload = createLiveReload({ root });
+  if (liveReload) {
+    liveReload.start();
+    app.get('/__reload', (req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive'
+      });
+      res.write(': connected\n\n');
+      liveReload.clients.add(res);
+      req.on('close', () => liveReload.clients.delete(res));
+    });
+  }
+
   // --- Static surface (whitelist; see header comment) ----------------------
   app.get('/', (_req, res) => {
-    res.set('Cache-Control', 'no-cache').sendFile(path.join(root, 'index.html'));
+    res.type('html').set('Cache-Control', 'no-cache').send(servedIndex());
   });
   app.use('/assets', express.static(path.join(root, 'assets'), { maxAge: '1d', etag: true }));
   // Zero-build client: ES modules load directly from /src. Server internals

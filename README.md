@@ -17,7 +17,14 @@ Bare (local dev):
 cd games/opengame
 npm install
 npm run serve        # server + client on http://localhost:2567
+npm run dev          # same, PLUS auto-reload: server restarts on server-file
+                     # changes (node --watch) and open pages reload when
+                     # client files (src/, assets/, index.html) change
 ```
+
+Live reload is enabled outside `NODE_ENV=production` (disable with
+`LIVE_RELOAD=0`). It works via a small SSE endpoint (`/__reload`) injected
+into index.html — zero extra dependencies, nothing to install.
 
 Docker (production-ish):
 
@@ -47,6 +54,7 @@ All optional; the defaults run a single-process game on :2567.
 | `DISABLE_SHADOWS` | *(unset)* | `1`/`true` disables shadow maps for low-end clients (injected into `/env.js`) |
 | `REDIS_URL` | *(empty)* | Redis URL → Colyseus `RedisPresence` (multi-process matchmaking). Empty = in-memory presence |
 | `TICK_MS` | `50` | Fixed simulation timestep |
+| `RATE_LIMIT_CAPACITY` | `10` | Per-IP join token-bucket burst size (refill 0.5 tokens/s) |
 
 ## Deployment notes
 
@@ -75,6 +83,7 @@ All optional; the defaults run a single-process game on :2567.
 | W / A / S / D or arrows | Move (camera-relative) |
 | J | Melee swing (0.8s cooldown, HUD bar) |
 | M | Mute / unmute sound |
+| Click a character card (login) | Choose Swordsman / Archer / Mage / Spike Man |
 
 ## Match lifecycle (server-authoritative)
 
@@ -229,9 +238,20 @@ opengame/
 
 ## Artwork
 
-All models are **CC0 1.0** by Quaternius (downloaded via poly.pizza) —
-details, source URLs and licenses in `assets/credits/`. The GLBs ship
-skeletal animations (idle/run/attack/hit) played via `THREE.AnimationMixer`.
+All models are low-poly and free-licensed (details, source URLs and licenses in
+`assets/credits/`; policy: CC0 preferred, CC-BY with attribution):
+
+- **Playable roster** (chosen on the login screen, `PlayerState.character`):
+  Swordsman = Knight by Dawid2K (CC-BY 3.0, static rig — the client plays a
+  procedural idle/run/swing; carries the CC0 Quaternius sword prop),
+  Archer = Hooded Adventurer (CC0, Quaternius, procedural bow),
+  Mage = Animated Wizard (CC-BY 3.0, Quaternius, staff attack clip),
+  Spike Man = Demon (CC0, Quaternius, trident).
+- **Enemy**: Orc (CC0, Quaternius). **Props**: tree + rock (CC0, Quaternius).
+
+Animated GLBs ship skeletal clips (idle/run/attack/hit) played via
+`THREE.AnimationMixer`; the selection is cosmetic — every class shares the
+same melee combat rules.
 
 ## What was verified
 

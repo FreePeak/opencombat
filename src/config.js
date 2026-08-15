@@ -68,15 +68,48 @@ export const CONFIG = {
     nametagBg: 'rgba(0,0,0,0.55)'
   },
 
-  // Clip names inside the Quaternius GLBs (see assets/credits/). Our
-  // logical anim names map onto them; the server sends these logical names
-  // in PlayerState.anim / EnemyState.anim.
-  anims: {
-    player: {
-      idle: 'CharacterArmature|Idle',
-      run: 'CharacterArmature|Run',
-      attack: 'CharacterArmature|Sword_Slash'
+  // Selectable player characters. `key` indexes the loaded GLB map in
+  // GameScene.loadModels(); `scale` normalizes every model to the same
+  // in-game height (~1.55 units, the adventurer's height at 0.85); `anims`
+  // maps our logical names onto clip names inside the GLB (null = the model
+  // ships no clips and the client plays a procedural fallback); `weapon`
+  // picks what is attached to the right hand ('sword' GLB, 'bow' procedural,
+  // or null when the model carries its own weapon). The server clamps the
+  // index to [0, characters.length) — keep both sides in sync.
+  characters: [
+    {
+      key: 'swordsman', label: 'Swordsman', file: 'knight.glb', scale: 0.78, weapon: 'sword',
+      anims: { idle: null, run: null, attack: null }
     },
+    {
+      key: 'archer', label: 'Archer', file: 'archer.glb', scale: 0.85, weapon: 'bow',
+      anims: {
+        idle: 'CharacterArmature|Idle',
+        run: 'CharacterArmature|Run',
+        attack: 'CharacterArmature|Sword_Slash'
+      }
+    },
+    {
+      key: 'mage', label: 'Mage', file: 'mage.glb', scale: 0.6, weapon: null,
+      anims: {
+        idle: 'CharacterArmature|Idle',
+        run: 'CharacterArmature|Run',
+        attack: 'CharacterArmature|Staff_Attack'
+      }
+    },
+    {
+      key: 'spike', label: 'Spike Man', file: 'spike.glb', scale: 0.65, weapon: null,
+      anims: {
+        idle: 'CharacterArmature|Idle',
+        run: 'CharacterArmature|Run',
+        attack: 'CharacterArmature|Punch'
+      }
+    }
+  ],
+
+  // Clip names inside the enemy GLB (see assets/credits/). The server sends
+  // logical anim names in EnemyState.anim.
+  anims: {
     enemy: {
       idle: 'CharacterArmature|Idle',
       run: 'CharacterArmature|Run',
