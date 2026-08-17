@@ -12,12 +12,23 @@
 //        decoupled from the character's facing; strafing then follows a
 //        constant world direction (a straight line) and the camera no longer
 //        orbits.
-//   RC6  "attacking slides / move + attack at the same time". movePlayers
-//        integrates dirX*speed*dt every tick even while the player is mid-swing
-//        (now < animUntil). The attack animation is a planted-feet swing with
-//        no locomotion, so the model skates across the ground. Fix: ROOT the
-//        player during the attack window — freeze position and facing while the
-//        swing plays (standard melee feel; also resolves doing both at once).
+//   RC7  "attack while moving" froze the character. An earlier revision rooted
+//        the caster during the swing (movePlayers passed `attacking` into
+//        stepPlayer, which skipped integration), so holding W and tapping J
+//        stopped the player mid-stride for the whole 350ms window — you could
+//        NOT move and attack at the same time. Fix: attacking/casting never
+//        blocks movement; the swing overrides only the animation, not the
+//        position. stepPlayer always integrates.
+//   RC8  ...but simply allowing movement made a planted-feet attack clip skate
+//        across the ground (feet frozen while translating). Fix: while swinging
+//        ON THE MOVE, blend the run cycle under the attack clip at
+//        MOVING_ATTACK_RUN_BLEND so the legs keep stepping (no skate, no hard
+//        pop when the swing ends).
+//   RC9  ...and the remote player's moving-attack blend flickered at ~20Hz
+//        (the per-frame lerp-lead "moving" check decays below any threshold
+//        between server patches). Fix: remoteMoveHold arms a 150ms "moving"
+//        hold on any position-patch delta, so the run blend is stable across
+//        the whole swing and only drops when the caster genuinely stops.
 //   SKILL  Every character shares the normal melee (J) but casts a DIFFERENT
 //        skill (K). The per-character definitions and the hit-resolution math
 //        are pure and pinned here so server and client can never drift.
@@ -25,7 +36,7 @@
 // The contract tests below FAIL until the helpers exist. Run:
 //   node test/strafeRootSkill.test.mjs
 import assert from 'node:assert/strict';
-import { cameraMoveDir, cameraOffset } from '../src/anim/AnimUtils.js';
+import { cameraMoveDir, cameraOffset, MOVING_ATTACK_RUN_BLEND, REMOTE_MOVE_HOLD, remoteMoveHold } from '../src/anim/AnimUtils.js';
 import { stepPlayer } from '../src/server/movement.js';
 import { SKILLS, resolveSkillHits } from '../src/shared/skills.js';
 
@@ -79,21 +90,48 @@ const CAM_YAW = Math.PI; // the fixed third-person azimuth used by the client
   assert.deepEqual(off, off2, 'RC5: camera offset is constant (no yaw dependence)');
 }
 
-// --- RC6: the player is ROOTED while mid-swing ------------------------------
+// --- RC7: attacking NEVER blocks movement (move + attack at the same time) --
 {
-  // attacking = true: position and facing are frozen even with a live input.
-  const r = stepPlayer(1, 2, 0.5, 1, 0, 9, 1 / 60, 30, true);
-  assert.deepEqual(r, { x: 1, z: 2, rotY: 0.5 }, 'RC6: no movement while attacking');
-  // attacking = false with input: integrate by dir*speed*dt and face velocity.
-  const m = stepPlayer(0, 0, 0, 1, 0, 9, 1 / 60, 30, false);
-  assert.ok(Math.abs(m.x - 9 / 60) < 1e-9, 'RC6: moves when not attacking');
-  assert.ok(Math.abs(m.rotY - Math.atan2(1, 0)) < 1e-9, 'RC6: faces movement direction');
+  // stepPlayer always integrates — there is no `attacking` root anymore. The
+  // swing/cast overrides only the ANIMATION server-side, never the position,
+  // so a player can move and attack together. (The old root here is what made
+  // "attack while moving" freeze the character.)
+  const m = stepPlayer(0, 0, 0, 1, 0, 9, 1 / 60, 30);
+  assert.ok(Math.abs(m.x - 9 / 60) < 1e-9, 'RC7: moves with input');
+  assert.ok(Math.abs(m.rotY - Math.atan2(1, 0)) < 1e-9, 'RC7: faces movement direction');
   // no input: keeps facing.
-  const s = stepPlayer(5, 5, 1.2, 0, 0, 9, 1 / 60, 30, false);
-  assert.ok(Math.abs(s.rotY - 1.2) < 1e-9, 'RC6: keeps facing when idle');
+  const s = stepPlayer(5, 5, 1.2, 0, 0, 9, 1 / 60, 30);
+  assert.ok(Math.abs(s.rotY - 1.2) < 1e-9, 'RC7: keeps facing when idle');
   // clamps to the arena half-extent.
-  const c = stepPlayer(29.9, 0, 0, 1, 0, 9, 1, 30, false);
-  assert.ok(c.x <= 30, 'RC6: clamps to arena');
+  const c = stepPlayer(29.9, 0, 0, 1, 0, 9, 1, 30);
+  assert.ok(c.x <= 30, 'RC7: clamps to arena');
+}
+
+// --- RC8: the moving-attack blend keeps locomotion under the swing ----------
+{
+  assert.ok(MOVING_ATTACK_RUN_BLEND > 0 && MOVING_ATTACK_RUN_BLEND < 1,
+    'RC8: blend keeps SOME run cycle under a moving swing (no skate, not pure run)');
+}
+
+// --- RC9: remote "is moving" hold is stable across the ~20Hz patch gap -------
+{
+  // Simulate the server: 20Hz (50ms) fixed ticks, stepPlayer integrates every
+  // tick (RC7), so a running caster yields a continuous stream of patches.
+  const carry = { sx: 0, sz: 0, hold: 0 };
+  let x = 0;
+  for (let swung = 0; swung < 350; swung += 50) { // RC2/RC9: attackAnimMs window
+    const stepped = stepPlayer(x, 0, 0, 1, 0, 9, 0.05, 30); // RC7: moves while attacking
+    x = stepped.x;
+    const hold = remoteMoveHold(x, 0, carry, 0.05);
+    assert.ok(hold >= REMOTE_MOVE_HOLD - 1e-9,
+      'RC9: every moving patch re-arms the hold (never flees mid-swing)');
+    assert.ok(hold > 0, 'RC9: caster is still "moving" across the whole swing');
+  }
+  assert.ok(x > 0, 'RC9: the running-attack caster actually covered ground (RC7)');
+  // A stationary caster: no deltas, hold decays to 0 and the run blend drops out.
+  let hold = 1;
+  while (hold > 0) hold = remoteMoveHold(x, 0, carry, 0.05);
+  assert.equal(hold, 0, 'RC9: hold fully decays once the caster stops');
 }
 
 // --- SKILL: every character has a distinct, resolved skill ------------------
@@ -132,4 +170,4 @@ assert.equal(SKILLS.length, 4, 'one skill per playable character');
   assert.ok(!hits.includes(2), 'SKILL: cone respects range');
 }
 
-console.log('ok — strafeRootSkill.test.mjs: all RC5/RC6/skill contracts pass');
+console.log('ok — strafeRootSkill.test.mjs: all RC5/RC7/RC8/RC9/skill contracts pass');

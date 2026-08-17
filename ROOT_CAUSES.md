@@ -70,11 +70,52 @@ TDD evidence for `test/movementAttack.test.mjs` (red first, then fixed by
   while the player was mid-swing (`now < animUntil`). The attack animation is a
   planted-feet swing with no locomotion, so the body kept translating while the
   feet were planted — a slide.
-- **Fix**: `stepPlayer()` ROOTS the player while `attacking` (position + facing
-  frozen); `movePlayers` passes `attacking = now < animUntil`. A swing/cast now
-  briefly plants your feet (standard melee feel), so move+attack can no longer
-  slide. Proven live: server position moved 0.0000 units while attacking with W
-  held (was ~1.8).
+- **First fix (since reverted)**: `stepPlayer()` ROOTED the player while
+  `attacking` (position + facing frozen); the comment below (RC7) explains why
+  that fix itself became the next bug.
+
+## RC7 — "attack while moving" froze the character (rooting was wrong)
+
+- **Symptom**: holding W and tapping J STOPPED the player mid-stride for the
+  whole swing window — you could not move and attack at the same time.
+- **Cause**: the RC6 root. Blocking integration while `now < animUntil` means
+  every swing/cast shorts the player's velocity to zero for 350-800ms regardless
+  of input, which reads as the character freezing every time you attack on the
+  move.
+- **Fix**: attacking/casting NEVER blocks movement. `stepPlayer()` always
+  integrates (`movement.js`), `movePlayers` no longer passes an `attacking`
+  flag, and the swing/cast only overrides the ANIMATION (`anim='attack'/'skill'`
+  until `animUntil`), never the position. Pinned by
+  `test/strafeRootSkill.test.mjs` (RC7 block: stepPlayer moves with input, no
+  root parameter exists anymore).
+
+## RC8 — moving attack plays the run cycle under the swing (no skate, no pop)
+
+- **Symptom**: with RC7, a moving swing translated a planted-feet attack clip
+  its whole duration — feet frozen while the body slides, and a hard pop when
+  the clip snapped back to run.
+- **Cause**: the attack clip has no leg locomotion; without any blend the legs
+  are static under translation.
+- **Fix**: `MOVING_ATTACK_RUN_BLEND` (0.42). `Player.updateClipAnims()` /
+  `RemotePlayer.updateClipAnims()` drive the mixer by effective weight: while
+  swinging ON THE MOVE the run cycle plays at 0.42 under the attack clip at 0.58,
+  so the legs keep stepping; a stationary swing plays the clip alone. The run
+  clip is never reset mid-swing, so winding down the blend is seamless.
+
+## RC9 — remote moving-attack blend flickered between server patches
+
+- **Symptom**: a RUNNING remote player's swing legs stuttered — the run blend
+  (RC8) cut in/out ~20 times per second.
+- **Cause**: `RemotePlayer.updateClipAnims()` inferred "moving" from
+  `lead > 0.04`, the distance between the server position and the lerped root.
+  Server patches arrive at ~20Hz (`SERVER.tickMs`), so after each patch the root
+  converges and the lead decays below 0.04 before the next patch arrives — the
+  flag flaps on/off at the patch rate.
+- **Fix**: `remoteMoveHold()` (AnimUtils.js). Any position DELTA on a new patch
+  re-arms a 150ms hold; movement is true until the hold expires — that spans two
+  patch gaps (150ms >> 50ms) so the flag never flaps mid-swing. A stopped caster
+  stops getting deltas and the hold decays to 0, snapping back to a pure swing.
+  Pinned by the RC9 block in `test/strafeRootSkill.test.mjs`.
 
 ## SKILL — every character shares the J melee but casts its own K skill
 
@@ -83,9 +124,10 @@ TDD evidence for `test/movementAttack.test.mjs` (red first, then fixed by
 - **Design**: `src/shared/skills.js` holds `SKILLS` (one per class: Whirlwind /
   Piercing Shot / Arcane Nova / Frenzy Slam) + pure `resolveSkillHits()`
   (`aoe` = everything in a radius; `cone` = within range + facing arc). The
-  server enforces cooldown/damage authoritatively (`castSkill`), roots the caster
-  for the cast (RC6), and shows `anim='skill'`; the client plays the class swing
-  time-scaled to the skill window, spawns a colored burst, and shows a skill
-  cooldown bar. Pinned by `test/strafeRootSkill.test.mjs`.
+  server enforces cooldown/damage authoritatively (`castSkill`) and shows
+  `anim='skill'` for `animUntil`, but the caster keeps MOVING through the cast
+  (RC7); the client plays the class swing time-scaled to the skill window,
+  spawns a colored burst, and shows a skill cooldown bar. Pinned by
+  `test/strafeRootSkill.test.mjs`.
 
   frame rate.

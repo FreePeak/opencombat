@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { attachWeapon, ProceduralAnim } from './Sword.js';
 import { CONFIG } from '../config.js';
-import { attackTimeScale, frameDamp } from '../anim/AnimUtils.js';
+import { attackTimeScale, frameDamp, MOVING_ATTACK_RUN_BLEND, remoteMoveHold } from '../anim/AnimUtils.js';
 import { skillFor } from '../shared/skills.js';
 
 export default class RemotePlayer {
@@ -58,6 +58,10 @@ export default class RemotePlayer {
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
     this.playAnim('idle');
 
+    // RC9: fetch the server patch position so a "moving" hold can be armed
+    // when the caster's position actually changes (stable across the 20Hz gap).
+    this.move = { sx: state.x, sz: state.z, hold: 0 };
+
     // Snap to the spawn position once; afterwards we only lerp.
     this.root.position.set(state.x, 0, state.z);
     this.root.rotation.y = state.rotY;
@@ -88,6 +92,54 @@ export default class RemotePlayer {
     }
   }
 
+  /**
+   * RC8/RC9 clip driver for remote players (mirrors Player.updateClipAnims).
+   * The server drives `anim`; whether the caster is moving is decided by RC9's
+   * patch-delta hold (`this.moveHold`), NOT by per-frame lerp position, whose
+   * lead decays below any threshold between the ~20Hz patches and would flicker
+   * the run blend mid-swing.
+   */
+  updateClipAnims(_dt, moving) {
+    const s = this.state;
+    const swinging = s.anim === 'attack' || s.anim === 'skill';
+    const casting = s.anim === 'skill';
+    const atk = this.clips.attack;
+    const run = this.clips.run;
+    const idle = this.clips.idle;
+
+    if (swinging && atk) {
+      const name = s.anim;
+      if (this.currentName !== name) {
+        this.currentName = name;
+        atk.reset();
+        atk.setLoop(THREE.LoopOnce);
+        atk.clampWhenFinished = true;
+        atk.timeScale = attackTimeScale(atk.getClip(),
+          casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
+        atk.play();
+      }
+      const runW = moving && run ? MOVING_ATTACK_RUN_BLEND : 0;
+      atk.setEffectiveWeight(1 - runW);
+      if (run) {
+        if (runW > 0) {
+          if (!run.isRunning()) { run.setLoop(THREE.LoopRepeat); run.timeScale = 1; run.play(); }
+          run.setEffectiveWeight(runW);
+        } else run.setEffectiveWeight(0);
+      }
+      if (idle) idle.setEffectiveWeight(0);
+    } else {
+      if (atk) atk.setEffectiveWeight(0);
+      const loco = moving ? run : idle;
+      const other = moving ? idle : run;
+      if (loco) {
+        if (!loco.isRunning()) { loco.setLoop(THREE.LoopRepeat); loco.timeScale = 1; loco.play(); }
+        loco.setEffectiveWeight(1);
+      }
+      if (other) other.setEffectiveWeight(0);
+      this.currentName = moving ? 'run' : 'idle';
+    }
+  }
+
   updateEffects(effects) {
     const hasShield = effects?.has?.('shield') ?? false;
     this.shieldMesh.visible = hasShield;
@@ -113,7 +165,11 @@ export default class RemotePlayer {
       // Clip-less model: drive the bob/swing from the server anim name.
       this.proc.update(dt, s.anim === 'run', s.anim === 'attack' || s.anim === 'skill');
     } else {
-      this.playAnim(s.anim); // server-driven anim (idle/run/attack/skill)
+      // RC9: moving = anim says 'run' OR the position keeps changing (patch
+      // delta), with a hold so it cannot flicker between the ~20Hz patches.
+      this.moveHold = remoteMoveHold(s.x, s.z, this.move, dt);
+      const moving = s.anim === 'run' || this.moveHold > 0;
+      this.updateClipAnims(dt, moving); // server-driven anim (idle/run/attack/skill)
       this.mixer.update(dt);
     }
     this.updateEffects(s.effects);

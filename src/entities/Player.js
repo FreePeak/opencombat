@@ -11,7 +11,7 @@ import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
 import { CONFIG } from '../config.js';
 import { sendInput } from '../network.js';
-import { attackTimeScale, shouldSendInput, cameraMoveDir } from '../anim/AnimUtils.js';
+import { attackTimeScale, shouldSendInput, cameraMoveDir, MOVING_ATTACK_RUN_BLEND } from '../anim/AnimUtils.js';
 import { skillFor } from '../shared/skills.js';
 
 export default class Player {
@@ -132,6 +132,53 @@ export default class Player {
     }
   }
 
+  /**
+   * RC8 clip driver: blends locomotion under the swing so the character can
+   * move AND attack at the same time without skating or a hard animation pop.
+   * While swinging on the move the run cycle plays at MOVING_ATTACK_RUN_BLEND
+   * under the attack clip; a stationary swing plays the clip alone.
+   */
+  updateClipAnims(_dt) {
+    const casting = this.skillAnimT > 0;
+    const swinging = casting || this.attackAnimT > 0;
+    const moving = this.moving;
+    const atk = this.clips.attack;
+    const run = this.clips.run;
+    const idle = this.clips.idle;
+
+    if (swinging && atk) {
+      const name = casting ? 'skill' : 'attack';
+      if (this.currentName !== name) { // (re)start the swing on its first frame
+        this.currentName = name;
+        atk.reset();
+        atk.setLoop(THREE.LoopOnce);
+        atk.clampWhenFinished = true;
+        atk.timeScale = attackTimeScale(atk.getClip(),
+          casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
+        atk.play();
+      }
+      const runW = moving && run ? MOVING_ATTACK_RUN_BLEND : 0;
+      atk.setEffectiveWeight(1 - runW);
+      if (run) {
+        if (runW > 0) {
+          if (!run.isRunning()) { run.setLoop(THREE.LoopRepeat); run.timeScale = 1; run.play(); }
+          run.setEffectiveWeight(runW);
+        } else run.setEffectiveWeight(0);
+      }
+      if (idle) idle.setEffectiveWeight(0);
+    } else {
+      if (atk) atk.setEffectiveWeight(0);
+      const loco = moving ? run : idle;
+      const other = moving ? idle : run;
+      if (loco) {
+        if (!loco.isRunning()) { loco.setLoop(THREE.LoopRepeat); loco.timeScale = 1; loco.play(); }
+        loco.setEffectiveWeight(1);
+      }
+      if (other) other.setEffectiveWeight(0);
+      this.currentName = moving ? 'run' : 'idle';
+    }
+  }
+
   /** Render the timed power-up effects straight from PlayerState.effects. */
   updateEffects(effects) {
     const hasShield = effects?.has?.('shield') ?? false;
@@ -172,8 +219,8 @@ export default class Player {
       this.attackAnimT = CONFIG.player.attackAnimMs / 1000;
       this.scene.sound.swing();       // combat feedback
     }
-    // K casts the per-character skill; the server roots the caster during the
-    // cast (RC6) and applies the class's damage/cooldown authoritatively.
+    // K casts the per-character skill; the swing/cast NEVER blocks movement
+    // (RC7) and the server applies the class's damage/cooldown authoritatively.
     const skill = k.k.justPressed && this.skillCd <= 0;
     k.k.justPressed = false;          // consume the edge
     if (skill) {
@@ -222,7 +269,7 @@ export default class Player {
     }
     if (this.proc) this.proc.update(dt, this.moving, this.attackAnimT > 0 || this.skillAnimT > 0);
     else {
-      this.playAnim(this.animName);
+      this.updateClipAnims(dt);
       this.mixer.update(dt);
     }
   }

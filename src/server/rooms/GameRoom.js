@@ -440,8 +440,9 @@ export default class GameRoom extends Room {
   /**
    * Per-character skill cast (K). Every class shares the J melee but casts its
    * own skill (src/shared/skills.js) — distinct shape/damage/cooldown. The
-   * caster is rooted for the cast (RC6) and shows anim='skill'. Like melee(),
-   * damage applies to enemies only (PvE arena); killed enemies respawn.
+   * caster KEEPS MOVING through the cast (RC7); only the animation overrides to
+   * 'skill' for animUntil. Like melee(), damage applies to enemies only (PvE
+   * arena); killed enemies respawn.
    */
   castSkill(sid) {
     const state = this.state;
@@ -451,7 +452,7 @@ export default class GameRoom extends Room {
     const now = Date.now();
     if (now < this.skillAt.get(sid)) return; // belt + braces (onInput gates too)
     this.skillAt.set(sid, now + def.cooldownMs);
-    this.animUntil.set(sid, now + def.animMs); // roots the caster during the cast
+    this.animUntil.set(sid, now + def.animMs); // anim='skill' window (move NOT blocked, RC7)
     player.anim = 'skill'; // movePlayers preserves this during animUntil
 
     // Resolve hits with the same pure math the client uses for its VFX, then
@@ -523,18 +524,20 @@ export default class GameRoom extends Room {
       const { dirX, dirZ } = this.inputs.get(sid);
       const speed = SERVER.player.speed *
         (player.effects.has('speed') ? SERVER.powerUps.speed.multiplier : 1);
-      // RC6: ROOT the player while mid-swing / mid-cast (animUntil). The
-      // planted-feet attack/skill animation never skates the model across the
-      // ground, and "move + attack at the same time" can no longer slide.
-      const attacking = now < this.animUntil.get(sid);
+      // RC7: attacking/casting NEVER blocks movement — a player can move and
+      // attack at the same time. stepPlayer always integrates; the swing/cast
+      // only overrides the ANIMATION below, not the position. (Rooting the
+      // caster here is what previously froze move+attack.)
       const stepped = stepPlayer(player.x, player.z, player.rotY,
-        dirX, dirZ, speed, dt, this.half, attacking);
+        dirX, dirZ, speed, dt, this.half);
       player.x = stepped.x;
       player.z = stepped.z;
       player.rotY = stepped.rotY;
       // While the swing/cast override is active keep the anim melee/castSkill
-      // set ('attack'/'skill'); otherwise drive it from movement.
-      if (!attacking) player.anim = (dirX || dirZ) ? 'run' : 'idle';
+      // set ('attack'/'skill'), even while moving; otherwise drive from motion.
+      if (now >= this.animUntil.get(sid)) {
+        player.anim = (dirX || dirZ) ? 'run' : 'idle';
+      }
       // Broadcast the cooldowns for the HUD bars (0 = ready).
       player.attackCd = Math.max(0, this.attackAt.get(sid) - now);
       player.skillCd = Math.max(0, this.skillAt.get(sid) - now);

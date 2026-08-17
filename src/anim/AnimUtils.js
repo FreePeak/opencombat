@@ -141,3 +141,30 @@ export function cameraMoveDir(ix, iz, camYaw) {
 export function cameraOffset(camYaw, distance) {
   return { x: -Math.sin(camYaw) * distance, z: -Math.cos(camYaw) * distance };
 }
+
+// RC8: while attacking ON THE MOVE, blend this much of the run cycle under the
+// swing so the legs keep stepping — removing the planted-feet "skate/slide" and
+// the hard pop when the swing ends. 0 = pure swing, 1 = pure run.
+export const MOVING_ATTACK_RUN_BLEND = 0.42;
+
+// RC9: how long a remote player is treated as "moving" after ANY server
+// position patch delta. Server patches arrive at ~20Hz (SERVER.tickMs = 50), so
+// a per-frame lerp-lead check (root trailing the target) decays below its
+// threshold BETWEEN patches and makes the RC8 run blend flicker on/off ~20x/s
+// during a moving swing. A patch delta re-arms this hold; the flag stays true
+// until the hold expires, which comfortably spans two patch gaps (150ms >> 50ms).
+export const REMOTE_MOVE_HOLD = 0.15;
+
+/**
+ * RC9: arm/hold the remote "is moving" flag against server position patches.
+ * `carry` is a mutable cursor ({ sx, sz, hold }) owned by the RemotePlayer so
+ * consecutive frames accumulate. Any delta in a NEW patch re-arms the hold to
+ * REMOTE_MOVE_HOLD; otherwise the hold decays by dt. Returns the hold seconds.
+ */
+export function remoteMoveHold(sx, sz, carry, dt) {
+  const moved = Math.abs(sx - carry.sx) > 1e-4 || Math.abs(sz - carry.sz) > 1e-4;
+  carry.sx = sx;
+  carry.sz = sz;
+  carry.hold = moved ? REMOTE_MOVE_HOLD : Math.max(0, (carry.hold || 0) - dt);
+  return carry.hold;
+}
