@@ -10,6 +10,37 @@ export { joinErrorMessage };
 
 export const client = new Colyseus.Client(CONFIG.serverUrl);
 
+/** Quick server reachability probe: opens a raw WebSocket handshake against
+ *  CONFIG.serverUrl. The transport upgrades any path, so a completed
+ *  handshake means the matchmaker is up (multiplayer); an error/close/
+ *  timeout means offline — the caller falls back to the browser-local
+ *  simulation (see src/LocalRoom.js). The timeout is generous on purpose:
+ *  a tunnelled server adds a public-internet round trip before the
+ *  handshake completes. */
+export function serverAvailable(timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let ws;
+    try {
+      ws = new WebSocket(CONFIG.serverUrl);
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch {}
+      resolve(ok);
+    };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    ws.onopen = () => done(true);
+    ws.onerror = () => done(false);
+    ws.onclose = () => done(false);
+  });
+}
+
 /** Connect and join (or create) the arena room, carrying the chosen name. */
 export async function joinGame(name, character) {
   // rootSchema lets the client decode the binary state patches; without it

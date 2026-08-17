@@ -19,6 +19,9 @@
     #hud-text { margin-top: 6px; font-size: 13px; }
     #leaderboard { position: fixed; top: 12px; right: 12px; z-index: 10; color: #ddd; font-size: 13px;
       text-align: right; text-shadow: 0 1px 2px #000; }
+    #net-badge { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+      display: none; color: #ffd54f; font-size: 12px; background: #000a; border: 1px solid #ffd54f66;
+      border-radius: 6px; padding: 3px 10px; text-shadow: 0 1px 2px #000; }
     #leaderboard span { display: block; }
     #leaderboard b { color: #ffd54f; }
     #countdown { position: fixed; inset: 0; display: grid; place-items: center; z-index: 15;
@@ -69,6 +72,7 @@
     <div id="hud-text">connecting…</div>
   </div>
   <div id="leaderboard"></div>
+  <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
   <div id="countdown"></div>
   <div id="flash"></div>
 

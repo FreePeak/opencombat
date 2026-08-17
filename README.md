@@ -58,6 +58,41 @@ All optional; the defaults run a single-process game on :2567.
 
 ## Deployment notes
 
+- **Play with friends (GitHub Pages + Cloudflare Tunnel)** — the client is a
+  static site, so the free GitHub Pages host serves it; your own machine
+  runs the authoritative server and a Cloudflare Tunnel exposes it with a
+  stable `wss://` URL (no port forwarding, no public IP):
+
+  1. One-time Pages setup: push this repo to GitHub, enable **Settings →
+     Pages → Deploy from branch → `master` / root**. The game (and the
+     committed static `env.js` + `.nojekyll`) is served at your Pages URL.
+  2. One-time tunnel setup (needs a free Cloudflare account + a domain in
+     Cloudflare; see `cloudflared/config.example.yml`):
+     ```bash
+     brew install cloudflared
+     cloudflared tunnel login
+     cloudflared tunnel create opencombat
+     cloudflared tunnel route dns opencombat game.yourdomain.com
+     ```
+  3. Host a match:
+     ```bash
+     npm run serve                                   # game server on :2567
+     cloudflared tunnel --config cloudflared/config.yml run
+     ```
+  4. Point the Pages client at your tunnel — either set
+     `wsUrl: 'wss://game.yourdomain.com'` in the committed `env.js`
+     (default for every visitor), or share a link with
+     `?server=game.yourdomain.com` (sticky per player via localStorage).
+     Matchmaking CORS is built into Colyseus 0.17 (`/matchmake/*` answers
+     preflight and allows cross-origin), so the Pages origin works as-is.
+
+  When your server/tunnel is down, the Pages page automatically falls back
+  to the browser-local single-player simulation (src/LocalRoom.js) and
+  shows an **OFFLINE — SOLO MODE** badge; a `?server=` link or a reachable
+  default server upgrades visitors straight into the multiplayer room.
+  Domainless quick test: `cloudflared tunnel --url http://localhost:2567`
+  (random `*.trycloudflare.com` URL — share it as `?server=<host>`).
+
 - **TLS / WSS**: terminate TLS at a reverse proxy (nginx/Caddy/Traefik) in
   front of :2567, set `PUBLIC_URL=https://game.example.com`, and proxy both
   HTTP and the `ws`/`wss` upgrade for `/` (the WebSocket path is the same

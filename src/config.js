@@ -3,14 +3,45 @@
 // rendering, the camera rig and the HUD. Keep the two in sync by hand.
 //
 // Server URL fallback chain (never hardcode ws://localhost:2567):
-//   1. window.__OPENGAME__.wsUrl  — injected by the server via /env.js
-//      (PUBLIC_URL env var), so deployed clients talk to their own origin;
-//   2. same-origin host           — reverse-proxy deploys (ws(s)://this page);
-//   3. ws://localhost:2567        — local dev default.
+//   1. ?server= query param       — share links, e.g. a GitHub Pages page
+//                                   pointing at someone's tunnel host;
+//   2. localStorage opengame.server — sticky copy of the last ?server= param,
+//                                   so the choice survives losing the param;
+//   3. window.__OPENGAME__.wsUrl  — injected by the server via /env.js
+//                                   (PUBLIC_URL env var), or the committed
+//                                   static env.js on GitHub Pages hosting;
+//   4. same-origin host           — reverse-proxy deploys (ws(s)://this page);
+//   5. ws://localhost:2567        — local dev default.
 const env = (typeof window !== 'undefined' && window.__OPENGAME__) || {};
-const locationHost = typeof window !== 'undefined' && window.location ? window.location.host : '';
-const wsScheme = typeof window !== 'undefined' && window.location?.protocol === 'https:' ? 'wss' : 'ws';
-const serverUrl = env.wsUrl || (locationHost ? `${wsScheme}://${locationHost}` : 'ws://localhost:2567');
+const loc = typeof window !== 'undefined' && window.location ? window.location : null;
+const securePage = loc?.protocol === 'https:';
+
+// localStorage can throw in sandboxed iframes / privacy modes — config runs
+// at module load, so a throw here would kill the whole boot.
+const storage = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+
+/** Accepts a bare host, http(s)://… or ws(s)://… and returns a ws(s):// URL.
+ *  The scheme follows the PAGE protocol: an https page must never open an
+ *  insecure ws:// socket (browsers block the mixed content), so http(s)
+ *  input is upgraded to wss when the page itself is https. */
+function normalizeServerUrl(input) {
+  let s = String(input || '').trim().replace(/\/+$/, '');
+  if (!s) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = (securePage ? 'https' : 'http') + '://' + s;
+  s = s.replace(/^http/i, 'ws'); // http -> ws, https -> wss
+  if (securePage && s.startsWith('ws://')) s = 'wss' + s.slice(2);
+  return s;
+}
+
+const paramServer = loc ? new URLSearchParams(loc.search).get('server') : null;
+if (paramServer) storage.set('opengame.server', paramServer);
+const serverUrl = normalizeServerUrl(paramServer)
+  || normalizeServerUrl(storage.get('opengame.server'))
+  || env.wsUrl
+  || (loc?.host ? `${securePage ? 'wss' : 'ws'}://${loc.host}` : 'ws://localhost:2567');
 
 export const CONFIG = {
   serverUrl,

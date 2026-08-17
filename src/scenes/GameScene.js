@@ -13,7 +13,8 @@ import Enemy from '../entities/Enemy.js';
 import SoundManager from '../audio/SoundManager.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
-import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, joinErrorMessage } from '../network.js';
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, joinErrorMessage, serverAvailable } from '../network.js';
+import { LocalRoom } from '../LocalRoom.js';
 import { stripRootMotion, frameDamp, cameraOffset } from '../anim/AnimUtils.js';
 
 // Deterministic LCG: scatters props identically on every client so the
@@ -110,6 +111,7 @@ export default class GameScene {
     this.loginName = document.getElementById('login-name');
     this.loginError = document.getElementById('login-error');
     this.loginBtn = document.getElementById('login-btn');
+    this.netBadge = document.getElementById('net-badge');
 
     // One overlay serves both ends: death (respawn) and match end (again).
     this.overlay.addEventListener('click', () => {
@@ -145,6 +147,10 @@ export default class GameScene {
     this.character = Number.isFinite(saved)
       ? Math.max(0, Math.min(CONFIG.characters.length - 1, saved)) : 0;
     this.buildCharacterPicker();
+    // Probe the server while the player is still typing a name, so the join
+    // click never waits on it: online -> real room, offline (e.g. GitHub
+    // Pages with the host's tunnel down) -> browser-local single-player.
+    this.serverOnline = serverAvailable();
     this.loginEl.classList.add('visible');
     this.loginBtn.addEventListener('click', () => this.onJoinClick());
     this.loginName.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
@@ -184,7 +190,16 @@ export default class GameScene {
       document.getElementById('loading').style.display = 'none';
       this.loginEl.classList.remove('visible');
       this.loginError.style.display = 'none';
-      this.room = await joinGame(this.name, this.character);
+      const online = await this.serverOnline;
+      if (online) {
+        this.room = await joinGame(this.name, this.character);
+      } else {
+        // No server (static hosting, host offline): same wire-up, but the
+        // room is a browser-local simulation — single-player only.
+        this.room = new LocalRoom();
+        await this.room.join(this.name, this.character);
+      }
+      this.setNetBadge(online);
       this.wireRoom();
     } catch (err) {
       console.error(err);
@@ -192,6 +207,12 @@ export default class GameScene {
       this.loginError.style.display = 'block';
     }
     this.joining = false;
+  }
+
+  /** Show/hide the OFFLINE badge (top-center) so players know they are in
+   *  the local simulation rather than a hosted multiplayer room. */
+  setNetBadge(online) {
+    if (this.netBadge) this.netBadge.style.display = online ? 'none' : 'block';
   }
 
   loadModels() {
@@ -320,6 +341,11 @@ export default class GameScene {
     // (from the UMD global, same one network.js uses) reaches the room's
     // real decoder. immediate=false keeps v3 semantics: the loops above
     // already created the initial entities.
+    // A LocalRoom has no decoder (it mutates the state objects in place);
+    // its entities are fixed slots created by the loops above, so the
+    // incremental add/remove callbacks are unnecessary — and
+    // getLegacy() would throw on the missing serializer.
+    if (!this.room.serializer) return;
     const $ = Colyseus.Callbacks.getLegacy(this.room);
     $(state.players).onAdd((player, sid) => this.addPlayer(sid, player), false);
     $(state.players).onRemove((_player, sid) => {

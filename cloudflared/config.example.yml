@@ -1,0 +1,27 @@
+# Cloudflare Tunnel config for hosting the game from your own machine.
+#
+# Copy to cloudflared/config.yml and fill in YOUR values after running:
+#   cloudflared tunnel login               # browser: pick your domain's zone
+#   cloudflared tunnel create opencombat   # prints the tunnel UUID
+#
+# The credentials file is created at ~/.cloudflared/<TUNNEL-UUID>.json —
+# it is a SECRET: it stays on your machine and is never committed.
+#
+# Then route DNS and run:
+#   cloudflared tunnel route dns opencombat game.yourdomain.com
+#   cloudflared tunnel --config cloudflared/config.yml run
+#
+# Quick test without any account/domain (URL changes every restart):
+#   cloudflared tunnel --url http://localhost:2567
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /Users/YOU/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  # Hostname players' browsers connect to (match the DNS route above).
+  - hostname: game.yourdomain.com
+    service: http://localhost:2567
+  # websocket: true is the default for http(s) services; Cloudflare proxies
+  # the ws/wss upgrade transparently — the Colyseus client speaks wss:// to
+  # this hostname and cloudflared forwards plain ws to the local server.
+  - service: http_status:404

@@ -43,6 +43,10 @@ export class LocalRoom {
   onStateChange(fn) { this._callbacks.stateChange.push(fn); }
   onMessage(type, fn) { this._callbacks.message.push({ type, fn }); }
   onLeave(fn) { this._callbacks.leave.push(fn); }
+  // A local room has no socket, so it can never drop or reconnect — GameScene
+  // wires these like on any network room, so they must exist as no-ops.
+  onDrop(_fn) {}
+  onReconnect(_fn) {}
 
   send(type, data) {
     if (type === 'input') this._playerInput = data;
@@ -108,7 +112,10 @@ export class LocalRoom {
   leave() {
     this._running = false;
     if (this._tickId) cancelAnimationFrame(this._tickId);
-    for (const fn of this._callbacks.leave) fn();
+    // 4000 = CONSENTED (deliberate leave). GameScene only engages its
+    // socket-reconnect machinery for other codes — a local room must never
+    // trigger it.
+    for (const fn of this._callbacks.leave) fn(4000);
   }
 
   // --- Game loop -------------------------------------------------------------
