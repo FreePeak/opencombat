@@ -47,6 +47,15 @@
       "animations": []
     },
     {
+      "name": "Knight (Mixamo Paladin)",
+      "author": "Mixamo (Paladin J Nordstrom)",
+      "source": "https://www.mixamo.com",
+      "license": "Mixamo Standard license (free)",
+      "file": "assets/characters/knight_mixamo.glb",
+      "role": "selectable player character: knight with real idle/run/slash clips",
+      "animations": ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Attack"]
+    },
+    {
       "name": "Sword",
       "author": "Quaternius",
       "source": "https://poly.pizza/m/ajOJ2NLz5m",

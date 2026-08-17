@@ -11,6 +11,7 @@ import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
 import { CONFIG } from '../config.js';
 import { sendInput } from '../network.js';
+import { attackTimeScale, shouldSendInput } from '../anim/AnimUtils.js';
 
 export default class Player {
   /**
@@ -89,6 +90,7 @@ export default class Player {
     this.attackAnimT = 0;
     this.attackCd = 0;
     this.sendTimer = 0;      // input throttle
+    this.pendingAttack = false; // RC3: attack edge latched until it is sent
     this.lastSent = { dirX: 0, dirZ: 0, attack: false, anim: 'idle' };
   }
 
@@ -99,6 +101,17 @@ export default class Player {
     this.current = action;
     this.mixer.stopAllAction();
     action.reset().play();
+    // RC2: squeeze the whole swing into attackAnimMs of wall time, so the
+    // anim lands the full arc instead of hard-cutting at the wind-up when
+    // the server flips anim back to idle/run.
+    if (name === 'attack') {
+      action.timeScale = attackTimeScale(action.getClip(), CONFIG.player.attackAnimMs);
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    } else {
+      action.timeScale = 1;
+      action.setLoop(THREE.LoopRepeat);
+    }
   }
 
   /** Render the timed power-up effects straight from PlayerState.effects. */
@@ -148,15 +161,19 @@ export default class Player {
     if (this.attackAnimT > 0) this.animName = 'attack'; // swing overrides run/idle
 
     // --- Send intent (throttled to ~30Hz, only when something changed) --
+    // RC3: the attack edge lives for a single frame; latch it so the send
+    // throttle can never diff it away. A pending edge flushes immediately
+    // (which also cuts swing latency by up to a whole throttle slot).
+    if (attack) this.pendingAttack = true;
     this.sendTimer -= dt;
-    if (this.sendTimer <= 0) {
-      const msg = { dirX: this.dirX, dirZ: this.dirZ, attack, anim: this.animName };
-      const l = this.lastSent;
-      if (msg.dirX !== l.dirX || msg.dirZ !== l.dirZ || msg.attack !== l.attack || msg.anim !== l.anim) {
+    if (this.pendingAttack || this.sendTimer <= 0) {
+      const msg = { dirX: this.dirX, dirZ: this.dirZ, attack: this.pendingAttack, anim: this.animName };
+      if (shouldSendInput(this.lastSent, msg)) {
         sendInput(this.room, msg.dirX, msg.dirZ, msg.attack, msg.anim);
         this.lastSent = msg;
-        this.sendTimer = 1 / 30;
       }
+      this.pendingAttack = false;
+      this.sendTimer = 1 / 30;
     }
 
     // --- Render: smooth toward server state + animation ------------------

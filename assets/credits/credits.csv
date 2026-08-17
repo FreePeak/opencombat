@@ -8,3 +8,4 @@ filename,notes,authors,licenses,urls
 "assets/characters/archer.glb","Hooded adventurer with idle/run/slash clips; playable archer (procedural bow)","Quaternius","CC0 1.0","https://poly.pizza/m/y9KWOVG21R"
 "assets/characters/mage.glb","Animated wizard with idle/run/staff-attack clips; playable mage","Quaternius","CC-BY 3.0","https://poly.pizza/m/kttbFvCl2C"
 "assets/characters/spike.glb","Horned demon with trident and idle/run/punch clips; playable spike man","Quaternius","CC0 1.0","https://poly.pizza/m/LnfIziKv4o"
+"assets/characters/knight_mixamo.glb","Paladin knight rigged+textured with idle/run/slash Mixamo clips; playable swordsman","Mixamo (Paladin J Nordstrom)","Mixamo Standard license (free)","https://www.mixamo.com"

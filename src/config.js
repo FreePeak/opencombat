@@ -78,8 +78,12 @@ export const CONFIG = {
   // index to [0, characters.length) — keep both sides in sync.
   characters: [
     {
-      key: 'swordsman', label: 'Swordsman', file: 'knight.glb', scale: 0.78, weapon: 'sword',
-      anims: { idle: null, run: null, attack: null }
+      key: 'swordsman', label: 'Knight', file: 'knight_mixamo.glb', scale: 0.97, weapon: null,
+      anims: {
+        idle: 'CharacterArmature|Idle',
+        run: 'CharacterArmature|Run',
+        attack: 'CharacterArmature|Attack'
+      }
     },
     {
       key: 'archer', label: 'Archer', file: 'archer.glb', scale: 0.85, weapon: 'bow',

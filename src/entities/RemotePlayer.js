@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { attachWeapon, ProceduralAnim } from './Sword.js';
 import { CONFIG } from '../config.js';
+import { attackTimeScale, frameDamp } from '../anim/AnimUtils.js';
 
 export default class RemotePlayer {
   constructor(scene, state, model, def, color, swordModel = null) {
@@ -66,6 +67,16 @@ export default class RemotePlayer {
     this.current = action;
     this.mixer.stopAllAction();
     action.reset().play();
+    // RC2: same time-scaled swing as the local player, so a remote knight
+    // shows the full arc inside the server's attackAnimMs window.
+    if (name === 'attack') {
+      action.timeScale = attackTimeScale(action.getClip(), CONFIG.player.attackAnimMs);
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    } else {
+      action.timeScale = 1;
+      action.setLoop(THREE.LoopRepeat);
+    }
   }
 
   updateEffects(effects) {
@@ -78,14 +89,17 @@ export default class RemotePlayer {
 
   update(dt) {
     const s = this.state;
-    // Lerp toward the last received position to avoid jitter.
-    this.root.position.x += (s.x - this.root.position.x) * 0.25;
-    this.root.position.z += (s.z - this.root.position.z) * 0.25;
+    // Lerp toward the last received position to avoid jitter. RC4: the old
+    // fixed `* 0.25` only converged correctly at 60fps; frameDamp keeps the
+    // tuned feel while converging identically at any frame rate.
+    const t = frameDamp(0.25, dt);
+    this.root.position.x += (s.x - this.root.position.x) * t;
+    this.root.position.z += (s.z - this.root.position.z) * t;
     // rotY lerp through the shortest angle.
     let dy = s.rotY - this.root.rotation.y;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
-    this.root.rotation.y += dy * 0.25;
+    this.root.rotation.y += dy * t;
     if (this.proc) {
       // Clip-less model: drive the bob/swing from the server anim name.
       this.proc.update(dt, s.anim === 'run', s.anim === 'attack');

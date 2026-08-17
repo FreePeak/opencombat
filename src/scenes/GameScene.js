@@ -14,6 +14,7 @@ import SoundManager from '../audio/SoundManager.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, joinErrorMessage } from '../network.js';
+import { stripRootMotion, frameDamp } from '../anim/AnimUtils.js';
 
 // Deterministic LCG: scatters props identically on every client so the
 // arena looks the same for all players, without a network round trip.
@@ -212,13 +213,17 @@ export default class GameScene {
       // Promise.all resolves FLAT: [char0..charN, sword, enemy, tree, rock].
       const [sword, enemy, tree, rock] = all.slice(CONFIG.characters.length);
       const characters = {};
+      // RC1: strip baked root motion (Mixamo hips translation) from every
+      // clip at load time — the server owns x/z, animated hips must not
+      // drag the mesh away from its lerped position. Clean rigs (archer/
+      // mage/spike) pass through untouched.
       CONFIG.characters.forEach((c, i) => {
-        characters[c.key] = { scene: all[i].scene, animations: all[i].animations };
+        characters[c.key] = { scene: all[i].scene, animations: stripRootMotion(all[i].animations) };
       });
       return {
         characters,
         sword: sword.scene,
-        enemy: enemy.scene, enemyAnims: enemy.animations,
+        enemy: enemy.scene, enemyAnims: stripRootMotion(enemy.animations),
         tree: tree.scene, rock: rock.scene
       };
     });
@@ -519,7 +524,9 @@ export default class GameScene {
         this.camera.position.copy(desired); // snap on spawn, then lerp
         this.cameraRigged = true;
       }
-      this.camera.position.lerp(desired, cfg.lerp);
+      // RC4: rate-correct the 60fps-tuned lerp factor so the rig converges
+      // identically at any frame rate (30/144Hz screens included).
+      this.camera.position.lerp(desired, frameDamp(cfg.lerp, dt));
 
       // Damage camera shake: small random offset, decaying over 0.3s.
       if (this.shakeT > 0) {

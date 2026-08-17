@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { CONFIG } from '../config.js';
+import { frameDamp } from '../anim/AnimUtils.js';
 
 export default class Enemy {
   constructor(scene, state, model, anims, scale = 1) {
@@ -54,12 +55,14 @@ export default class Enemy {
     const s = this.state;
     const prevX = this.root.position.x;
     const prevZ = this.root.position.z;
-    this.root.position.x += (s.x - this.root.position.x) * 0.2;
-    this.root.position.z += (s.z - this.root.position.z) * 0.2;
+    // RC4: frameDamp replaces the fixed `* 0.2` (60fps-only) lerp factor.
+    const t = frameDamp(0.2, dt);
+    this.root.position.x += (s.x - this.root.position.x) * t;
+    this.root.position.z += (s.z - this.root.position.z) * t;
     let dy = s.rotY - this.root.rotation.y;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
-    this.root.rotation.y += dy * 0.2;
+    this.root.rotation.y += dy * t;
 
     // Hit feedback: hp dropped -> white flash + floating damage number.
     if (s.hp < this.lastHp) {
