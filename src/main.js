@@ -3,6 +3,11 @@
 // (renderer, CDN, models) surfaces in the login overlay instead of a black
 // screen. index.html's watchdog uses window.__OPENGAME_BOOTED to detect a
 // total load failure (unreachable CDN) and shows an error on its own.
+//
+// Local mode: when the Colyseus server is unreachable (e.g. GitHub Pages
+// static hosting), the game falls back to a browser-local simulation that
+// runs the same match lifecycle — single-player against the same enemies,
+// orbs and power-ups. See src/LocalRoom.js.
 import GameScene from './scenes/GameScene.js';
 
 window.__OPENGAME_BOOTED = true; // set BEFORE any async work below
@@ -14,6 +19,28 @@ function showBootError(message) {
   if (loading) loading.style.display = 'none';
   if (err) { err.textContent = message; err.style.display = 'block'; }
   if (login) login.classList.add('visible');
+}
+
+/** Quick server reachability probe: if the Colyseus matchmaker is up we
+ *  use it (multiplayer); otherwise we boot the local simulation. */
+async function serverAvailable() {
+  try {
+    const env = (typeof window !== 'undefined' && window.__OPENGAME__) || {};
+    const url = env.wsUrl || (typeof window !== 'undefined' && window.location
+      ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+      : 'ws://localhost:2567');
+    // Probe the WS handshake — a closed socket is a fast "no" (server not running)
+    const ws = new WebSocket(url);
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 1500);
+      ws.onopen = () => { clearTimeout(timer); try { ws.close(); } catch {} resolve(true); };
+      ws.onerror = () => { clearTimeout(timer); resolve(false); };
+      ws.onclose = () => { clearTimeout(timer); resolve(false); };
+    });
+    return result;
+  } catch {
+    return false;
+  }
 }
 
 /** WebGL2 is required by three.js 0.185 (WebGL1 support was removed). */
