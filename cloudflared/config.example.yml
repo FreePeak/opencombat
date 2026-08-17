@@ -13,6 +13,8 @@
 #
 # Quick test without any account/domain (URL changes every restart):
 #   cloudflared tunnel --url http://localhost:2567
+# Players then type the printed *.trycloudflare.com host into the "game
+# server" field on the login page (or you share it as a ?server= link).
 
 tunnel: <TUNNEL-UUID>
 credentials-file: /Users/YOU/.cloudflared/<TUNNEL-UUID>.json

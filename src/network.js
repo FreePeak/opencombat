@@ -8,7 +8,19 @@ import { joinErrorMessage } from './joinError.js';
 
 export { joinErrorMessage };
 
-export const client = new Colyseus.Client(CONFIG.serverUrl);
+// The login screen (and ?server= links) can retarget the client at runtime
+// via setServerUrl() — a fresh quick-tunnel URL every host session is the
+// normal case. The SDK binds the endpoint at construction, so rebuild the
+// client whenever CONFIG.serverUrl moved.
+let lastUrl = CONFIG.serverUrl;
+let client = new Colyseus.Client(CONFIG.serverUrl);
+function currentClient() {
+  if (CONFIG.serverUrl !== lastUrl) {
+    lastUrl = CONFIG.serverUrl;
+    client = new Colyseus.Client(CONFIG.serverUrl);
+  }
+  return client;
+}
 
 /** Quick server reachability probe: opens a raw WebSocket handshake against
  *  CONFIG.serverUrl. The transport upgrades any path, so a completed
@@ -47,12 +59,12 @@ export async function joinGame(name, character) {
   // room.state stays undefined (schema-based serialization). The name and
   // the chosen character index ride the join options to the server, which
   // sanitizes both into PlayerState.
-  return client.joinOrCreate('game', { name, character }, WorldState);
+  return currentClient().joinOrCreate('game', { name, character }, WorldState);
 }
 
 /** Re-join a dropped connection using the colyseus reconnection token. */
 export function reconnectRoom(room, name) {
-  return client.reconnect(room.reconnectionToken, WorldState);
+  return currentClient().reconnect(room.reconnectionToken, WorldState);
 }
 
 /** Send one input intent. Positions are server-authoritative. */

@@ -33,6 +33,7 @@ function normalizeServerUrl(input) {
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = (securePage ? 'https' : 'http') + '://' + s;
   s = s.replace(/^http/i, 'ws'); // http -> ws, https -> wss
   if (securePage && s.startsWith('ws://')) s = 'wss' + s.slice(2);
+  try { new URL(s); } catch { return null; } // garbage input -> keep default
   return s;
 }
 
@@ -42,6 +43,20 @@ const serverUrl = normalizeServerUrl(paramServer)
   || normalizeServerUrl(storage.get('opengame.server'))
   || env.wsUrl
   || (loc?.host ? `${securePage ? 'wss' : 'ws'}://${loc.host}` : 'ws://localhost:2567');
+
+/** Retarget the client at a server typed on the login screen (e.g. a fresh
+ *  *.trycloudflare.com URL). Normalizes like ?server= input, updates
+ *  CONFIG.serverUrl (network.js rebuilds its client) and persists the raw
+ *  value so the field prefills next visit. Empty/invalid input keeps the
+ *  current target; returns the normalized URL or null. */
+export function setServerUrl(raw) {
+  const url = normalizeServerUrl(raw);
+  if (url) {
+    CONFIG.serverUrl = url;
+    storage.set('opengame.server', String(raw).trim());
+  }
+  return url;
+}
 
 export const CONFIG = {
   serverUrl,

@@ -6,7 +6,7 @@
 // floating numbers) and handles reconnects.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { CONFIG } from '../config.js';
+import { CONFIG, setServerUrl } from '../config.js';
 import Player from '../entities/Player.js';
 import RemotePlayer from '../entities/RemotePlayer.js';
 import Enemy from '../entities/Enemy.js';
@@ -109,6 +109,7 @@ export default class GameScene {
     this.reconnectEl = document.getElementById('reconnect');
     this.loginEl = document.getElementById('login');
     this.loginName = document.getElementById('login-name');
+    this.loginServer = document.getElementById('login-server');
     this.loginError = document.getElementById('login-error');
     this.loginBtn = document.getElementById('login-btn');
     this.netBadge = document.getElementById('net-badge');
@@ -147,13 +148,19 @@ export default class GameScene {
     this.character = Number.isFinite(saved)
       ? Math.max(0, Math.min(CONFIG.characters.length - 1, saved)) : 0;
     this.buildCharacterPicker();
-    // Probe the server while the player is still typing a name, so the join
-    // click never waits on it: online -> real room, offline (e.g. GitHub
-    // Pages with the host's tunnel down) -> browser-local single-player.
+    // Server field: prefilled with the last used ?server=/typed value — the
+    // host's quick-tunnel URL changes every session, so friends paste the
+    // fresh one here. Empty = the default chain (env.js/same-origin).
+    this.loginServer.value = localStorage.getItem('opengame.server') || '';
+    // Probe the default server while the player is still typing a name, so
+    // the join click never waits on it: online -> real room, offline (e.g.
+    // GitHub Pages with the host's tunnel down) -> browser-local solo.
+    this.probedUrl = CONFIG.serverUrl;
     this.serverOnline = serverAvailable();
     this.loginEl.classList.add('visible');
     this.loginBtn.addEventListener('click', () => this.onJoinClick());
     this.loginName.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
+    this.loginServer.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
   }
 
   /** Character cards on the login screen (CONFIG.characters drives it). */
@@ -190,6 +197,13 @@ export default class GameScene {
       document.getElementById('loading').style.display = 'none';
       this.loginEl.classList.remove('visible');
       this.loginError.style.display = 'none';
+      // A typed server wins over every default. If it points somewhere the
+      // early probe didn't check (fresh tunnel URL), probe that host now.
+      const rawServer = this.loginServer.value.trim();
+      if (rawServer && setServerUrl(rawServer) && CONFIG.serverUrl !== this.probedUrl) {
+        this.probedUrl = CONFIG.serverUrl;
+        this.serverOnline = serverAvailable();
+      }
       const online = await this.serverOnline;
       if (online) {
         this.room = await joinGame(this.name, this.character);

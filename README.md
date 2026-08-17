@@ -79,10 +79,16 @@ All optional; the defaults run a single-process game on :2567.
      npm run serve                                   # game server on :2567
      cloudflared tunnel --config cloudflared/config.yml run
      ```
-  4. Point the Pages client at your tunnel — either set
-     `wsUrl: 'wss://game.yourdomain.com'` in the committed `env.js`
-     (default for every visitor), or share a link with
-     `?server=game.yourdomain.com` (sticky per player via localStorage).
+  4. Point the Pages client at your tunnel — any of:
+     - **Login-screen field**: players type the host (e.g.
+       `some-words.trycloudflare.com`) into the *game server* box on the
+       first page; the value is remembered for their next visit. This is
+       the flow for quick tunnels, whose URL changes every run.
+     - **Share link**: `…/opencombat/?server=game.yourdomain.com` (sticky
+       per player via localStorage, and it prefills the field).
+     - **Default for everyone**: set `wsUrl: 'wss://game.yourdomain.com'`
+       in the committed `env.js` — best with a named tunnel's stable
+       hostname.
      Matchmaking CORS is built into Colyseus 0.17 (`/matchmake/*` answers
      preflight and allows cross-origin), so the Pages origin works as-is.
 

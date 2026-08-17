@@ -37,6 +37,8 @@
     #login h1 { font-size: 26px; margin: 0 0 6px; }
     #login p { color: #888; font-size: 13px; margin: 0 0 16px; }
     #login input { font: 15px monospace; padding: 8px 12px; width: 220px; border-radius: 6px; border: 1px solid #333; background: #161b22; color: #fff; }
+    /* long trycloudflare/tunnel hosts need more room than the name field */
+    #login-server { width: 260px; margin-top: 8px; font-size: 13px; }
     #char-picker { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
     /* #login .char-card must outrank the generic "#login button" rule below. */
     #login .char-card { font: 13px monospace; padding: 8px 10px; border-radius: 6px; border: 1px solid #333;
@@ -87,6 +89,7 @@
       <h1>opengame</h1>
       <p>multiplayer arena survival — open this page in two tabs to play together</p>
       <input id="login-name" type="text" maxlength="16" placeholder="your name" autocomplete="off" />
+      <input id="login-server" type="text" placeholder="game server (e.g. word-word-word.trycloudflare.com)" autocomplete="off" spellcheck="false" />
       <div id="char-picker"></div>
       <br/>
       <button id="login-btn">JOIN</button>
