@@ -138,10 +138,17 @@ export function buildHttpApp(app) {
   });
   app.use('/assets', express.static(path.join(root, 'assets'), { maxAge: '1d', etag: true }));
   // Zero-build client: ES modules load directly from /src. Server internals
-  // are denied — only the schema shared with the server is reachable.
+  // are denied — the exceptions are the modules the browser client itself
+  // imports: the shared schema, the tunables (LocalRoom mirrors them for the
+  // offline sim) and the shared movement math.
+  const clientReachable = new Set([
+    '/server/schema/StateSchema.js',
+    '/server/config.js',
+    '/server/movement.js'
+  ]);
   app.use('/src', (req, res, next) => {
     const rel = req.path;
-    if (rel.startsWith('/server/') && rel !== '/server/schema/StateSchema.js') {
+    if (rel.startsWith('/server/') && !clientReachable.has(rel)) {
       res.status(404).json({ error: 'not found' });
       return;
     }

@@ -109,7 +109,9 @@ All optional; the defaults run a single-process game on :2567.
   processes). Health check: `GET /healthz` (used by the Docker healthcheck).
 - **Security defaults**: only `index.html`, `/assets`, `/env.js` and the
   client modules under `/src` are served — `node_modules/`, `package.json`,
-  server internals, tests and docs all 404. Fresh joins are rate-limited per
+  tests and docs all 404, and under `/src/server/` only the three modules
+  the browser client imports (shared schema, tunables, movement math for
+  the offline sim). Fresh joins are rate-limited per
   IP (token bucket at the connection/`onAuth` layer — Colyseus 0.17 routes
   `/matchmake*` through its own dispatcher, so express middleware cannot see
   them) and input is validated server-side (see "Server hardening"). CORS is

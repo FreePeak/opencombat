@@ -449,8 +449,15 @@ const half = SERVER.world.size / 2;
   const schema = await fetch(`${base}/src/server/schema/StateSchema.js`);
   assert.equal(schema.status, 200, 'shared client/server schema served');
 
+  // The client's offline sim (src/LocalRoom.js) imports these two server
+  // modules — a 404 here breaks the whole ES-module graph on page boot.
+  for (const shared of ['/src/server/config.js', '/src/server/movement.js']) {
+    const res = await fetch(`${base}${shared}`);
+    assert.equal(res.status, 200, `${shared} served (client local-sim import)`);
+  }
+
   for (const leaked of ['/package.json', '/package-lock.json', '/README.md',
-    '/node_modules/express/package.json', '/src/server/config.js',
+    '/node_modules/express/package.json',
     '/src/server/rooms/GameRoom.js', '/test/multiplayer.test.mjs']) {
     const res = await fetch(`${base}${leaked}`);
     assert.equal(res.status, 404, `${leaked} is NOT exposed`);
