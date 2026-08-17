@@ -14,7 +14,7 @@ import SoundManager from '../audio/SoundManager.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, joinErrorMessage } from '../network.js';
-import { stripRootMotion, frameDamp } from '../anim/AnimUtils.js';
+import { stripRootMotion, frameDamp, cameraOffset } from '../anim/AnimUtils.js';
 
 // Deterministic LCG: scatters props identically on every client so the
 // arena looks the same for all players, without a network round trip.
@@ -98,6 +98,7 @@ export default class GameScene {
     this.hudFill = document.getElementById('hp-fill');
     this.hudText = document.getElementById('hud-text');
     this.cooldownFill = document.getElementById('cooldown-fill');
+    this.skillCooldownFill = document.getElementById('skill-cooldown-fill');
     this.countdownEl = document.getElementById('countdown');
     this.flashEl = document.getElementById('flash');
     this.leaderboardEl = document.getElementById('leaderboard');
@@ -364,6 +365,9 @@ export default class GameScene {
       // Our own player: the camera follows this one.
       this.local = new Player(this, this.room, pack, def, color, this.models.sword);
       this.local.state = player;
+      // Skill cast VFX: a burst in the class's skill color at the caster.
+      this.local.onSkill = (pos, sdef) =>
+        this.particles.spawnBurst({ x: pos.x, y: 1.0, z: pos.z }, sdef.color, 30, 6, 0.7);
       this.local.root.position.set(player.x, 0, player.z); // snap to spawn
       this.cameraRigged = false;
       this.lastHp = player.hp;
@@ -480,7 +484,7 @@ export default class GameScene {
     const map = {
       KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd',
       ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
-      KeyJ: 'j', KeyM: 'm'
+      KeyJ: 'j', KeyK: 'k', KeyM: 'm'
     };
     for (const name of Object.values(map)) {
       this.keys[name] = { isDown: false, justPressed: false };
@@ -513,12 +517,16 @@ export default class GameScene {
 
       // --- Camera rig: lerp behind the player, look at them -------------
       const target = this.local.root.position;
-      const yaw = this.local.root.rotation.y;
       const cfg = CONFIG.player.camera;
+      // RC5: FIXED azimuth — the rig follows the player's position only and
+      // never reads the character's yaw, so it cannot orbit. Player.update
+      // maps WASD onto the same cfg.yaw, so W always runs directly away from
+      // the camera and A/D strafe in straight lines (no "round and round").
+      const off = cameraOffset(cfg.yaw, cfg.distance);
       const desired = new THREE.Vector3(
-        target.x - Math.sin(yaw) * cfg.distance,
+        target.x + off.x,
         target.y + cfg.height,
-        target.z - Math.cos(yaw) * cfg.distance
+        target.z + off.z
       );
       if (!this.cameraRigged) {
         this.camera.position.copy(desired); // snap on spawn, then lerp
@@ -627,10 +635,13 @@ export default class GameScene {
     this.hudFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
     this.hudText.textContent =
       `score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
-      '   WASD move · J melee · M mute';
+      '   WASD move · J melee · K skill · M mute';
     // Cooldown bar: drains while J is on cooldown (server mirrors it).
     const cdMs = Math.max(me.attackCd, this.local.attackCd * 1000);
     this.cooldownFill.style.width = Math.min(100, cdMs / CONFIG.player.attackCooldownMs * 100) + '%';
+    // Skill cooldown bar (K): drains over the class's skill cooldown.
+    const scdMs = Math.max(me.skillCd, this.local.skillCd * 1000);
+    this.skillCooldownFill.style.width = Math.min(100, scdMs / this.local.skillDef.cooldownMs * 100) + '%';
 
     // --- Damage feedback: red flash + shake + sound + number ------------
     if (me.hp < this.lastHp) {

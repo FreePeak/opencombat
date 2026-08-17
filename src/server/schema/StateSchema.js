@@ -25,6 +25,7 @@ export class PlayerState extends Schema {
     this.color = 0xffffff;    // server-assigned from SERVER.colors palette
     this.effects = new MapSchema(); // power-up name -> remaining ms
     this.attackCd = 0;        // ms until J works again (HUD bar + anti-cheat)
+    this.skillCd = 0;         // ms until K (the per-character skill) works again
   }
 }
 defineTypes(PlayerState, {
@@ -37,7 +38,8 @@ defineTypes(PlayerState, {
   character: 'number',
   color: 'number',
   effects: { map: 'number' },
-  attackCd: 'number'
+  attackCd: 'number',
+  skillCd: 'number'
 });
 
 // One collectible. Shared pool: first player within radius wins, the orb

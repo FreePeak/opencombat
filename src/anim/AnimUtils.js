@@ -14,6 +14,9 @@
 //   RC4  dampFactor / frameDamp — exponential smoothing that converges at
 //        the same rate no matter how frames subdivide time (the old
 //        `* 0.25` per frame only matched at exactly 60fps).
+//   RC5  cameraMoveDir / cameraOffset — map movement + the camera rig onto a
+//        FIXED azimuth instead of the character's own yaw, so A/D strafes in a
+//        straight line and the camera can no longer orbit round and round.
 import * as THREE from 'three';
 
 // Translation range (in clip units) below which a bone position track is
@@ -89,7 +92,8 @@ export function shouldSendInput(last, next) {
     next.dirX !== last.dirX ||
     next.dirZ !== last.dirZ ||
     next.anim !== last.anim ||
-    next.attack !== last.attack
+    next.attack !== last.attack ||
+    next.skill !== last.skill
   );
 }
 
@@ -109,4 +113,31 @@ export function dampFactor(k, dt) {
  */
 export function frameDamp(p, dt) {
   return 1 - Math.pow(1 - p, dt * 60);
+}
+
+/**
+ * RC5: camera-relative movement basis. Maps input axes onto a FIXED camera
+ * azimuth (camYaw) instead of the character's own yaw. ix = right(+)/left(-),
+ * iz = forward(+)/back(-). Because camYaw never tracks the character's facing,
+ * holding A or D strafes along a constant world direction — the old
+ * character-relative mapping re-pointed the mover at its velocity each tick,
+ * curving A/D into a circle ("camera going round and round").
+ *   screen-forward = (sin, cos); screen-right = cross(forward, up) = (-cos, sin)
+ * @returns {{x:number, z:number}} world-space movement direction
+ */
+export function cameraMoveDir(ix, iz, camYaw) {
+  const s = Math.sin(camYaw);
+  const c = Math.cos(camYaw);
+  return { x: s * iz - c * ix, z: c * iz + s * ix };
+}
+
+/**
+ * RC5: horizontal offset from the followed target to the camera for a fixed
+ * azimuth. The camera sits `distance` behind the target along camYaw and never
+ * references the character's rotation, so the rig cannot orbit. Pair with
+ * cameraMoveDir so W always runs directly away from the camera.
+ * @returns {{x:number, z:number}} offset to ADD to the target position
+ */
+export function cameraOffset(camYaw, distance) {
+  return { x: -Math.sin(camYaw) * distance, z: -Math.cos(camYaw) * distance };
 }

@@ -8,11 +8,13 @@ import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { attachWeapon, ProceduralAnim } from './Sword.js';
 import { CONFIG } from '../config.js';
 import { attackTimeScale, frameDamp } from '../anim/AnimUtils.js';
+import { skillFor } from '../shared/skills.js';
 
 export default class RemotePlayer {
   constructor(scene, state, model, def, color, swordModel = null) {
     this.state = state; // live PlayerState ref, patched by colyseus
     this.def = def;
+    this.skillDef = skillFor(state.character); // the class's K skill (for anim timing)
     this.baseColor = new THREE.Color(color);
 
     this.root = new THREE.Group();
@@ -62,15 +64,22 @@ export default class RemotePlayer {
   }
 
   playAnim(name) {
-    const action = this.clips[name];
-    if (!action || action === this.current) return;
+    // The skill cast reuses the class's swing clip (no separate skill clip).
+    const clipKey = name === 'skill' ? 'attack' : name;
+    const action = this.clips[clipKey];
+    if (!action || (action === this.current && this.currentName === name)) return;
     this.current = action;
+    this.currentName = name;
     this.mixer.stopAllAction();
     action.reset().play();
     // RC2: same time-scaled swing as the local player, so a remote knight
     // shows the full arc inside the server's attackAnimMs window.
     if (name === 'attack') {
       action.timeScale = attackTimeScale(action.getClip(), CONFIG.player.attackAnimMs);
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    } else if (name === 'skill') {
+      action.timeScale = attackTimeScale(action.getClip(), this.skillDef.animMs);
       action.setLoop(THREE.LoopOnce);
       action.clampWhenFinished = true;
     } else {
@@ -102,9 +111,9 @@ export default class RemotePlayer {
     this.root.rotation.y += dy * t;
     if (this.proc) {
       // Clip-less model: drive the bob/swing from the server anim name.
-      this.proc.update(dt, s.anim === 'run', s.anim === 'attack');
+      this.proc.update(dt, s.anim === 'run', s.anim === 'attack' || s.anim === 'skill');
     } else {
-      this.playAnim(s.anim); // server-driven anim (idle/run/attack)
+      this.playAnim(s.anim); // server-driven anim (idle/run/attack/skill)
       this.mixer.update(dt);
     }
     this.updateEffects(s.effects);

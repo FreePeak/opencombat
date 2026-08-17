@@ -40,7 +40,7 @@ export const CONFIG = {
     maxHp: 100,
     attackCooldownMs: 800,      // mirror of the server cooldown (HUD bar)
     attackAnimMs: 350,          // mirror of SERVER.player.attackAnimMs
-    camera: { height: 7, distance: 10, lerp: 0.08 }, // third-person rig
+    camera: { height: 7, distance: 10, lerp: 0.08, yaw: Math.PI }, // third-person rig; yaw = fixed azimuth (RC5)
     shake: { duration: 0.3, amplitude: 0.3 }         // damage camera shake
   },
 

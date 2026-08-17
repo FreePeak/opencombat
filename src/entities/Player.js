@@ -11,7 +11,8 @@ import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
 import { CONFIG } from '../config.js';
 import { sendInput } from '../network.js';
-import { attackTimeScale, shouldSendInput } from '../anim/AnimUtils.js';
+import { attackTimeScale, shouldSendInput, cameraMoveDir } from '../anim/AnimUtils.js';
+import { skillFor } from '../shared/skills.js';
 
 export default class Player {
   /**
@@ -91,14 +92,27 @@ export default class Player {
     this.attackCd = 0;
     this.sendTimer = 0;      // input throttle
     this.pendingAttack = false; // RC3: attack edge latched until it is sent
-    this.lastSent = { dirX: 0, dirZ: 0, attack: false, anim: 'idle' };
+    this.lastSent = { dirX: 0, dirZ: 0, attack: false, skill: false, anim: 'idle' };
+
+    // Per-character skill (K): every class shares the J melee but casts its
+    // own skill. The server enforces the same cooldown/damage (src/shared).
+    this.charIndex = Math.max(0, CONFIG.characters.indexOf(def));
+    this.skillDef = skillFor(this.charIndex);
+    this.skillAnimT = 0;
+    this.skillCd = 0;
+    this.pendingSkill = false;
+    this.onSkill = null;    // GameScene sets this to spawn the cast VFX
   }
 
-  /** Play a logical anim by name (idle/run/attack), reusing the clip. */
+  /** Play a logical anim by name (idle/run/attack/skill), reusing the clip. */
   playAnim(name) {
-    const action = this.clips[name];
-    if (!action || action === this.current) return;
+    // The skill cast reuses the class's swing clip (there is no separate skill
+    // clip in the GLBs); it is distinguished by timing + the cast VFX.
+    const clipKey = name === 'skill' ? 'attack' : name;
+    const action = this.clips[clipKey];
+    if (!action || (action === this.current && this.currentName === name)) return;
     this.current = action;
+    this.currentName = name;
     this.mixer.stopAllAction();
     action.reset().play();
     // RC2: squeeze the whole swing into attackAnimMs of wall time, so the
@@ -106,6 +120,10 @@ export default class Player {
     // the server flips anim back to idle/run.
     if (name === 'attack') {
       action.timeScale = attackTimeScale(action.getClip(), CONFIG.player.attackAnimMs);
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    } else if (name === 'skill') {
+      action.timeScale = attackTimeScale(action.getClip(), this.skillDef.animMs);
       action.setLoop(THREE.LoopOnce);
       action.clampWhenFinished = true;
     } else {
@@ -129,27 +147,24 @@ export default class Player {
   update(dt, _camera) {
     const k = this.keys;
 
-    // --- Input: CHARACTER-relative ---------------------------------------
-    // W runs along the current facing, A/D strafe-turn. NOT camera-relative:
-    // the camera rig follows the server yaw, which the server derives from
-    // the movement direction — a camera-relative dir feeds back through
-    // server rotY -> camera orbit -> changed input, steering the player in
-    // unwanted arcs.
+    // --- Input: CAMERA-relative against a FIXED azimuth (RC5) -------------
+    // WASD maps onto the fixed camera basis, NOT the character's own yaw. The
+    // camera rig no longer orbits with the character (GameScene uses the same
+    // fixed azimuth), so there is no turn->move->turn feedback loop: holding A
+    // or D strafes along a constant world direction (a straight line) instead
+    // of steering the player — and the camera — round and round in a circle.
     const ix = (k.d.isDown || k.right.isDown ? 1 : 0) - (k.a.isDown || k.left.isDown ? 1 : 0);
     const iz = (k.w.isDown || k.up.isDown ? 1 : 0) - (k.s.isDown || k.down.isDown ? 1 : 0);
     this.moving = ix !== 0 || iz !== 0;
+    const dir = cameraMoveDir(ix, iz, CONFIG.player.camera.yaw);
+    this.dirX = dir.x;
+    this.dirZ = dir.z;
 
-    // Facing/right from the RENDER yaw (matches the server's atan2(dirX,dirZ)
-    // convention, so holding W keeps rotY stable and the run stays straight).
-    const yaw = this.root.rotation.y;
-    const fx = Math.sin(yaw), fz = Math.cos(yaw); // forward
-    const rx = -fz, rz = fx;                      // screen-right
-    this.dirX = fx * iz + rx * ix;
-    this.dirZ = fz * iz + rz * ix;
-
-    // --- Swing + FSM ----------------------------------------------------
+    // --- Swing + skill + FSM --------------------------------------------
     this.attackAnimT = Math.max(0, this.attackAnimT - dt);
     this.attackCd = Math.max(0, this.attackCd - dt);
+    this.skillAnimT = Math.max(0, this.skillAnimT - dt);
+    this.skillCd = Math.max(0, this.skillCd - dt);
     const attack = k.j.justPressed && this.attackCd <= 0;
     k.j.justPressed = false;          // consume the edge
     if (attack) {
@@ -157,22 +172,36 @@ export default class Player {
       this.attackAnimT = CONFIG.player.attackAnimMs / 1000;
       this.scene.sound.swing();       // combat feedback
     }
+    // K casts the per-character skill; the server roots the caster during the
+    // cast (RC6) and applies the class's damage/cooldown authoritatively.
+    const skill = k.k.justPressed && this.skillCd <= 0;
+    k.k.justPressed = false;          // consume the edge
+    if (skill) {
+      this.skillCd = this.skillDef.cooldownMs / 1000;
+      this.skillAnimT = this.skillDef.animMs / 1000;
+      this.scene.sound.swing();
+      this.onSkill?.(this.root.position, this.skillDef); // cast VFX hook
+    }
     this.fsm.update(this, dt);
-    if (this.attackAnimT > 0) this.animName = 'attack'; // swing overrides run/idle
+    // A cast overrides a swing, which overrides run/idle.
+    if (this.skillAnimT > 0) this.animName = 'skill';
+    else if (this.attackAnimT > 0) this.animName = 'attack';
 
     // --- Send intent (throttled to ~30Hz, only when something changed) --
     // RC3: the attack edge lives for a single frame; latch it so the send
     // throttle can never diff it away. A pending edge flushes immediately
     // (which also cuts swing latency by up to a whole throttle slot).
     if (attack) this.pendingAttack = true;
+    if (skill) this.pendingSkill = true;
     this.sendTimer -= dt;
-    if (this.pendingAttack || this.sendTimer <= 0) {
-      const msg = { dirX: this.dirX, dirZ: this.dirZ, attack: this.pendingAttack, anim: this.animName };
+    if (this.pendingAttack || this.pendingSkill || this.sendTimer <= 0) {
+      const msg = { dirX: this.dirX, dirZ: this.dirZ, attack: this.pendingAttack, skill: this.pendingSkill, anim: this.animName };
       if (shouldSendInput(this.lastSent, msg)) {
-        sendInput(this.room, msg.dirX, msg.dirZ, msg.attack, msg.anim);
+        sendInput(this.room, msg.dirX, msg.dirZ, msg.attack, msg.skill, msg.anim);
         this.lastSent = msg;
       }
       this.pendingAttack = false;
+      this.pendingSkill = false;
       this.sendTimer = 1 / 30;
     }
 
@@ -191,7 +220,7 @@ export default class Player {
       this.root.rotation.y += dy * (1 - Math.exp(-18 * dt));
       this.updateEffects(s.effects);
     }
-    if (this.proc) this.proc.update(dt, this.moving, this.attackAnimT > 0);
+    if (this.proc) this.proc.update(dt, this.moving, this.attackAnimT > 0 || this.skillAnimT > 0);
     else {
       this.playAnim(this.animName);
       this.mixer.update(dt);

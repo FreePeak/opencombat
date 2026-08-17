@@ -14,6 +14,8 @@
     #hp-fill { height: 100%; width: 100%; background: #4caf50; transition: width .15s; }
     #cooldown-bar { width: 220px; height: 6px; margin-top: 3px; border-radius: 3px; background: #000a; overflow: hidden; }
     #cooldown-fill { height: 100%; width: 0%; background: #ffd54f; }
+    #skill-cooldown-bar { width: 220px; height: 6px; margin-top: 3px; border-radius: 3px; background: #000a; overflow: hidden; }
+    #skill-cooldown-fill { height: 100%; width: 0%; background: #4fc3f7; }
     #hud-text { margin-top: 6px; font-size: 13px; }
     #leaderboard { position: fixed; top: 12px; right: 12px; z-index: 10; color: #ddd; font-size: 13px;
       text-align: right; text-shadow: 0 1px 2px #000; }
@@ -63,6 +65,7 @@
   <div id="hud">
     <div id="hp-bar"><div id="hp-fill"></div></div>
     <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
+    <div id="skill-cooldown-bar"><div id="skill-cooldown-fill"></div></div>
     <div id="hud-text">connecting…</div>
   </div>
   <div id="leaderboard"></div>

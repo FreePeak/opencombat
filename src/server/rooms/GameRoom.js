@@ -18,6 +18,8 @@ import { WorldState, PlayerState, OrbState, PowerUpState, EnemyState } from '../
 import { SERVER } from '../config.js';
 import { log, warn } from '../log.js';
 import { takeToken, normalizeIp } from '../ratelimit.js';
+import { stepPlayer } from '../movement.js';
+import { skillFor, resolveSkillHits } from '../../shared/skills.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -50,6 +52,7 @@ export default class GameRoom extends Room {
     // broadcast input buffers or timers).
     this.inputs = new Map();        // sessionId -> { dirX, dirZ } last intent
     this.attackAt = new Map();      // sessionId -> ms when J may swing again
+    this.skillAt = new Map();       // sessionId -> ms when K may cast again
     this.invulnUntil = new Map();   // sessionId -> ms of damage immunity
     this.animUntil = new Map();     // sessionId -> ms anim override ('attack') expires
     this.msgTimes = new Map();      // sessionId -> recent input timestamps (rate cap)
@@ -170,6 +173,7 @@ export default class GameRoom extends Room {
 
     this.inputs.set(client.sessionId, { dirX: 0, dirZ: 0 });
     this.attackAt.set(client.sessionId, 0);
+    this.skillAt.set(client.sessionId, 0);
     this.invulnUntil.set(client.sessionId, 0);
     this.animUntil.set(client.sessionId, 0);
     this.msgTimes.set(client.sessionId, []);
@@ -273,12 +277,14 @@ export default class GameRoom extends Room {
       player.score = 0;
       player.anim = 'idle';
       player.attackCd = 0;
+      player.skillCd = 0;
       player.effects.clear(); // buffs never carry into the next match
     }
     // Scratch state: no stale cooldowns/input intents across matches.
     for (const sid of state.players.keys()) {
       this.inputs.set(sid, { dirX: 0, dirZ: 0 });
       this.attackAt.set(sid, 0);
+      this.skillAt.set(sid, 0);
       this.invulnUntil.set(sid, 0);
       this.animUntil.set(sid, 0);
     }
@@ -369,6 +375,17 @@ export default class GameRoom extends Room {
           cooldownMs: this.attackAt.get(sid) - now });
       }
     }
+
+    // Skill cast (K): same gating as the melee; the cooldown + cast window come
+    // from the caster's per-character skill def (src/shared/skills.js).
+    if (msg.skill) {
+      if (this.state.matchState !== 'playing') {
+        this.warnEvent('input_skill_rejected', { sid, reason: `match_${this.state.matchState}` });
+        return;
+      }
+      if (now >= this.skillAt.get(sid)) this.castSkill(sid);
+      else this.warnEvent('input_skill_rejected', { sid, reason: 'cooldown' });
+    }
   }
 
   /** HP <= 0 during a match -> click to respawn (never during gameover). */
@@ -382,9 +399,11 @@ export default class GameRoom extends Room {
     player.hp = SERVER.player.maxHp;
     player.anim = 'idle';
     player.attackCd = 0;
+    player.skillCd = 0;
     player.effects.clear(); // RESPAWN LEAK: buffs die with the player
     this.inputs.set(client.sessionId, { dirX: 0, dirZ: 0 });
     this.attackAt.set(client.sessionId, 0);
+    this.skillAt.set(client.sessionId, 0);
     this.animUntil.set(client.sessionId, 0);
     this.invulnUntil.set(client.sessionId, Date.now() + 1000); // spawn grace
     this.logEvent('player_respawn', { sid: client.sessionId });
@@ -394,6 +413,7 @@ export default class GameRoom extends Room {
   melee(sid) {
     const player = this.state.players.get(sid);
     if (!player || player.hp <= 0) return; // ghosts cannot swing
+    player.anim = 'attack'; // movePlayers preserves this during animUntil
     const cfg = SERVER.player;
     // Facing vector from rotY (atan2 convention: +Z is 0).
     const fx = Math.sin(player.rotY);
@@ -415,6 +435,42 @@ export default class GameRoom extends Room {
         enemy.hp = SERVER.enemy.hp;
       }
     }
+  }
+
+  /**
+   * Per-character skill cast (K). Every class shares the J melee but casts its
+   * own skill (src/shared/skills.js) — distinct shape/damage/cooldown. The
+   * caster is rooted for the cast (RC6) and shows anim='skill'. Like melee(),
+   * damage applies to enemies only (PvE arena); killed enemies respawn.
+   */
+  castSkill(sid) {
+    const state = this.state;
+    const player = state.players.get(sid);
+    if (!player || player.hp <= 0) return;
+    const def = skillFor(player.character);
+    const now = Date.now();
+    if (now < this.skillAt.get(sid)) return; // belt + braces (onInput gates too)
+    this.skillAt.set(sid, now + def.cooldownMs);
+    this.animUntil.set(sid, now + def.animMs); // roots the caster during the cast
+    player.anim = 'skill'; // movePlayers preserves this during animUntil
+
+    // Resolve hits with the same pure math the client uses for its VFX, then
+    // apply authoritative damage + respawn.
+    const targets = [...state.enemies].map((e) => ({ x: e.x, z: e.z }));
+    for (const i of resolveSkillHits(def, player, targets)) {
+      const enemy = state.enemies[i];
+      if (!enemy || enemy.hp <= 0) continue;
+      enemy.hp -= def.damage;
+      enemy.anim = 'hit';
+      this.enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
+      if (enemy.hp <= 0) {
+        const p = this.randomPos();
+        enemy.x = p.x;
+        enemy.z = p.z;
+        enemy.hp = SERVER.enemy.hp;
+      }
+    }
+    this.logEvent('skill_cast', { sid, character: player.character, skill: def.key });
   }
 
   /** One fixed timestep of the simulation, dispatched by match phase. */
@@ -461,19 +517,27 @@ export default class GameRoom extends Room {
       if (player.hp <= 0) {
         player.anim = 'idle';
         player.attackCd = 0;
+        player.skillCd = 0;
         continue;
       }
       const { dirX, dirZ } = this.inputs.get(sid);
       const speed = SERVER.player.speed *
         (player.effects.has('speed') ? SERVER.powerUps.speed.multiplier : 1);
-      player.x = clamp(player.x + dirX * speed * dt, -this.half, this.half);
-      player.z = clamp(player.z + dirZ * speed * dt, -this.half, this.half);
-      if (dirX || dirZ) player.rotY = Math.atan2(dirX, dirZ);
-      // Cosmetic anim: the swing overrides movement while it lasts.
-      player.anim = now < this.animUntil.get(sid) ? 'attack'
-        : (dirX || dirZ) ? 'run' : 'idle';
-      // Broadcast the cooldown for the HUD bar (0 = ready to swing).
+      // RC6: ROOT the player while mid-swing / mid-cast (animUntil). The
+      // planted-feet attack/skill animation never skates the model across the
+      // ground, and "move + attack at the same time" can no longer slide.
+      const attacking = now < this.animUntil.get(sid);
+      const stepped = stepPlayer(player.x, player.z, player.rotY,
+        dirX, dirZ, speed, dt, this.half, attacking);
+      player.x = stepped.x;
+      player.z = stepped.z;
+      player.rotY = stepped.rotY;
+      // While the swing/cast override is active keep the anim melee/castSkill
+      // set ('attack'/'skill'); otherwise drive it from movement.
+      if (!attacking) player.anim = (dirX || dirZ) ? 'run' : 'idle';
+      // Broadcast the cooldowns for the HUD bars (0 = ready).
       player.attackCd = Math.max(0, this.attackAt.get(sid) - now);
+      player.skillCd = Math.max(0, this.skillAt.get(sid) - now);
     }
   }
 

@@ -25,8 +25,8 @@ export function reconnectRoom(room, name) {
 }
 
 /** Send one input intent. Positions are server-authoritative. */
-export function sendInput(room, dirX, dirZ, attack, anim) {
-  room.send('input', { dirX, dirZ, attack, anim });
+export function sendInput(room, dirX, dirZ, attack, skill, anim) {
+  room.send('input', { dirX, dirZ, attack, skill, anim });
 }
 
 /** Request respawn after death (server validates hp <= 0 + match phase). */
