@@ -64,6 +64,24 @@ export default class Player {
     this.shieldMesh.visible = false;
     this.root.add(this.shieldMesh);
 
+    // BLOCK guard: a translucent shield wall floating in front of the player
+    // while L is held (local prediction; the server broadcasts `blocking` for
+    // remotes). Local +Z is the facing direction (rotY = atan2 convention).
+    this.guardMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 1.6, 0.12),
+      new THREE.MeshBasicMaterial({
+        color: CONFIG.effects.block.color,
+        transparent: true,
+        opacity: CONFIG.effects.block.opacity,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    );
+    this.guardMesh.position.set(0, 0.9, 0.85);
+    this.guardMesh.visible = false;
+    this.root.add(this.guardMesh);
+    this.blocking = false;    // L held this frame (predicted locally)
+
     // Animation clips, keyed by our logical names (see CONFIG.characters).
     // Models that ship no clips (the knight) get ProceduralAnim instead.
     this.mixer = new THREE.AnimationMixer(this.mesh);
@@ -92,7 +110,7 @@ export default class Player {
     this.attackCd = 0;
     this.sendTimer = 0;      // input throttle
     this.pendingAttack = false; // RC3: attack edge latched until it is sent
-    this.lastSent = { dirX: 0, dirZ: 0, attack: false, skill: false, anim: 'idle' };
+    this.lastSent = { dirX: 0, dirZ: 0, attack: false, skill: false, anim: 'idle', block: false };
 
     // Per-character skill (K): every class shares the J melee but casts its
     // own skill. The server enforces the same cooldown/damage (src/shared).
@@ -200,8 +218,14 @@ export default class Player {
     // fixed azimuth), so there is no turn->move->turn feedback loop: holding A
     // or D strafes along a constant world direction (a straight line) instead
     // of steering the player — and the camera — round and round in a circle.
-    const ix = (k.d.isDown || k.right.isDown ? 1 : 0) - (k.a.isDown || k.left.isDown ? 1 : 0);
-    const iz = (k.w.isDown || k.up.isDown ? 1 : 0) - (k.s.isDown || k.down.isDown ? 1 : 0);
+    // L (hold) = block: guarding roots the player (no movement input) and the
+    // swing/cast cannot be started while blocking.
+    this.blocking = !!k.l?.isDown;
+    this.guardMesh.visible = this.blocking;
+    const ix = this.blocking ? 0 :
+      (k.d.isDown || k.right.isDown ? 1 : 0) - (k.a.isDown || k.left.isDown ? 1 : 0);
+    const iz = this.blocking ? 0 :
+      (k.w.isDown || k.up.isDown ? 1 : 0) - (k.s.isDown || k.down.isDown ? 1 : 0);
     this.moving = ix !== 0 || iz !== 0;
     const dir = cameraMoveDir(ix, iz, CONFIG.player.camera.yaw);
     this.dirX = dir.x;
@@ -212,16 +236,29 @@ export default class Player {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.skillAnimT = Math.max(0, this.skillAnimT - dt);
     this.skillCd = Math.max(0, this.skillCd - dt);
-    const attack = k.j.justPressed && this.attackCd <= 0;
+    // COMBAT RULE (mirrored by the server): an attack CANNOT be started while
+    // blocking — the J/K press is consumed with a hint instead. Attacks ARE
+    // allowed while moving.
+    const attackReady = k.j.justPressed && this.attackCd <= 0;
+    const attack = attackReady && !this.blocking;
+    if (k.j.justPressed && attackReady && !attack) {
+      this.scene.floatTexts?.spawn(this.root.position.x, 2.4, this.root.position.z,
+        'LOWER GUARD TO ATTACK', '#ffd54f');
+    }
     k.j.justPressed = false;          // consume the edge
     if (attack) {
       this.attackCd = CONFIG.player.attackCooldownMs / 1000;
       this.attackAnimT = CONFIG.player.attackAnimMs / 1000;
       this.scene.sound.swing();       // combat feedback
     }
-    // K casts the per-character skill; the swing/cast NEVER blocks movement
-    // (RC7) and the server applies the class's damage/cooldown authoritatively.
-    const skill = k.k.justPressed && this.skillCd <= 0;
+    // K casts the per-character skill; the server applies the class's
+    // damage/cooldown authoritatively. Casts work while moving.
+    const skillReady = k.k.justPressed && this.skillCd <= 0;
+    const skill = skillReady && !this.blocking;
+    if (k.k.justPressed && skillReady && !skill && !attack) {
+      this.scene.floatTexts?.spawn(this.root.position.x, 2.4, this.root.position.z,
+        'LOWER GUARD TO CAST', '#4fc3f7');
+    }
     k.k.justPressed = false;          // consume the edge
     if (skill) {
       this.skillCd = this.skillDef.cooldownMs / 1000;
@@ -242,9 +279,9 @@ export default class Player {
     if (skill) this.pendingSkill = true;
     this.sendTimer -= dt;
     if (this.pendingAttack || this.pendingSkill || this.sendTimer <= 0) {
-      const msg = { dirX: this.dirX, dirZ: this.dirZ, attack: this.pendingAttack, skill: this.pendingSkill, anim: this.animName };
+      const msg = { dirX: this.dirX, dirZ: this.dirZ, attack: this.pendingAttack, skill: this.pendingSkill, anim: this.animName, block: this.blocking };
       if (shouldSendInput(this.lastSent, msg)) {
-        sendInput(this.room, msg.dirX, msg.dirZ, msg.attack, msg.skill, msg.anim);
+        sendInput(this.room, msg.dirX, msg.dirZ, msg.attack, msg.skill, msg.anim, msg.block);
         this.lastSent = msg;
       }
       this.pendingAttack = false;

@@ -78,6 +78,11 @@ export default class SoundManager {
   powerUp() { this.blip(330, 660, 0.1, 'triangle', 0.2); this.blip(495, 990, 0.14, 'triangle', 0.18, 0.09); }
   swing() { this.noiseSweep(0.12, 0.12, 1200, 300, 'bandpass'); }
   hit() { this.blip(130, 60, 0.12, 'sine', 0.3); this.noiseSweep(0.08, 0.15, 400, 100, 'lowpass'); }
+  blocked() { // metallic clang: the guard held, no damage taken
+    this.blip(520, 500, 0.06, 'square', 0.15);
+    this.blip(700, 690, 0.09, 'square', 0.12, 0.05);
+    this.noiseSweep(0.06, 0.1, 2400, 900, 'highpass');
+  }
   death() { this.blip(400, 70, 0.5, 'sawtooth', 0.16); this.noiseSweep(0.4, 0.1, 800, 60, 'lowpass'); }
   tick() { this.blip(880, 880, 0.05, 'square', 0.08); }
   go() { this.blip(440, 880, 0.18, 'square', 0.12); }

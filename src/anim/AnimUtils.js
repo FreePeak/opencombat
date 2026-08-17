@@ -85,7 +85,9 @@ export function attackTimeScale(clip, animMs) {
  * Single predicate for the 30Hz input throttle (RC3). Identical intents are
  * not re-sent; any dir/anim change is; and an attack EDGE (false -> true or
  * true -> false) always counts as a change even when dirX/dirZ/anim are all
- * unchanged — the edge is one frame and must never be diffed away.
+ * unchanged — the edge is one frame and must never be diffed away. The HELD
+ * block flag is diffed too, so raising/dropping the guard reaches the server
+ * immediately.
  */
 export function shouldSendInput(last, next) {
   return (
@@ -93,7 +95,8 @@ export function shouldSendInput(last, next) {
     next.dirZ !== last.dirZ ||
     next.anim !== last.anim ||
     next.attack !== last.attack ||
-    next.skill !== last.skill
+    next.skill !== last.skill ||
+    next.block !== last.block
   );
 }
 

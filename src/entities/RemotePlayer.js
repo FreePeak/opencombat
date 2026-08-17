@@ -48,6 +48,22 @@ export default class RemotePlayer {
     this.shieldMesh.visible = false;
     this.root.add(this.shieldMesh);
 
+    // BLOCK guard: translucent wall in front while the server says the player
+    // is holding L (same visual as the local player's prediction).
+    this.guardMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 1.6, 0.12),
+      new THREE.MeshBasicMaterial({
+        color: CONFIG.effects.block.color,
+        transparent: true,
+        opacity: CONFIG.effects.block.opacity,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    );
+    this.guardMesh.position.set(0, 0.9, 0.85);
+    this.guardMesh.visible = false;
+    this.root.add(this.guardMesh);
+
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.clips = {};
     for (const [name, clipName] of Object.entries(def.anims)) {
@@ -150,6 +166,8 @@ export default class RemotePlayer {
 
   update(dt) {
     const s = this.state;
+    // Guard wall follows the server's blocking flag.
+    this.guardMesh.visible = !!s.blocking;
     // Lerp toward the last received position to avoid jitter. RC4: the old
     // fixed `* 0.25` only converged correctly at 60fps; frameDamp keeps the
     // tuned feel while converging identically at any frame rate.

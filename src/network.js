@@ -67,9 +67,10 @@ export function reconnectRoom(room, name) {
   return currentClient().reconnect(room.reconnectionToken, WorldState);
 }
 
-/** Send one input intent. Positions are server-authoritative. */
-export function sendInput(room, dirX, dirZ, attack, skill, anim) {
-  room.send('input', { dirX, dirZ, attack, skill, anim });
+/** Send one input intent. Positions are server-authoritative. `block` is a
+ *  HELD state (L), unlike the edge-triggered attack/skill flags. */
+export function sendInput(room, dirX, dirZ, attack, skill, anim, block = false) {
+  room.send('input', { dirX, dirZ, attack, skill, anim, block });
 }
 
 /** Request respawn after death (server validates hp <= 0 + match phase). */

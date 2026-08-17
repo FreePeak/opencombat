@@ -51,7 +51,14 @@ export const SERVER = {
     attackRange: 2.6,         // melee reach
     attackArcCos: 0.5,        // cos(60°): hit enemies within a 60° cone
     attackCooldownMs: 800,    // J can't swing faster than this (HUD bar)
-    attackAnimMs: 350         // how long anim='attack' shows
+    attackAnimMs: 350,        // how long anim='attack' shows
+    attackDamage: 1,          // melee damage per hit vs enemies (enemy.hp hits kill)
+    attackPvpDamage: 10,      // melee damage vs other players
+    skillPvpDamage: 15,       // skill (K) damage vs other players
+    // L block: while held the player is rooted and every hit whose source
+    // lies inside the FRONTAL hemisphere (dot >= 0) deals no damage.
+    blockArcCos: 0,
+    blockKnockback: 1.1       // nudge applied to a blocked victim (cosmetic)
   },
 
   orb: {

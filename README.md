@@ -124,7 +124,9 @@ All optional; the defaults run a single-process game on :2567.
 | Key | Action |
 |-----|--------|
 | W / A / S / D or arrows | Move (camera-relative) |
-| J | Melee swing (0.8s cooldown, HUD bar) |
+| J | Melee swing (0.8s cooldown, HUD bar) — works while moving |
+| K | Character skill (0.8–4s cooldown per class) — works while moving |
+| L (hold) | Block — roots you, negates frontal enemy contact and other players' attacks |
 | M | Mute / unmute sound |
 | Click a character card (login) | Choose Swordsman / Archer / Mage / Spike Man |
 
@@ -183,16 +185,23 @@ respawns elsewhere after `powerUps.respawnSeconds`.
 | SHIELD | blocks one enemy hit (consumed) | translucent bubble |
 | DOUBLE | 2x orb score, 10s | gold tint |
 
-## Combat feedback
+## Combat
 
-- J swing: 0.8s cooldown shown as a HUD bar (server enforces it — rapid
-  swings are rejected with a log).
-- Enemies flash white when hit; dying enemies burst into pooled particles
-  (one reused `THREE.Points` object, no geometry per burst).
-- Player damage: red screen flash + decaying camera shake (0.3s) + a
-  floating damage number.
-- Floating damage numbers are pooled HTML divs projected from 3D positions
-  each frame (`src/effects/FloatingTextPool.js`).
+**Attacks** — Melee (J) and skills (K) damage enemies and other players. Both
+work while moving; the only gate is holding L (block) — you cannot swing or
+cast while guarding.
+
+**Blocking (hold L)** — Roots you and negates any hit whose source lies inside
+your frontal hemisphere (the attacker must be in front of you). Successful
+blocks deal **zero damage** and emit a "BLOCKED" message; a hit from behind
+still lands. Enemy contact damage is also blocked frontally.
+
+**Player vs player** — Melee and skills now hurt other players (PvP damage is
+separate from enemy damage). This makes blocking meaningful in multiplayer.
+
+**Enemy health bars** — Every enemy displays a billboarded bar above its head
+showing current HP (green → red as it drains). Killing an enemy respawns it
+elsewhere at full HP.
 
 ## Audio (procedural, zero files)
 
@@ -300,20 +309,20 @@ same melee combat rules.
 
 1. `npm install` succeeds (colyseus 0.17.10, @colyseus/sdk 0.17.43, express 5.2.1 pinned).
 2. `npm run check` — every server/client/test file passes `node --check`.
-3. `npm run test` — FSM unit test, plus a headless integration test that
-   boots the real server and proves, over real WebSockets:
-   countdown → playing on first join, movement sync, a power-up pickup
-   applying its timed effect, attack-cooldown rejection (second rapid swing
-   does not reset the cooldown), two-client visibility, and automatic
-   reconnection after a simulated socket drop (same session + state).
-   Gameplay-bug suites: **GHOST** (hp ≤ 0 → frozen, no pickup/score/attack/
-   win, enemies ignore the corpse), **ATTACK GATE** (countdown/game-over
-   swings deal no damage and arm no cooldown; playing swings do),
-   **RESPAWN** (effects cleared, hp restored, spawn invulnerability set),
-   **WIN** (score win with living players only, timed end with no players
-   broadcasts an empty winner, play-again fully resets state, join during
-   game-over auto-restarts), **HEALTH** (/healthz shape, /metrics keys,
-   static whitelist 404s, cache headers, /env.js injection).
+3. `npm run test` — FSM unit test, movement/attack smoothness contracts, and a
+   headless integration test that boots the real server and proves:
+   - countdown → playing on first join, movement sync, power-up pickup,
+     attack-cooldown enforcement, two-client visibility, automatic reconnection
+   - **GHOST** (hp ≤ 0 → frozen, no pickup/score/attack/win, enemies ignore corpse)
+   - **ATTACK GATE** (countdown/game-over swings deal no damage)
+   - **RESPAWN** (effects cleared, hp restored, spawn invulnerability set)
+   - **WIN** (score win with living players only, timed end broadcasts empty
+     winner, play-again fully resets state, join during game-over auto-restarts)
+   - **BLOCK** (L root + frontal negation, rear exposure, blocked message)
+   - **PVP** (melee/skills hurt other players, guard negates it)
+   - **KILL-UNTIL-DEATH** (all 4 character classes' J/K reduce enemy HP; killed
+     enemies respawn elsewhere at full HP)
+   - **MOVE + ATTACK** (J and K work while moving, only L blocks them)
 4. `npm run serve` + curl: the client HTML loads (200, `no-cache`), the
    matchmake endpoint answers (200), the WebSocket upgrade responds (101),
    static assets (JS modules, GLBs) are served, `package.json`/`node_modules`

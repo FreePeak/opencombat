@@ -105,7 +105,10 @@ export const CONFIG = {
   effects: {                    // visuals per active effect
     speed:  { color: 0x00e5ff, durationMs: 5000 },
     shield: { color: 0x4dabff, durationMs: 15000, sphereOpacity: 0.18 },
-    double: { color: 0xffd700, durationMs: 10000 }
+    double: { color: 0xffd700, durationMs: 10000 },
+    // BLOCK (hold L) is a player action, not a power-up — this is the guard
+    // wall tint (mirror of SERVER.player.block* rules).
+    block:  { color: 0x7ec8ff, opacity: 0.35 }
   },
 
   colors: {

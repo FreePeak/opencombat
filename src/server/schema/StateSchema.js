@@ -26,6 +26,7 @@ export class PlayerState extends Schema {
     this.effects = new MapSchema(); // power-up name -> remaining ms
     this.attackCd = 0;        // ms until J works again (HUD bar + anti-cheat)
     this.skillCd = 0;         // ms until K (the per-character skill) works again
+    this.blocking = false;    // L held: guarding — negates frontal hits
   }
 }
 defineTypes(PlayerState, {
@@ -39,7 +40,8 @@ defineTypes(PlayerState, {
   color: 'number',
   effects: { map: 'number' },
   attackCd: 'number',
-  skillCd: 'number'
+  skillCd: 'number',
+  blocking: 'boolean'
 });
 
 // One collectible. Shared pool: first player within radius wins, the orb

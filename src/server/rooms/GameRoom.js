@@ -276,6 +276,7 @@ export default class GameRoom extends Room {
       player.hp = SERVER.player.maxHp;
       player.score = 0;
       player.anim = 'idle';
+      player.blocking = false;
       player.attackCd = 0;
       player.skillCd = 0;
       player.effects.clear(); // buffs never carry into the next match
@@ -356,35 +357,51 @@ export default class GameRoom extends Room {
     if (!Number.isFinite(dirX) || !Number.isFinite(dirZ)) { dirX = 0; dirZ = 0; }
     const len = Math.hypot(dirX, dirZ);
     if (len > 1) { dirX /= len; dirZ /= len; } // clamp diagonal input
+
+    // L (hold) = block: a guarding player is rooted — the movement intent is
+    // zeroed here (and again in movePlayers, belt + braces against a client
+    // that keeps sending a stale direction).
+    const blocking = !!msg.block;
+    player.blocking = blocking;
+    if (blocking) { dirX = 0; dirZ = 0; }
+    const moving = dirX !== 0 || dirZ !== 0;
     this.inputs.set(sid, { dirX, dirZ });
 
     // Attack: only valid while the match is PLAYING (no swinging during the
-    // countdown or on the game-over screen), and server-enforced cooldown —
-    // swings inside the window are rejected (no anim, no melee).
+    // countdown or on the game-over screen), server-enforced cooldown — and
+    // CANNOT be started while blocking (combat rule: drop the guard to swing).
+    // Attacks ARE allowed while moving (player choice).
     if (msg.attack) {
+      const reject = (reason, extra = {}) =>
+        this.warnEvent('input_attack_rejected', { sid, reason, ...extra });
       if (this.state.matchState !== 'playing') {
-        this.warnEvent('input_attack_rejected', { sid, reason: `match_${this.state.matchState}` });
-        return;
-      }
-      if (now >= this.attackAt.get(sid)) {
+        reject(`match_${this.state.matchState}`);
+      } else if (now < this.attackAt.get(sid)) {
+        reject('cooldown', { cooldownMs: this.attackAt.get(sid) - now });
+      } else if (blocking) {
+        reject('blocking');
+      } else {
         this.attackAt.set(sid, now + SERVER.player.attackCooldownMs);
         this.animUntil.set(sid, now + SERVER.player.attackAnimMs);
         this.melee(sid);
-      } else {
-        this.warnEvent('input_attack_rejected', { sid, reason: 'cooldown',
-          cooldownMs: this.attackAt.get(sid) - now });
       }
     }
 
-    // Skill cast (K): same gating as the melee; the cooldown + cast window come
-    // from the caster's per-character skill def (src/shared/skills.js).
+    // Skill cast (K): same gating as the melee (incl. no cast while blocking);
+    // the cooldown + cast window come from the caster's per-character skill def
+    // (src/shared/skills.js). Casts work while moving.
     if (msg.skill) {
+      const reject = (reason) =>
+        this.warnEvent('input_skill_rejected', { sid, reason });
       if (this.state.matchState !== 'playing') {
-        this.warnEvent('input_skill_rejected', { sid, reason: `match_${this.state.matchState}` });
-        return;
+        reject(`match_${this.state.matchState}`);
+      } else if (now < this.skillAt.get(sid)) {
+        reject('cooldown');
+      } else if (blocking) {
+        reject('blocking');
+      } else {
+        this.castSkill(sid);
       }
-      if (now >= this.skillAt.get(sid)) this.castSkill(sid);
-      else this.warnEvent('input_skill_rejected', { sid, reason: 'cooldown' });
     }
   }
 
@@ -398,6 +415,7 @@ export default class GameRoom extends Room {
     player.z = p.z;
     player.hp = SERVER.player.maxHp;
     player.anim = 'idle';
+    player.blocking = false;
     player.attackCd = 0;
     player.skillCd = 0;
     player.effects.clear(); // RESPAWN LEAK: buffs die with the player
@@ -409,7 +427,63 @@ export default class GameRoom extends Room {
     this.logEvent('player_respawn', { sid: client.sessionId });
   }
 
-  /** Melee swing from one player: damage every enemy in range + in front. */
+  /**
+   * True when `player` is guarding (L held) AND the hit source at (ax, az)
+   * lies inside the frontal block arc: the attacker must be in front of the
+   * blocker. A successful block negates the hit entirely — no HP loss, no
+   * knockback, nothing consumed.
+   */
+  isBlocked(player, ax, az) {
+    if (!player.blocking) return false;
+    const dx = ax - player.x;
+    const dz = az - player.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const dot = (dx * Math.sin(player.rotY) + dz * Math.cos(player.rotY)) / dist;
+    return dot >= SERVER.player.blockArcCos;
+  }
+
+  /** Tell the victim's client its guard held (clang + "BLOCKED" text). */
+  notifyBlocked(sid, victim) {
+    const client = this.clients.find((c) => c.sessionId === sid);
+    client?.send('blocked', { x: victim.x, z: victim.z });
+    this.logEvent('player_blocked', { sid });
+  }
+
+  /**
+   * Apply one hit of `amount` damage to `victim` (sessionId `sid`), coming
+   * from (srcX, srcZ). Resolution order: still-invulnerable -> ignored;
+   * block success -> NO damage (requirement: "if block success the health
+   * will not lose"); SHIELD power-up -> absorbs + consumed; otherwise HP
+   * drops, invulnerability window opens and the victim is knocked back.
+   * @returns true when HP was actually lost.
+   */
+  damagePlayer(sid, victim, amount, srcX, srcZ) {
+    const now = Date.now();
+    if (now < this.invulnUntil.get(sid)) return false;
+    if (this.isBlocked(victim, srcX, srcZ)) {
+      this.notifyBlocked(sid, victim);
+      return false;
+    }
+    if (victim.effects.has('shield')) {
+      victim.effects.delete('shield'); // blocks exactly one hit, then consumed
+      this.logEvent('shield_absorb', { sid });
+      return false;
+    }
+    this.invulnUntil.set(sid, now + SERVER.player.invulnMs);
+    victim.hp = Math.max(0, victim.hp - amount);
+    const dx = victim.x - srcX;
+    const dz = victim.z - srcZ;
+    const dist = Math.hypot(dx, dz) || 1;
+    victim.x = clamp(victim.x + dx / dist * SERVER.player.knockback * 0.15, -this.half, this.half);
+    victim.z = clamp(victim.z + dz / dist * SERVER.player.knockback * 0.15, -this.half, this.half);
+    return true;
+  }
+
+  /**
+   * Melee swing from one player: damage every enemy in range + in front,
+   * and every OTHER player in range + in front (PvP — the block mechanic
+   * guards against both). Killed enemies respawn elsewhere at full HP.
+   */
   melee(sid) {
     const player = this.state.players.get(sid);
     if (!player || player.hp <= 0) return; // ghosts cannot swing
@@ -418,13 +492,15 @@ export default class GameRoom extends Room {
     // Facing vector from rotY (atan2 convention: +Z is 0).
     const fx = Math.sin(player.rotY);
     const fz = Math.cos(player.rotY);
+    const inArc = (dx, dz) => {
+      const dist = Math.hypot(dx, dz);
+      return dist <= cfg.attackRange && (dx * fx + dz * fz) / (dist || 1) >= cfg.attackArcCos;
+    };
     for (const enemy of this.state.enemies) {
       const dx = enemy.x - player.x;
       const dz = enemy.z - player.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > cfg.attackRange) continue;
-      if ((dx * fx + dz * fz) / (dist || 1) < cfg.attackArcCos) continue;
-      enemy.hp -= 1;
+      if (!inArc(dx, dz)) continue;
+      enemy.hp -= cfg.attackDamage;
       enemy.anim = 'hit';
       this.enemyAnimUntil.set(enemy, Date.now() + SERVER.enemy.hitAnimMs);
       if (enemy.hp <= 0) {
@@ -435,14 +511,21 @@ export default class GameRoom extends Room {
         enemy.hp = SERVER.enemy.hp;
       }
     }
+    // PvP: same swing also hurts other living players in the arc.
+    for (const [osid, victim] of this.state.players) {
+      if (osid === sid || victim.hp <= 0) continue;
+      const dx = victim.x - player.x;
+      const dz = victim.z - player.z;
+      if (inArc(dx, dz)) this.damagePlayer(osid, victim, cfg.attackPvpDamage, player.x, player.z);
+    }
   }
 
   /**
    * Per-character skill cast (K). Every class shares the J melee but casts its
    * own skill (src/shared/skills.js) — distinct shape/damage/cooldown. The
-   * caster KEEPS MOVING through the cast (RC7); only the animation overrides to
-   * 'skill' for animUntil. Like melee(), damage applies to enemies only (PvE
-   * arena); killed enemies respawn.
+   * cast CANNOT be started while moving or blocking; the animation overrides
+   * to 'skill' for animUntil. Skills damage enemies AND other players (PvP),
+   * subject to the victim's block; killed enemies respawn.
    */
   castSkill(sid) {
     const state = this.state;
@@ -452,7 +535,7 @@ export default class GameRoom extends Room {
     const now = Date.now();
     if (now < this.skillAt.get(sid)) return; // belt + braces (onInput gates too)
     this.skillAt.set(sid, now + def.cooldownMs);
-    this.animUntil.set(sid, now + def.animMs); // anim='skill' window (move NOT blocked, RC7)
+    this.animUntil.set(sid, now + def.animMs); // anim='skill' window
     player.anim = 'skill'; // movePlayers preserves this during animUntil
 
     // Resolve hits with the same pure math the client uses for its VFX, then
@@ -469,6 +552,15 @@ export default class GameRoom extends Room {
         enemy.x = p.x;
         enemy.z = p.z;
         enemy.hp = SERVER.enemy.hp;
+      }
+    }
+    // PvP: the same shape also strikes every OTHER living player it covers
+    // (resolveSkillHits over a one-element target list tells us hit / no hit).
+    for (const [osid, victim] of state.players) {
+      if (osid === sid || victim.hp <= 0) continue;
+      const hit = resolveSkillHits(def, player, [{ x: victim.x, z: victim.z }]);
+      if (hit.length) {
+        this.damagePlayer(osid, victim, SERVER.player.skillPvpDamage, player.x, player.z);
       }
     }
     this.logEvent('skill_cast', { sid, character: player.character, skill: def.key });
@@ -517,11 +609,16 @@ export default class GameRoom extends Room {
       // GHOST PLAYERS: corpses are frozen — no movement, no anim, no cooldown.
       if (player.hp <= 0) {
         player.anim = 'idle';
+        player.blocking = false;
         player.attackCd = 0;
         player.skillCd = 0;
         continue;
       }
-      const { dirX, dirZ } = this.inputs.get(sid);
+      const intent = this.inputs.get(sid);
+      // Blocking roots the player: guarding feet are planted, so a stale
+      // movement intent cannot drag the blocker around.
+      const dirX = player.blocking ? 0 : intent.dirX;
+      const dirZ = player.blocking ? 0 : intent.dirZ;
       const speed = SERVER.player.speed *
         (player.effects.has('speed') ? SERVER.powerUps.speed.multiplier : 1);
       // RC7: attacking/casting NEVER blocks movement — a player can move and
@@ -633,23 +730,12 @@ export default class GameRoom extends Room {
           enemy.z += (target.z - enemy.z) / dist * SERVER.enemy.speed * dt;
           if (!animOverride) enemy.anim = 'run';
         } else if (now >= this.invulnUntil.get(targetSid)) {
-          // Contact damage: 10 HP, 1s invulnerability, knockback away.
-          // The SHIELD power-up absorbs the hit entirely (consumed).
-          if (target.effects.has('shield')) {
-            target.effects.delete('shield');
-            this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
-            enemy.anim = 'attack';
-            this.logEvent('shield_absorb', { sid: targetSid });
-          } else {
-            this.invulnUntil.set(targetSid, now + SERVER.player.invulnMs);
-            this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
-            enemy.anim = 'attack'; // punch
-            target.hp = Math.max(0, target.hp - SERVER.enemy.contactDamage);
-            const kx = (target.x - enemy.x) / dist;
-            const kz = (target.z - enemy.z) / dist;
-            target.x = clamp(target.x + kx * SERVER.player.knockback * dt * 4, -this.half, this.half);
-            target.z = clamp(target.z + kz * SERVER.player.knockback * dt * 4, -this.half, this.half);
-          }
+          // Contact damage, resolved through damagePlayer: a successful BLOCK
+          // (guarding + enemy in front) negates it, the SHIELD power-up
+          // absorbs one hit, otherwise the target takes damage + knockback.
+          this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
+          enemy.anim = 'attack'; // punch (swings even when blocked)
+          this.damagePlayer(targetSid, target, SERVER.enemy.contactDamage, enemy.x, enemy.z);
         } else if (!animOverride) {
           enemy.anim = 'idle'; // adjacent but the player is invulnerable
         }

@@ -33,7 +33,7 @@ export class LocalRoom {
     this._lastTime = performance.now();
     this._running = false;
     this._myPlayerId = null;
-    this._playerInput = { dirX: 0, dirZ: 0, attack: false, skill: false, anim: '' };
+    this._playerInput = { dirX: 0, dirZ: 0, attack: false, skill: false, anim: '', block: false };
     this._rng = makeRng(0xC0FFEE); // deterministic seed
     this._matchEnded = false;
   }
@@ -47,6 +47,13 @@ export class LocalRoom {
   // wires these like on any network room, so they must exist as no-ops.
   onDrop(_fn) {}
   onReconnect(_fn) {}
+
+  /** Fire a registered onMessage handler (the server sends 'blocked' etc.). */
+  _emitMessage(type, data) {
+    for (const m of this._callbacks.message) {
+      if (m.type === type) m.fn(data);
+    }
+  }
 
   send(type, data) {
     if (type === 'input') this._playerInput = data;
@@ -152,22 +159,27 @@ export class LocalRoom {
 
     // --- Local player input + movement ---
     if (me && me.hp > 0) {
-      const { dirX, dirZ } = this._playerInput;
+      const { dirX: inX, dirZ: inZ } = this._playerInput;
+      // Combat rules mirror GameRoom: holding L (block) roots the player, and
+      // attacks/skills cannot be started while blocking (but work while moving).
+      me.blocking = !!this._playerInput.block;
+      const dirX = me.blocking ? 0 : inX;
+      const dirZ = me.blocking ? 0 : inZ;
       const moved = stepPlayer(me.x, me.z, me.rotY, dirX, dirZ, SERVER.player.speed, dt, half);
       me.x = moved.x;
       me.z = moved.z;
       me.rotY = moved.rotY;
 
-      // Attack (J)
-      if (this._playerInput.attack && me.attackCd <= 0) {
+      // Attack (J) — rejected while blocking (same rule as server). Works while moving.
+      if (this._playerInput.attack && me.attackCd <= 0 && !me.blocking) {
         me.attackCd = SERVER.player.attackCooldownMs;
         me.anim = 'attack';
         me.animUntil = performance.now() + SERVER.player.attackAnimMs;
         this._resolveMelee(me);
       }
 
-      // Skill (K)
-      if (this._playerInput.skill && me.skillCd <= 0) {
+      // Skill (K) — same gating as the melee (no cast while blocking). Works while moving.
+      if (this._playerInput.skill && me.skillCd <= 0 && !me.blocking) {
         const skill = skillFor(me.character);
         me.skillCd = skill.cooldownMs;
         me.anim = 'skill';
@@ -284,7 +296,6 @@ export class LocalRoom {
   }
 
   _resolveMelee(attacker) {
-    const half = SERVER.world.size / 2;
     const fx = Math.sin(attacker.rotY);
     const fz = Math.cos(attacker.rotY);
     const range = SERVER.player.attackRange;
@@ -298,20 +309,16 @@ export class LocalRoom {
       if (dist <= range && dist > 1e-6) {
         const dot = (dx * fx + dz * fz) / dist;
         if (dot >= arcCos) {
-          enemy.hp -= 1;
+          // Hit: the enemy loses health until it dies, then respawns
+          // elsewhere at full HP (same as the server room).
+          enemy.hp -= SERVER.player.attackDamage;
           if (enemy.hp <= 0) {
-            enemy.hp = SERVER.enemy.hp; // will respawn
-            enemy.anim = 'hit';
+            const pos = randomInCircle(this._rng, SERVER.world.size / 2 - 2);
+            enemy.x = pos.x;
+            enemy.z = pos.z;
+            enemy.hp = SERVER.enemy.hp;
+            enemy.anim = 'idle';
             attacker.score += 5; // kill bonus
-            // Respawn enemy after delay
-            setTimeout(() => {
-              const pos = randomInCircle(this._rng, half - 2);
-              enemy.x = pos.x;
-              enemy.z = pos.z;
-              enemy.hp = SERVER.enemy.hp;
-              enemy.anim = 'idle';
-              this._notifyStateChange();
-            }, 3000);
           } else {
             enemy.anim = 'hit';
           }
@@ -327,25 +334,25 @@ export class LocalRoom {
       if (enemy.hp <= 0) continue;
       enemy.hp -= skill.damage;
       if (enemy.hp <= 0) {
+        const pos = randomInCircle(this._rng, SERVER.world.size / 2 - 2);
+        enemy.x = pos.x;
+        enemy.z = pos.z;
         enemy.hp = SERVER.enemy.hp;
-        enemy.anim = 'hit';
+        enemy.anim = 'idle';
         caster.score += 5;
-        const half = SERVER.world.size / 2;
-        setTimeout(() => {
-          const pos = randomInCircle(this._rng, half - 2);
-          enemy.x = pos.x;
-          enemy.z = pos.z;
-          enemy.hp = SERVER.enemy.hp;
-          enemy.anim = 'idle';
-          this._notifyStateChange();
-        }, 3000);
       } else {
         enemy.anim = 'hit';
       }
     }
   }
 
+  /** One hit against the local player: BLOCK (frontal) negates it entirely,
+   *  the SHIELD power-up absorbs one hit, otherwise HP drops. */
   _damagePlayer(player, amount, source) {
+    if (source && this._isBlocked(player, source.x, source.z)) {
+      this._emitMessage('blocked', { x: player.x, z: player.z });
+      return;
+    }
     if (player.effects.has('shield')) {
       player.effects.delete('shield'); // shield blocks one hit
       return;
@@ -357,6 +364,16 @@ export class LocalRoom {
     if (player.hp <= 0) {
       player.anim = 'hit';
     }
+  }
+
+  /** Guarding + the hit source inside the frontal arc (same math as GameRoom). */
+  _isBlocked(player, ax, az) {
+    if (!player.blocking) return false;
+    const dx = ax - player.x;
+    const dz = az - player.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const dot = (dx * Math.sin(player.rotY) + dz * Math.cos(player.rotY)) / dist;
+    return dot >= SERVER.player.blockArcCos;
   }
 
   _updateEffects(player, msec) {
@@ -377,6 +394,7 @@ export class LocalRoom {
       me.z = 0;
       me.rotY = 0;
       me.anim = 'idle';
+      me.blocking = false;
       me.effects.clear();
       this._notifyStateChange();
     }
@@ -398,6 +416,7 @@ export class LocalRoom {
       me.hp = SERVER.player.maxHp;
       me.score = 0;
       me.anim = 'idle';
+      me.blocking = false;
       me.effects.clear();
       me.attackCd = 0;
       me.skillCd = 0;

@@ -279,6 +279,17 @@ export default class GameScene {
       if (!this.wired) { this.wired = true; this.wireState(state); }
     });
 
+    // BLOCKED feedback: the server tells the victim whenever a hit was negated
+    // by their guard (enemy contact, another player's melee or skill) — clang +
+    // "BLOCKED" text + a spark burst where the guard held.
+    this.room.onMessage('blocked', (d) => {
+      this.sound.blocked();
+      const x = d?.x ?? this.local?.root.position.x ?? 0;
+      const z = d?.z ?? this.local?.root.position.z ?? 0;
+      this.floatTexts.spawn(x, 2.6, z, 'BLOCKED', '#7ec8ff');
+      this.particles.spawnBurst({ x, y: 1.2, z }, CONFIG.effects.block.color, 14, 3, 0.45);
+    });
+
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
     // reconnection API). We just surface it to the player and keep a manual
     // fallback for the cases the sdk gives up on.
@@ -524,7 +535,7 @@ export default class GameScene {
     const map = {
       KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd',
       ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
-      KeyJ: 'j', KeyK: 'k', KeyM: 'm'
+      KeyJ: 'j', KeyK: 'k', KeyL: 'l', KeyM: 'm'
     };
     for (const name of Object.values(map)) {
       this.keys[name] = { isDown: false, justPressed: false };
@@ -588,7 +599,9 @@ export default class GameScene {
       this.updateMatchUi(dt);
     }
     for (const rp of this.remotePlayers.values()) rp.update(dt);
-    for (const e of this.enemies.values()) e.update(dt);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    for (const e of this.enemies.values()) e.update(dt, this.camera, w, h);
     for (const view of this.orbViews) {
       view.mesh.position.x = view.state.x;
       view.mesh.position.z = view.state.z;
@@ -675,7 +688,8 @@ export default class GameScene {
     this.hudFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
     this.hudText.textContent =
       `score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
-      '   WASD move · J melee · K skill · M mute';
+      (me.blocking ? '   🛡 BLOCKING' : '') +
+      '   WASD move · J melee (swing while moving OK) · K skill · L block (hold) · M mute';
     // Cooldown bar: drains while J is on cooldown (server mirrors it).
     const cdMs = Math.max(me.attackCd, this.local.attackCd * 1000);
     this.cooldownFill.style.width = Math.min(100, cdMs / CONFIG.player.attackCooldownMs * 100) + '%';
