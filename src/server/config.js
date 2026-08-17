@@ -3,7 +3,10 @@
 // server is authoritative. Environment overrides (see README "Environment"):
 //   PORT, PUBLIC_URL, DISABLE_SHADOWS, REDIS_URL, TICK_MS,
 //   RATE_LIMIT_CAPACITY.
-const env = process.env;
+// This module is ALSO evaluated in the browser: src/LocalRoom.js (the
+// offline single-player sim on GitHub Pages) imports the same tunables.
+// Browsers have no `process` — fall back to pure defaults there.
+const env = (typeof process !== 'undefined' && process.env) || {};
 
 const publicUrl = (env.PUBLIC_URL || '').replace(/\/+$/, '');
 // ws(s):// twin of PUBLIC_URL, injected into /env.js for the browser client.
