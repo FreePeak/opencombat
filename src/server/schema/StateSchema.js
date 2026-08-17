@@ -96,8 +96,9 @@ export class WorldState extends Schema {
     this.orbs = new ArraySchema();
     this.enemies = new ArraySchema();
     this.powerUps = new ArraySchema();
-    this.matchState = 'lobby';  // 'lobby' | 'countdown' | 'playing' | 'gameover'
+    this.matchState = 'lobby';  // 'lobby' | 'countdown' | 'playing' | 'intermission' | 'gameover'
     this.countdown = 0;         // seconds left in the countdown (0 otherwise)
+    this.wave = 1;              // current enemy wave (1-based)
     this.winnerId = '';         // sessionId of the match winner
     this.winnerName = '';       // ...and their name, for the results overlay
   }
@@ -109,6 +110,7 @@ defineTypes(WorldState, {
   powerUps: [PowerUpState],
   matchState: 'string',
   countdown: 'number',
+  wave: 'number',
   winnerId: 'string',
   winnerName: 'string'
 });

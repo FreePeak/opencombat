@@ -85,7 +85,8 @@ export const CONFIG = {
     speed: 9,                   // mirror of SERVER.player.speed (server wins)
     maxHp: 100,
     attackCooldownMs: 800,      // mirror of the server cooldown (HUD bar)
-    attackAnimMs: 350,          // mirror of SERVER.player.attackAnimMs
+    attackAnimMs: 450,          // mirror of SERVER.player.attackAnimMs — the
+                                // full visible swing window (clip squeezed in)
     camera: { height: 7, distance: 10, lerp: 0.08, yaw: Math.PI }, // third-person rig; yaw = fixed azimuth (RC5)
     shake: { duration: 0.3, amplitude: 0.3 }         // damage camera shake
   },

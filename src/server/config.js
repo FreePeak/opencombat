@@ -51,7 +51,10 @@ export const SERVER = {
     attackRange: 2.6,         // melee reach
     attackArcCos: 0.5,        // cos(60°): hit enemies within a 60° cone
     attackCooldownMs: 800,    // J can't swing faster than this (HUD bar)
-    attackAnimMs: 350,        // how long anim='attack' shows
+    attackAnimMs: 450,        // how long anim='attack' shows (full visible arc)
+    attackImpactMs: 180,      // damage lands THIS far into the swing — aligned
+                              // with the visual impact frame (~40% of the arc),
+                              // not at button-press (production combat feel)
     attackDamage: 1,          // melee damage per hit vs enemies (enemy.hp hits kill)
     attackPvpDamage: 10,      // melee damage vs other players
     skillPvpDamage: 15,       // skill (K) damage vs other players
@@ -67,14 +70,28 @@ export const SERVER = {
     radius: 0.9
   },
 
+  // WAVES: enemies spawn in waves out of a fixed pool. Clearing every enemy
+  // freezes combat in 'intermission' (players invulnerable, free movement)
+  // until someone clicks the wave-cleared popup -> next wave spawns (more
+  // enemies, slightly tankier) after the standard countdown. Killed enemies
+  // STAY DEAD for the rest of the wave — the old instant-respawn elsewhere
+  // is gone.
   enemy: {
-    count: 4,
+    pool: 10,                 // fixed pool size (client hides the dead slots)
+    waveBase: 3,              // wave 1 activates this many
+    waveGrowth: 1,            // +1 active enemy per wave, capped at pool
+    hp: 2,                    // wave-1 HP (two melee hits kill one)
+    hpGrowth: 0.5,            // +1 max HP every 2 waves...
+    hpMax: 5,                 // ...capped here
+    killScore: 5,             // score for landing the killing blow
     speed: 4.5,               // chase speed, units/second
-    hp: 2,                    // two melee hits kill one
     contactRange: 1.3,        // how close before it damages the player
     contactDamage: 10,
     aggroRange: 60,           // chase anything in the arena
-    hitAnimMs: 300,           // 'hit' flash after being struck
+    hitStunMs: 450,           // HIT-STUN: a struck enemy stops acting (no
+                              // chase, no contact damage) until this expires
+    hitAnimMs: 300,           // 'hit' react anim override after being struck
+    hitKnockback: 0.5,        // units pushed away from the attacker on hit
     attackAnimMs: 400         // 'attack' punch anim after damaging a player
   },
 

@@ -20,6 +20,7 @@ import { log, warn } from '../log.js';
 import { takeToken, normalizeIp } from '../ratelimit.js';
 import { stepPlayer } from '../movement.js';
 import { skillFor, resolveSkillHits } from '../../shared/skills.js';
+import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from '../../shared/waves.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -58,6 +59,8 @@ export default class GameRoom extends Room {
     this.msgTimes = new Map();      // sessionId -> recent input timestamps (rate cap)
     this.graceTimers = new Map();   // sessionId -> timeout handle for reconnect grace
     this.enemyAnimUntil = new Map();// enemy -> ms of 'hit'/'attack' anim override
+    this.enemyStunUntil = new Map();// enemy -> ms of HIT-STUN (no move/attack)
+    this.pendingMelee = [];      // {sid, at} — impacts land mid-swing, not at press
     this.powerUpTimers = new Map(); // powerUp -> seconds until it respawns
 
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
@@ -72,6 +75,11 @@ export default class GameRoom extends Room {
     this.onMessage('input', (client, msg) => this.onInput(client, msg));
     this.onMessage('respawn', (client) => this.onRespawn(client));
     this.onMessage('playAgain', (client) => this.onPlayAgain(client));
+    // Wave gate: while the wave-cleared popup is up (matchState
+    // 'intermission'), a click from ANY player starts the next wave for the
+    // whole room — the popup on the other clients closes when the shared
+    // matchState moves to 'countdown'.
+    this.onMessage('nextWave', (client) => this.onNextWave(client));
 
     // --- Fixed-timestep loop, dt from REAL elapsed time ------------------
     // this.clock.setInterval drifts under load (GC, event-loop stalls); the
@@ -119,11 +127,37 @@ export default class GameRoom extends Room {
     }
   }
 
+  /** Fixed enemy pool (see src/shared/waves.js). Slots beyond the current
+   *  wave's count sit dead (hp 0) — the client hides them; spawnWave
+   *  revives slots as waves grow, so ids stay stable for everyone. */
   spawnEnemies() {
-    for (let i = 0; i < SERVER.enemy.count; i++) {
-      const p = this.randomPos();
-      this.state.enemies.push(new EnemyState(p.x, p.z));
+    for (let i = 0; i < SERVER.enemy.pool; i++) {
+      this.state.enemies.push(new EnemyState(0, 0));
     }
+    this.spawnWave(1);
+  }
+
+  /** Activate wave `n`: the first waveEnemyCount(n) pool slots come alive at
+   *  waveEnemyHp(n), spawned away from players; the rest drop dead. */
+  spawnWave(n) {
+    const count = waveEnemyCount(n);
+    const hp = waveEnemyHp(n);
+    const players = [...this.state.players.values()].filter((p) => p.hp > 0);
+    this.state.enemies.forEach((enemy, i) => {
+      this.enemyAnimUntil.delete(enemy);
+      this.enemyStunUntil.delete(enemy);
+      if (i < count) {
+        const p = spawnAwayFromPlayers(players, () => this.randomPos());
+        enemy.x = p.x;
+        enemy.z = p.z;
+        enemy.hp = hp;
+        enemy.anim = 'idle';
+      } else {
+        enemy.hp = 0;
+      }
+    });
+    this.state.wave = n;
+    this.logEvent('wave_spawn', { wave: n, enemies: count, hp });
   }
 
   spawnPowerUps() {
@@ -296,13 +330,9 @@ export default class GameRoom extends Room {
       orb.x = p.x;
       orb.z = p.z;
     }
-    for (const enemy of state.enemies) {
-      const p = this.randomPos();
-      enemy.x = p.x;
-      enemy.z = p.z;
-      enemy.hp = SERVER.enemy.hp;
-      enemy.anim = 'idle';
-    }
+    // Fresh match = wave 1 (spawnWave clears every enemy stun/anim override).
+    this.pendingMelee = [];
+    this.spawnWave(1);
     for (const pu of state.powerUps) {
       const p = this.randomPos();
       pu.x = p.x;
@@ -320,6 +350,16 @@ export default class GameRoom extends Room {
     if (this.state.matchState !== 'gameover') return; // only after a match
     this.logEvent('match_play_again', { sid: client.sessionId });
     this.resetMatch();
+  }
+
+  /** Click on the wave-cleared popup: spawn the next wave + countdown. */
+  onNextWave(client) {
+    if (this.state.matchState !== 'intermission') return; // popup-gated
+    const next = this.state.wave + 1;
+    this.logEvent('wave_next', { sid: client.sessionId, wave: next });
+    this.pendingMelee = []; // no stale impacts bleeding into the new wave
+    this.spawnWave(next);
+    this.startCountdown();
   }
 
   /**
@@ -383,7 +423,12 @@ export default class GameRoom extends Room {
       } else {
         this.attackAt.set(sid, now + SERVER.player.attackCooldownMs);
         this.animUntil.set(sid, now + SERVER.player.attackAnimMs);
-        this.melee(sid);
+        // IMPACT ALIGNMENT: the swing starts now but the damage lands at
+        // ~40% into the arc (attackImpactMs), where the blade visually
+        // connects — resolved in updatePlaying() when the impact comes due.
+        // Cooldown/anim apply immediately so the HUD + animation match the
+        // swing the player sees.
+        this.pendingMelee.push({ sid, at: now + SERVER.player.attackImpactMs });
       }
     }
 
@@ -460,6 +505,10 @@ export default class GameRoom extends Room {
   damagePlayer(sid, victim, amount, srcX, srcZ) {
     const now = Date.now();
     if (now < this.invulnUntil.get(sid)) return false;
+    // INTERMISSION: between waves every player is invulnerable — hits are
+    // ignored entirely (no HP loss, no knockback, no block feedback) until
+    // the next wave starts.
+    if (this.state.matchState !== 'playing') return false;
     if (this.isBlocked(victim, srcX, srcZ)) {
       this.notifyBlocked(sid, victim);
       return false;
@@ -480,9 +529,42 @@ export default class GameRoom extends Room {
   }
 
   /**
+   * Apply one hit of `damage` to a LIVING enemy from (srcX, srcZ):
+   * HIT-STUN (the enemy stops chasing/attacking for hitStunMs and plays the
+   * hit react), a small knockback away from the attacker, and — on kill —
+   * the enemy STAYS DEAD (no respawn) and the killer scores. Returns true
+   * when the hit killed the enemy.
+   */
+  hitEnemy(enemy, damage, srcX, srcZ, killer) {
+    if (enemy.hp <= 0) return false; // dead stays dead
+    const now = Date.now();
+    enemy.hp -= damage;
+    // Knockback away from the attacker, clamped inside the arena.
+    const dx = enemy.x - srcX;
+    const dz = enemy.z - srcZ;
+    const dist = Math.hypot(dx, dz) || 1;
+    enemy.x = clamp(enemy.x + dx / dist * SERVER.enemy.hitKnockback, -this.half, this.half);
+    enemy.z = clamp(enemy.z + dz / dist * SERVER.enemy.hitKnockback, -this.half, this.half);
+    if (enemy.hp <= 0) {
+      enemy.hp = 0;
+      if (killer) killer.score += SERVER.enemy.killScore;
+      this.logEvent('enemy_killed', { wave: this.state.wave, by: killer?.name });
+      return true;
+    }
+    // Survived the hit: stagger — no chase, no contact damage until the
+    // stun expires (this is what makes hits read as impactful).
+    enemy.anim = 'hit';
+    this.enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
+    this.enemyStunUntil.set(enemy, now + SERVER.enemy.hitStunMs);
+    return false;
+  }
+
+  /**
    * Melee swing from one player: damage every enemy in range + in front,
    * and every OTHER player in range + in front (PvP — the block mechanic
-   * guards against both). Killed enemies respawn elsewhere at full HP.
+   * guards against both). Called when the swing's impact comes due
+   * (attackImpactMs after the J press), so the damage lands when the blade
+   * is visually mid-arc.
    */
   melee(sid) {
     const player = this.state.players.get(sid);
@@ -499,17 +581,8 @@ export default class GameRoom extends Room {
     for (const enemy of this.state.enemies) {
       const dx = enemy.x - player.x;
       const dz = enemy.z - player.z;
-      if (!inArc(dx, dz)) continue;
-      enemy.hp -= cfg.attackDamage;
-      enemy.anim = 'hit';
-      this.enemyAnimUntil.set(enemy, Date.now() + SERVER.enemy.hitAnimMs);
-      if (enemy.hp <= 0) {
-        // Killed: respawn elsewhere, full HP.
-        const p = this.randomPos();
-        enemy.x = p.x;
-        enemy.z = p.z;
-        enemy.hp = SERVER.enemy.hp;
-      }
+      if (enemy.hp <= 0 || !inArc(dx, dz)) continue;
+      this.hitEnemy(enemy, cfg.attackDamage, player.x, player.z, player);
     }
     // PvP: same swing also hurts other living players in the arc.
     for (const [osid, victim] of this.state.players) {
@@ -539,20 +612,12 @@ export default class GameRoom extends Room {
     player.anim = 'skill'; // movePlayers preserves this during animUntil
 
     // Resolve hits with the same pure math the client uses for its VFX, then
-    // apply authoritative damage + respawn.
+    // apply authoritative damage (hit-stun / knockback / stay-dead on kill).
     const targets = [...state.enemies].map((e) => ({ x: e.x, z: e.z }));
     for (const i of resolveSkillHits(def, player, targets)) {
       const enemy = state.enemies[i];
-      if (!enemy || enemy.hp <= 0) continue;
-      enemy.hp -= def.damage;
-      enemy.anim = 'hit';
-      this.enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
-      if (enemy.hp <= 0) {
-        const p = this.randomPos();
-        enemy.x = p.x;
-        enemy.z = p.z;
-        enemy.hp = SERVER.enemy.hp;
-      }
+      if (!enemy) continue;
+      this.hitEnemy(enemy, def.damage, player.x, player.z, player);
     }
     // PvP: the same shape also strikes every OTHER living player it covers
     // (resolveSkillHits over a one-element target list tells us hit / no hit).
@@ -596,6 +661,15 @@ export default class GameRoom extends Room {
         return;
       case 'playing':
         this.updatePlaying(dt);
+        return;
+      case 'intermission':
+        // Wave cleared: free movement + pickups, NO enemies (all dead), and
+        // everyone is invulnerable (damagePlayer gates on 'playing'). The
+        // only way forward is a 'nextWave' click.
+        this.movePlayers(dt);
+        this.updateEffects(dt * 1000);
+        this.updatePickups(dt);
+        this.checkWinConditions(dt);
         return;
       case 'gameover':
         return; // frozen; only 'playAgain' moves on
@@ -650,11 +724,92 @@ export default class GameRoom extends Room {
   updatePlaying(dt) {
     const now = Date.now();
     const state = this.state;
-    const msec = dt * 1000;
+
+    // --- Scheduled melee impacts ---------------------------------------
+    // J pressed -> swing anim starts immediately, but the DAMAGE lands
+    // attackImpactMs later (mid-arc, where the blade visually connects).
+    // Positions are sampled at impact time, so stepping out of the arc in
+    // time genuinely avoids the hit.
+    for (let i = this.pendingMelee.length - 1; i >= 0; i--) {
+      if (now >= this.pendingMelee[i].at) {
+        const { sid } = this.pendingMelee.splice(i, 1)[0];
+        this.melee(sid);
+      }
+    }
 
     this.movePlayers(dt);
-    this.updateEffects(msec);
+    this.updateEffects(dt * 1000);
+    this.updatePickups(dt);
 
+    // --- Enemies: chase the nearest LIVING player, hurt on contact -------
+    let alive = 0;
+    for (const enemy of state.enemies) {
+      if (enemy.hp <= 0) continue; // dead stays dead until the next wave
+      alive++;
+      // 'hit'/'attack' anim overrides outlive the tick that set them;
+      // while one is active the movement anim may not overwrite it.
+      const animOverride = now < (this.enemyAnimUntil.get(enemy) || 0);
+      if (!animOverride) this.enemyAnimUntil.delete(enemy);
+
+      // HIT-STUN: a struck enemy stops acting — no chase, no contact
+      // damage — until the stun expires. This is the "enemies stop their
+      // actions when hit" rule, enforced server-side.
+      if (now < (this.enemyStunUntil.get(enemy) || 0)) {
+        enemy.anim = 'hit';
+        continue;
+      }
+      this.enemyStunUntil.delete(enemy);
+
+      let targetSid = null;   // sessionId of the nearest living player
+      let target = null;
+      let best = Infinity;
+      for (const [sid, player] of state.players) {
+        if (player.hp <= 0) continue; // corpses are not targets
+        const dx = enemy.x - player.x;
+        const dz = enemy.z - player.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < best) { best = d2; target = player; targetSid = sid; }
+      }
+
+      if (target) {
+        const dist = Math.sqrt(best);
+        enemy.rotY = Math.atan2(target.x - enemy.x, target.z - enemy.z);
+        if (dist > SERVER.enemy.contactRange) {
+          // Chase: step toward the target, staying server-authoritative.
+          enemy.x += (target.x - enemy.x) / dist * SERVER.enemy.speed * dt;
+          enemy.z += (target.z - enemy.z) / dist * SERVER.enemy.speed * dt;
+          if (!animOverride) enemy.anim = 'run';
+        } else if (now >= this.invulnUntil.get(targetSid)) {
+          // Contact damage, resolved through damagePlayer: a successful BLOCK
+          // (guarding + enemy in front) negates it, the SHIELD power-up
+          // absorbs one hit, otherwise the target takes damage + knockback.
+          this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
+          enemy.anim = 'attack'; // punch (swings even when blocked)
+          this.damagePlayer(targetSid, target, SERVER.enemy.contactDamage, enemy.x, enemy.z);
+        } else if (!animOverride) {
+          enemy.anim = 'idle'; // adjacent but the player is invulnerable
+        }
+      } else if (!animOverride) {
+        enemy.anim = 'idle';
+      }
+    }
+
+    // --- Wave cleared: every enemy dead -> intermission ------------------
+    // The popup waits for a player click; players are invulnerable until
+    // the next wave starts.
+    if (state.enemies.length > 0 && alive === 0) {
+      state.matchState = 'intermission';
+      this.pendingMelee = [];
+      this.logEvent('wave_cleared', { wave: state.wave });
+      return;
+    }
+
+    this.checkWinConditions(dt);
+  }
+
+  /** Orb + power-up pickups (shared by 'playing' and 'intermission'). */
+  updatePickups(dt) {
+    const state = this.state;
     // --- Orbs: first LIVING player within radius collects (server decides)
     const orbScore = (player) =>
       SERVER.orb.score * (player.effects.has('double') ? SERVER.powerUps.double.multiplier : 1);
@@ -702,49 +857,11 @@ export default class GameRoom extends Room {
         }
       }
     }
+  }
 
-    // --- Enemies: chase the nearest LIVING player, hurt on contact -------
-    for (const enemy of state.enemies) {
-      // 'hit'/'attack' anim overrides outlive the tick that set them;
-      // while one is active the movement anim may not overwrite it.
-      const animOverride = now < (this.enemyAnimUntil.get(enemy) || 0);
-      if (!animOverride) this.enemyAnimUntil.delete(enemy);
-
-      let targetSid = null;   // sessionId of the nearest living player
-      let target = null;
-      let best = Infinity;
-      for (const [sid, player] of state.players) {
-        if (player.hp <= 0) continue; // corpses are not targets
-        const dx = enemy.x - player.x;
-        const dz = enemy.z - player.z;
-        const d2 = dx * dx + dz * dz;
-        if (d2 < best) { best = d2; target = player; targetSid = sid; }
-      }
-
-      if (target) {
-        const dist = Math.sqrt(best);
-        enemy.rotY = Math.atan2(target.x - enemy.x, target.z - enemy.z);
-        if (dist > SERVER.enemy.contactRange) {
-          // Chase: step toward the target, staying server-authoritative.
-          enemy.x += (target.x - enemy.x) / dist * SERVER.enemy.speed * dt;
-          enemy.z += (target.z - enemy.z) / dist * SERVER.enemy.speed * dt;
-          if (!animOverride) enemy.anim = 'run';
-        } else if (now >= this.invulnUntil.get(targetSid)) {
-          // Contact damage, resolved through damagePlayer: a successful BLOCK
-          // (guarding + enemy in front) negates it, the SHIELD power-up
-          // absorbs one hit, otherwise the target takes damage + knockback.
-          this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
-          enemy.anim = 'attack'; // punch (swings even when blocked)
-          this.damagePlayer(targetSid, target, SERVER.enemy.contactDamage, enemy.x, enemy.z);
-        } else if (!animOverride) {
-          enemy.anim = 'idle'; // adjacent but the player is invulnerable
-        }
-      } else if (!animOverride) {
-        enemy.anim = 'idle';
-      }
-    }
-
-    // --- Win conditions (living players only — corpses cannot win) --------
+  /** Score/duration win conditions (living players only — corpses cannot win). */
+  checkWinConditions(dt) {
+    const state = this.state;
     if (SERVER.match.targetScore > 0) {
       for (const [sid, player] of state.players) {
         if (player.hp <= 0) continue;

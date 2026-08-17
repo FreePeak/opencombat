@@ -78,6 +78,13 @@ export default class SoundManager {
   powerUp() { this.blip(330, 660, 0.1, 'triangle', 0.2); this.blip(495, 990, 0.14, 'triangle', 0.18, 0.09); }
   swing() { this.noiseSweep(0.12, 0.12, 1200, 300, 'bandpass'); }
   hit() { this.blip(130, 60, 0.12, 'sine', 0.3); this.noiseSweep(0.08, 0.15, 400, 100, 'lowpass'); }
+  enemyHit() { this.blip(190, 95, 0.09, 'square', 0.16); this.noiseSweep(0.06, 0.1, 900, 200, 'lowpass'); }
+  waveClear() { // wave-cleared fanfare: rising arpeggio + shimmer
+    this.blip(523, 523, 0.12, 'triangle', 0.2);
+    this.blip(659, 659, 0.12, 'triangle', 0.2, 0.12);
+    this.blip(784, 784, 0.2, 'triangle', 0.22, 0.24);
+    this.noiseSweep(0.5, 0.05, 6000, 1200, 'highpass', 0.24);
+  }
   blocked() { // metallic clang: the guard held, no damage taken
     this.blip(520, 500, 0.06, 'square', 0.15);
     this.blip(700, 690, 0.09, 'square', 0.12, 0.05);

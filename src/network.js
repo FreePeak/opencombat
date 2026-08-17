@@ -82,3 +82,9 @@ export function sendRespawn(room) {
 export function sendPlayAgain(room) {
   room.send('playAgain');
 }
+
+/** Click on the wave-cleared popup: start the next wave (room validates the
+ *  intermission gate; any player's click advances the room). */
+export function sendNextWave(room) {
+  room.send('nextWave');
+}

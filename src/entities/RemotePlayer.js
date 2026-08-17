@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { attachWeapon, ProceduralAnim } from './Sword.js';
 import { CONFIG } from '../config.js';
-import { attackTimeScale, frameDamp, MOVING_ATTACK_RUN_BLEND, remoteMoveHold } from '../anim/AnimUtils.js';
+import { attackTimeScale, frameDamp, MOVING_ATTACK_RUN_BLEND, ACTION_BLEND, remoteMoveHold } from '../anim/AnimUtils.js';
 import { skillFor } from '../shared/skills.js';
 
 export default class RemotePlayer {
@@ -71,8 +71,17 @@ export default class RemotePlayer {
       const clip = THREE.AnimationClip.findByName(model.animations, clipName);
       if (clip) this.clips[name] = this.mixer.clipAction(clip);
     }
+    // RC10: actions start once, blending happens with eased weights only.
+    this.currentName = 'idle';
+    this.wAtk = 0;
+    this.wRun = 0;
+    this.wIdle = this.clips.idle ? 1 : 0;
+    for (const action of Object.values(this.clips)) {
+      action.setEffectiveWeight(0);
+      action.play();
+    }
+    if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
-    this.playAnim('idle');
 
     // RC9: fetch the server patch position so a "moving" hold can be armed
     // when the caster's position actually changes (stable across the 20Hz gap).
@@ -83,77 +92,55 @@ export default class RemotePlayer {
     this.root.rotation.y = state.rotY;
   }
 
-  playAnim(name) {
-    // The skill cast reuses the class's swing clip (no separate skill clip).
-    const clipKey = name === 'skill' ? 'attack' : name;
-    const action = this.clips[clipKey];
-    if (!action || (action === this.current && this.currentName === name)) return;
-    this.current = action;
-    this.currentName = name;
-    this.mixer.stopAllAction();
-    action.reset().play();
-    // RC2: same time-scaled swing as the local player, so a remote knight
-    // shows the full arc inside the server's attackAnimMs window.
-    if (name === 'attack') {
-      action.timeScale = attackTimeScale(action.getClip(), CONFIG.player.attackAnimMs);
-      action.setLoop(THREE.LoopOnce);
-      action.clampWhenFinished = true;
-    } else if (name === 'skill') {
-      action.timeScale = attackTimeScale(action.getClip(), this.skillDef.animMs);
-      action.setLoop(THREE.LoopOnce);
-      action.clampWhenFinished = true;
-    } else {
-      action.timeScale = 1;
-      action.setLoop(THREE.LoopRepeat);
-    }
-  }
-
   /**
-   * RC8/RC9 clip driver for remote players (mirrors Player.updateClipAnims).
+   * RC8/RC9/RC10 clip driver for remote players (mirrors Player.updateClipAnims).
    * The server drives `anim`; whether the caster is moving is decided by RC9's
    * patch-delta hold (`this.moveHold`), NOT by per-frame lerp position, whose
    * lead decays below any threshold between the ~20Hz patches and would flicker
-   * the run blend mid-swing.
+   * the run blend mid-swing. RC10: all weights are EASED toward their targets
+   * (~100ms crossfades) — swings blend in/out instead of snapping, matching
+   * what the local player sees on their own character.
    */
   updateClipAnims(_dt, moving) {
     const s = this.state;
-    const swinging = s.anim === 'attack' || s.anim === 'skill';
     const casting = s.anim === 'skill';
+    const swinging = casting || s.anim === 'attack';
     const atk = this.clips.attack;
     const run = this.clips.run;
     const idle = this.clips.idle;
 
+    // Target weights for this frame.
+    let tAtk = 0, tRun = 0, tIdle = 0;
     if (swinging && atk) {
-      const name = s.anim;
-      if (this.currentName !== name) {
-        this.currentName = name;
+      tAtk = 1;
+      if (moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
+      if (this.currentName !== s.anim) {
+        this.currentName = s.anim;
         atk.reset();
         atk.setLoop(THREE.LoopOnce);
         atk.clampWhenFinished = true;
+        // RC2: same time-scaled swing as the local player, so a remote knight
+        // shows the full arc inside the server's attackAnimMs window.
         atk.timeScale = attackTimeScale(atk.getClip(),
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
         atk.play();
       }
-      const runW = moving && run ? MOVING_ATTACK_RUN_BLEND : 0;
-      atk.setEffectiveWeight(1 - runW);
-      if (run) {
-        if (runW > 0) {
-          if (!run.isRunning()) { run.setLoop(THREE.LoopRepeat); run.timeScale = 1; run.play(); }
-          run.setEffectiveWeight(runW);
-        } else run.setEffectiveWeight(0);
-      }
-      if (idle) idle.setEffectiveWeight(0);
+    } else if (moving && run) {
+      tRun = 1;
+      this.currentName = 'run';
     } else {
-      if (atk) atk.setEffectiveWeight(0);
-      const loco = moving ? run : idle;
-      const other = moving ? idle : run;
-      if (loco) {
-        if (!loco.isRunning()) { loco.setLoop(THREE.LoopRepeat); loco.timeScale = 1; loco.play(); }
-        loco.setEffectiveWeight(1);
-      }
-      if (other) other.setEffectiveWeight(0);
-      this.currentName = moving ? 'run' : 'idle';
+      tIdle = 1;
+      this.currentName = 'idle';
     }
+
+    // Ease every weight toward its target (frame-rate independent, RC4).
+    const e = frameDamp(ACTION_BLEND, _dt);
+    this.wAtk += (tAtk - this.wAtk) * e;
+    this.wRun += (tRun - this.wRun) * e;
+    this.wIdle += (tIdle - this.wIdle) * e;
+    atk?.setEffectiveWeight(this.wAtk);
+    run?.setEffectiveWeight(this.wRun);
+    idle?.setEffectiveWeight(this.wIdle);
   }
 
   updateEffects(effects) {

@@ -13,7 +13,7 @@ import Enemy from '../entities/Enemy.js';
 import SoundManager from '../audio/SoundManager.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
-import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, joinErrorMessage, serverAvailable } from '../network.js';
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, joinErrorMessage, serverAvailable } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { stripRootMotion, frameDamp, cameraOffset } from '../anim/AnimUtils.js';
 
@@ -114,12 +114,19 @@ export default class GameScene {
     this.loginBtn = document.getElementById('login-btn');
     this.netBadge = document.getElementById('net-badge');
 
-    // One overlay serves both ends: death (respawn) and match end (again).
+    // One overlay serves three ends: death (respawn), wave cleared (next
+    // wave) and match end (again). Priority in that order on click.
     this.overlay.addEventListener('click', () => {
       if (!this.room) return;
-      if (this.room.state.matchState === 'gameover') {
+      const ms = this.room.state.matchState;
+      if (ms === 'gameover') {
         this.overlay.classList.remove('visible');
         sendPlayAgain(this.room);
+      } else if (ms === 'intermission') {
+        // Wave-cleared popup: the click asks the room for the next wave —
+        // in multiplayer the FIRST click advances the room for everyone.
+        this.overlay.classList.remove('visible');
+        sendNextWave(this.room);
       } else if (this.local?.state?.hp <= 0) {
         this.overlay.classList.remove('visible');
         this.deadShown = false;
@@ -275,6 +282,10 @@ export default class GameScene {
   wireRoom() {
     this.disposeEntities();
     this.wired = false;
+    // Read-only introspection handle for the Playwright e2e flow (assert
+    // match/wave state, drive the popup) — exposes nothing the page doesn't
+    // already hold.
+    window.__OPENGAME_DEBUG__ = { room: this.room };
     this.room.onStateChange((state) => {
       if (!this.wired) { this.wired = true; this.wireState(state); }
     });
@@ -433,7 +444,8 @@ export default class GameScene {
   addEnemy(i, enemy) {
     const e = new Enemy(this, enemy, this.models.enemy, this.models.enemyAnims, 0.55);
     e.onBurst = (pos, color) => this.particles.spawnBurst(pos, color, 26, 5.5, 0.8);
-    e.onDamage = (pos) => this.floatTexts.spawn(pos.x, pos.y, pos.z, '1', '#ffd54f');
+    e.onHitSpark = (pos) => this.particles.spawnBurst(pos, 0xffffff, 10, 3, 0.35);
+    e.onDamage = (pos, amount) => this.floatTexts.spawn(pos.x, pos.y, pos.z, amount, '#ffd54f');
     this.enemies.set(i, e);
   }
 
@@ -648,8 +660,26 @@ export default class GameScene {
     // --- Match lifecycle UI (server-driven, Upgrade A) ------------------
     if (state.matchState !== this.lastMatchState) {
       this.lastMatchState = state.matchState;
-      if (state.matchState === 'countdown') this.sound.tick();
+      if (state.matchState === 'countdown') {
+        this.sound.tick();
+        // A countdown that follows the wave popup (or a respawn overlay)
+        // must clear it — the room moved on.
+        this.overlay.classList.remove('visible');
+        this.deadShown = false;
+      }
       if (state.matchState === 'playing') { this.sound.go(); this.countdownEl.textContent = ''; }
+      if (state.matchState === 'intermission') {
+        // WAVE CLEARED popup: blocks the game until a player clicks (the
+        // click sends 'nextWave' — see the overlay click handler). While it
+        // is up every player is invulnerable (damagePlayer gates on
+        // 'playing'), and movement stays free.
+        this.sound.waveClear();
+        this.overlayTitle.textContent = `WAVE ${state.wave} CLEARED!`;
+        this.overlaySub.textContent =
+          `click anywhere to start wave ${state.wave + 1} — everyone is invulnerable until then`;
+        this.overlay.classList.add('visible');
+        this.deadShown = true; // suppress the death overlay underneath
+      }
       if (state.matchState === 'gameover') {
         this.sound.gameOver();
         this.overlayTitle.textContent = state.winnerId === this.room.sessionId
@@ -664,7 +694,11 @@ export default class GameScene {
     }
     if (state.matchState === 'countdown') {
       const c = Math.ceil(state.countdown);
-      this.countdownEl.textContent = c > 0 ? String(c) : '';
+      // Wave banner above the big number ("WAVE 3" / 3-2-1) — a smaller
+      // label line, then the countdown digit on its own line.
+      this.countdownEl.innerHTML =
+        `<div style="font-size:26px;letter-spacing:8px;">WAVE ${state.wave}</div>` +
+        (c > 0 ? String(c) : '');
       if (c !== this.lastCountdown && c > 0) { this.lastCountdown = c; this.sound.tick(); }
     } else {
       this.lastCountdown = -1;
@@ -687,9 +721,10 @@ export default class GameScene {
     this.hudFill.style.width = pct + '%';
     this.hudFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
     this.hudText.textContent =
-      `score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
+      `wave ${state.wave}   score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
+      (state.matchState === 'intermission' ? '   ★ INVULNERABLE — wave cleared' : '') +
       (me.blocking ? '   🛡 BLOCKING' : '') +
-      '   WASD move · J melee (swing while moving OK) · K skill · L block (hold) · M mute';
+      '   WASD move · J attack · K skill · L block (hold) · M mute';
     // Cooldown bar: drains while J is on cooldown (server mirrors it).
     const cdMs = Math.max(me.attackCd, this.local.attackCd * 1000);
     this.cooldownFill.style.width = Math.min(100, cdMs / CONFIG.player.attackCooldownMs * 100) + '%';

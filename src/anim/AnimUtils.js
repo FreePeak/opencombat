@@ -150,6 +150,13 @@ export function cameraOffset(camYaw, distance) {
 // the hard pop when the swing ends. 0 = pure swing, 1 = pure run.
 export const MOVING_ATTACK_RUN_BLEND = 0.42;
 
+// RC10 (combat feel): per-frame weight easing factor (calibrated at 60fps)
+// for the clip blender in Player/RemotePlayer. Every animation weight moves
+// toward its target through frameDamp(ACTION_BLEND, dt) — a ~100ms crossfade
+// — instead of snapping 0 <-> blend <-> 1 in one frame, which made each
+// swing start and end with a visible pop.
+export const ACTION_BLEND = 0.5;
+
 // RC9: how long a remote player is treated as "moving" after ANY server
 // position patch delta. Server patches arrive at ~20Hz (SERVER.tickMs = 50), so
 // a per-frame lerp-lead check (root trailing the target) decays below its

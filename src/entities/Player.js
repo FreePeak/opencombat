@@ -11,7 +11,7 @@ import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
 import { CONFIG } from '../config.js';
 import { sendInput } from '../network.js';
-import { attackTimeScale, shouldSendInput, cameraMoveDir, MOVING_ATTACK_RUN_BLEND } from '../anim/AnimUtils.js';
+import { attackTimeScale, shouldSendInput, cameraMoveDir, frameDamp, MOVING_ATTACK_RUN_BLEND, ACTION_BLEND } from '../anim/AnimUtils.js';
 import { skillFor } from '../shared/skills.js';
 
 export default class Player {
@@ -84,6 +84,8 @@ export default class Player {
 
     // Animation clips, keyed by our logical names (see CONFIG.characters).
     // Models that ship no clips (the knight) get ProceduralAnim instead.
+    // RC10: every action is started ONCE here and blending is done purely
+    // with eased weights (see updateClipAnims) — no stopAllAction pops.
     this.mixer = new THREE.AnimationMixer(this.mesh);
     this.clips = {};
     for (const [name, clipName] of Object.entries(def.anims)) {
@@ -91,6 +93,15 @@ export default class Player {
       const clip = THREE.AnimationClip.findByName(model.animations, clipName);
       if (clip) this.clips[name] = this.mixer.clipAction(clip);
     }
+    this.currentName = 'idle';
+    this.wAtk = 0;
+    this.wRun = 0;
+    this.wIdle = this.clips.idle ? 1 : 0;
+    for (const action of Object.values(this.clips)) {
+      action.setEffectiveWeight(0);
+      action.play();
+    }
+    if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
 
     // Keys: state objects updated by GameScene's window listeners.
@@ -122,79 +133,54 @@ export default class Player {
     this.onSkill = null;    // GameScene sets this to spawn the cast VFX
   }
 
-  /** Play a logical anim by name (idle/run/attack/skill), reusing the clip. */
-  playAnim(name) {
-    // The skill cast reuses the class's swing clip (there is no separate skill
-    // clip in the GLBs); it is distinguished by timing + the cast VFX.
-    const clipKey = name === 'skill' ? 'attack' : name;
-    const action = this.clips[clipKey];
-    if (!action || (action === this.current && this.currentName === name)) return;
-    this.current = action;
-    this.currentName = name;
-    this.mixer.stopAllAction();
-    action.reset().play();
-    // RC2: squeeze the whole swing into attackAnimMs of wall time, so the
-    // anim lands the full arc instead of hard-cutting at the wind-up when
-    // the server flips anim back to idle/run.
-    if (name === 'attack') {
-      action.timeScale = attackTimeScale(action.getClip(), CONFIG.player.attackAnimMs);
-      action.setLoop(THREE.LoopOnce);
-      action.clampWhenFinished = true;
-    } else if (name === 'skill') {
-      action.timeScale = attackTimeScale(action.getClip(), this.skillDef.animMs);
-      action.setLoop(THREE.LoopOnce);
-      action.clampWhenFinished = true;
-    } else {
-      action.timeScale = 1;
-      action.setLoop(THREE.LoopRepeat);
-    }
-  }
-
   /**
-   * RC8 clip driver: blends locomotion under the swing so the character can
-   * move AND attack at the same time without skating or a hard animation pop.
-   * While swinging on the move the run cycle plays at MOVING_ATTACK_RUN_BLEND
-   * under the attack clip; a stationary swing plays the clip alone.
+   * RC10 clip driver: all three actions run permanently; what changes per
+   * frame is their WEIGHT, eased toward the current target (see
+   * ACTION_BLEND). This gives real crossfades — the swing blends in over
+   * ~100ms instead of snapping on, blends back out into idle/run at the
+   * end, and the run-under-swing blend (RC8) fades rather than popping
+   * when movement starts/stops mid-swing.
    */
   updateClipAnims(_dt) {
     const casting = this.skillAnimT > 0;
     const swinging = casting || this.attackAnimT > 0;
-    const moving = this.moving;
     const atk = this.clips.attack;
     const run = this.clips.run;
     const idle = this.clips.idle;
 
+    // Target weights for this frame.
+    let tAtk = 0, tRun = 0, tIdle = 0;
     if (swinging && atk) {
+      tAtk = 1;
+      if (this.moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
       const name = casting ? 'skill' : 'attack';
       if (this.currentName !== name) { // (re)start the swing on its first frame
         this.currentName = name;
         atk.reset();
         atk.setLoop(THREE.LoopOnce);
         atk.clampWhenFinished = true;
+        // RC2: squeeze the whole swing into the anim window so the full arc
+        // lands before the state flips back to locomotion.
         atk.timeScale = attackTimeScale(atk.getClip(),
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
         atk.play();
       }
-      const runW = moving && run ? MOVING_ATTACK_RUN_BLEND : 0;
-      atk.setEffectiveWeight(1 - runW);
-      if (run) {
-        if (runW > 0) {
-          if (!run.isRunning()) { run.setLoop(THREE.LoopRepeat); run.timeScale = 1; run.play(); }
-          run.setEffectiveWeight(runW);
-        } else run.setEffectiveWeight(0);
-      }
-      if (idle) idle.setEffectiveWeight(0);
+    } else if (this.moving && run) {
+      tRun = 1;
+      this.currentName = 'run';
     } else {
-      if (atk) atk.setEffectiveWeight(0);
-      const loco = moving ? run : idle;
-      const other = moving ? idle : run;
-      if (loco) {
-        if (!loco.isRunning()) { loco.setLoop(THREE.LoopRepeat); loco.timeScale = 1; loco.play(); }
-        loco.setEffectiveWeight(1);
-      }
-      if (other) other.setEffectiveWeight(0);
-      this.currentName = moving ? 'run' : 'idle';
+      tIdle = 1;
+      this.currentName = 'idle';
     }
+
+    // Ease every weight toward its target (frame-rate independent, RC4).
+    const e = frameDamp(ACTION_BLEND, _dt);
+    this.wAtk += (tAtk - this.wAtk) * e;
+    this.wRun += (tRun - this.wRun) * e;
+    this.wIdle += (tIdle - this.wIdle) * e;
+    atk?.setEffectiveWeight(this.wAtk);
+    run?.setEffectiveWeight(this.wRun);
+    idle?.setEffectiveWeight(this.wIdle);
   }
 
   /** Render the timed power-up effects straight from PlayerState.effects. */
