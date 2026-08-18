@@ -156,7 +156,12 @@ export class ProceduralAnim {
     this.swingT = Math.max(0, this.swingT - dt);
     if (this.weapon) {
       const k = this.swingT > 0 ? 1 - this.swingT / 0.35 : 0; // 0..1 over the swing
-      this.weapon.rotation.x = -Math.sin(k * Math.PI) * 1.9;  // chop and return
+      // Swing: full chop (-1.9 rad).  Idle/run: keep the sword in a
+      // "drawn" resting pose (-0.25 rad) so the arm never drops back to
+      // the sheathed zero — the sword stays visibly held between swings.
+      this.weapon.rotation.x = this.swingT > 0
+        ? -Math.sin(k * Math.PI) * 1.9
+        : -0.25;
     }
   }
 }

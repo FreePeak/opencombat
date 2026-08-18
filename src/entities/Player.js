@@ -154,22 +154,25 @@ export default class Player {
       tAtk = 1;
       if (this.moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
       const name = casting ? 'skill' : 'attack';
-      if (this.currentName !== name) { // (re)start the swing on its first frame
+      if (this.currentName !== name) {
         this.currentName = name;
         atk.reset();
         atk.setLoop(THREE.LoopOnce);
         atk.clampWhenFinished = true;
-        // RC2: squeeze the whole swing into the anim window so the full arc
-        // lands before the state flips back to locomotion.
         atk.timeScale = attackTimeScale(atk.getClip(),
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
         atk.play();
       }
     } else if (this.moving && run) {
       tRun = 1;
+      // Sword stays "drawn" between swings: a residual attack-clip weight
+      // keeps the arm forward so there is no visible "put away" drop when
+      // the swing ends and locomotion takes over.
+      tAtk = 0.12;
       this.currentName = 'run';
     } else {
       tIdle = 1;
+      tAtk = 0.12;
       this.currentName = 'idle';
     }
 

@@ -127,9 +127,11 @@ export default class RemotePlayer {
       }
     } else if (moving && run) {
       tRun = 1;
+      tAtk = 0.12; // sword stays "drawn" — no sheathing drop
       this.currentName = 'run';
     } else {
       tIdle = 1;
+      tAtk = 0.12; // sword stays "drawn" — no sheathing drop
       this.currentName = 'idle';
     }
 
