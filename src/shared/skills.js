@@ -1,7 +1,7 @@
 // Per-character skill definitions + hit resolution, shared by the server
 // (authoritative damage) and the client (HUD + VFX) so the two sides can
 // never drift. Indexed by PlayerState.character (== CONFIG.characters order:
-// 0 swordsman, 1 archer, 2 mage, 3 spike).
+// 0 swordsman, 1 archer, 2 mage, 3 demon).
 //
 // Every character shares the normal melee (J). The skill (K) is the distinct
 // per-character cast. `kind` selects the hit shape resolved by

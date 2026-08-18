@@ -262,7 +262,7 @@ export default class GameScene {
         // RC1: strip baked root motion (Mixamo hips translation) from every
         // clip at load time — the server owns x/z, animated hips must not
         // drag the mesh away from its lerped position. Clean rigs (archer/
-        // mage/spike) pass through untouched.
+        // mage/demon) pass through untouched.
         CONFIG.characters.forEach((c, i) => {
           const animations = stripRootMotion(all[i].animations);
           // Swordsman: trim the attack static hold AND the draw gesture

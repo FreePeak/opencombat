@@ -8,6 +8,7 @@ import { SERVER } from './server/config.js';
 import { stepPlayer } from './server/movement.js';
 import { skillFor, resolveSkillHits } from './shared/skills.js';
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from './shared/waves.js';
+import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/combat.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -373,19 +374,13 @@ export class LocalRoom {
   /** Shared enemy-hit resolution (mirror of GameRoom.hitEnemy): knockback,
    *  HIT-STUN on survivors, stay-dead + kill score on kills. */
   _hitEnemy(enemy, damage, srcX, srcZ, killer) {
-    if (enemy.hp <= 0) return false;
-    const now = performance.now();
-    enemy.hp -= damage;
-    const dx = enemy.x - srcX;
-    const dz = enemy.z - srcZ;
-    const dist = Math.hypot(dx, dz) || 1;
-    enemy.x = clamp(enemy.x + dx / dist * SERVER.enemy.hitKnockback, -SERVER.world.size / 2, SERVER.world.size / 2);
-    enemy.z = clamp(enemy.z + dz / dist * SERVER.enemy.hitKnockback, -SERVER.world.size / 2, SERVER.world.size / 2);
-    if (enemy.hp <= 0) {
-      enemy.hp = 0;
+    const { hit, killed } = strikeEnemy(enemy, damage, srcX, srcZ, SERVER.enemy.hitKnockback, SERVER.world.size / 2);
+    if (!hit) return false;
+    if (killed) {
       if (killer) killer.score += SERVER.enemy.killScore;
       return true;
     }
+    const now = performance.now();
     enemy.anim = 'hit';
     this._enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
     this._enemyStunUntil.set(enemy, now + SERVER.enemy.hitStunMs);
@@ -393,24 +388,12 @@ export class LocalRoom {
   }
 
   _resolveMelee(attacker) {
-    const fx = Math.sin(attacker.rotY);
-    const fz = Math.cos(attacker.rotY);
-    const range = SERVER.player.attackRange;
-    const arcCos = SERVER.player.attackArcCos;
-
-    for (const enemy of this.state.enemies) {
-      if (enemy.hp <= 0) continue;
-      const dx = enemy.x - attacker.x;
-      const dz = enemy.z - attacker.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist <= range && dist > 1e-6) {
-        const dot = (dx * fx + dz * fz) / dist;
-        if (dot >= arcCos) {
-          // Hit: the enemy stays down at 0 HP until the next wave revives
-          // its slot (killed enemies no longer teleport-respawn).
-          this._hitEnemy(enemy, SERVER.player.attackDamage, attacker.x, attacker.z, attacker);
-        }
-      }
+    // Shared arc math: which enemies this swing covers (dead ones skipped).
+    for (const i of meleeHits(attacker, this.state.enemies, SERVER.player)) {
+      const enemy = this.state.enemies[i];
+      // Hit: the enemy stays down at 0 HP until the next wave revives
+      // its slot (killed enemies no longer teleport-respawn).
+      this._hitEnemy(enemy, SERVER.player.attackDamage, attacker.x, attacker.z, attacker);
     }
   }
 
@@ -428,7 +411,7 @@ export class LocalRoom {
    *  SHIELD power-up absorbs one hit, otherwise HP drops. */
   _damagePlayer(player, amount, source) {
     if (this.state.matchState !== 'playing') return false;
-    if (source && this._isBlocked(player, source.x, source.z)) {
+    if (source && blockedHit(player, source.x, source.z, SERVER.player.blockArcCos)) {
       this._emitMessage('blocked', { x: player.x, z: player.z });
       return false;
     }
@@ -439,21 +422,13 @@ export class LocalRoom {
     const now = performance.now();
     if (player._lastHit && now - player._lastHit < SERVER.player.invulnMs) return false;
     player._lastHit = now;
-    player.hp = Math.max(0, player.hp - amount);
+    // Knockback 0: the offline sim has never shoved the player (server does,
+    // via strikePlayer with the configured nudge) — one code path, per-room.
+    strikePlayer(player, amount, source?.x ?? player.x, source?.z ?? player.z, 0, SERVER.world.size / 2);
     if (player.hp <= 0) {
       player.anim = 'hit';
     }
     return true;
-  }
-
-  /** Guarding + the hit source inside the frontal arc (same math as GameRoom). */
-  _isBlocked(player, ax, az) {
-    if (!player.blocking) return false;
-    const dx = ax - player.x;
-    const dz = az - player.z;
-    const dist = Math.hypot(dx, dz) || 1;
-    const dot = (dx * Math.sin(player.rotY) + dz * Math.cos(player.rotY)) / dist;
-    return dot >= SERVER.player.blockArcCos;
   }
 
   _updateEffects(player, msec) {

@@ -6,7 +6,7 @@
 //        unit vertical swing). The server owns x/z, so the animated hips
 //        drag the mesh away from its lerped position -> the knight slides/
 //        swims in directions nobody steered. The three legacy characters
-//        (archer/mage/spike) animate no root bone translation and are fine.
+//        (archer/mage/demon) animate no root bone translation and are fine.
 //   RC2  The Attack clip is 1.433s but the server (and client) show the
 //        attack for attackAnimMs = 350ms. playAnim() plays the clip at 1x
 //        and switches back to idle after 350ms -> the player sees ~24% of

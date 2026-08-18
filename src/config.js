@@ -168,7 +168,9 @@ export const CONFIG = {
       }
     },
     {
-      key: 'spike', label: 'Spike Man', file: 'spike.glb', scale: 0.65, weapon: null,
+      // Demon (was "Spike Man"): the GLB file keeps its original spike.glb
+      // name — the rename is display-only (key + label).
+      key: 'demon', label: 'Demon', file: 'spike.glb', scale: 0.65, weapon: null,
       anims: {
         idle: 'CharacterArmature|Idle',
         run: 'CharacterArmature|Run',

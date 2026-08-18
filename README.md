@@ -128,7 +128,7 @@ All optional; the defaults run a single-process game on :2567.
 | K | Character skill (0.8–4s cooldown per class) — works while moving |
 | L (hold) | Block — roots you, negates frontal enemy contact and other players' attacks |
 | M | Mute / unmute sound |
-| Click a character card (login) | Choose Swordsman / Archer / Mage / Spike Man |
+| Click a character card (login) | Choose Knight / Archer / Mage / Demon |
 
 ### Mobile (touch)
 
@@ -306,11 +306,11 @@ All models are low-poly and free-licensed (details, source URLs and licenses in
 `assets/credits/`; policy: CC0 preferred, CC-BY with attribution):
 
 - **Playable roster** (chosen on the login screen, `PlayerState.character`):
-  Swordsman = Knight by Dawid2K (CC-BY 3.0, static rig — the client plays a
+  Knight by Dawid2K (CC-BY 3.0, static rig — the client plays a
   procedural idle/run/swing; carries the CC0 Quaternius sword prop),
   Archer = Hooded Adventurer (CC0, Quaternius, procedural bow),
   Mage = Animated Wizard (CC-BY 3.0, Quaternius, staff attack clip),
-  Spike Man = Demon (CC0, Quaternius, trident).
+  Demon (CC0, Quaternius, trident).
 - **Enemy**: Orc (CC0, Quaternius). **Props**: tree + rock (CC0, Quaternius).
 
 Animated GLBs ship skeletal clips (idle/run/attack/hit) played via

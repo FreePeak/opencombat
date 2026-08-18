@@ -21,8 +21,7 @@ import { takeToken, normalizeIp } from '../ratelimit.js';
 import { stepPlayer } from '../movement.js';
 import { skillFor, resolveSkillHits } from '../../shared/skills.js';
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from '../../shared/waves.js';
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/combat.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -480,12 +479,7 @@ export default class GameRoom extends Room {
    * knockback, nothing consumed.
    */
   isBlocked(player, ax, az) {
-    if (!player.blocking) return false;
-    const dx = ax - player.x;
-    const dz = az - player.z;
-    const dist = Math.hypot(dx, dz) || 1;
-    const dot = (dx * Math.sin(player.rotY) + dz * Math.cos(player.rotY)) / dist;
-    return dot >= SERVER.player.blockArcCos;
+    return blockedHit(player, ax, az, SERVER.player.blockArcCos);
   }
 
   /** Tell the victim's client its guard held (clang + "BLOCKED" text). */
@@ -520,12 +514,7 @@ export default class GameRoom extends Room {
       return false;
     }
     this.invulnUntil.set(sid, now + SERVER.player.invulnMs);
-    victim.hp = Math.max(0, victim.hp - amount);
-    const dx = victim.x - srcX;
-    const dz = victim.z - srcZ;
-    const dist = Math.hypot(dx, dz) || 1;
-    victim.x = clamp(victim.x + dx / dist * SERVER.player.knockback * 0.15, -this.half, this.half);
-    victim.z = clamp(victim.z + dz / dist * SERVER.player.knockback * 0.15, -this.half, this.half);
+    strikePlayer(victim, amount, srcX, srcZ, SERVER.player.knockback * 0.15, this.half);
     return true;
   }
 
@@ -537,23 +526,17 @@ export default class GameRoom extends Room {
    * when the hit killed the enemy.
    */
   hitEnemy(enemy, damage, srcX, srcZ, killer) {
-    if (enemy.hp <= 0) return false; // dead stays dead
-    const now = Date.now();
-    enemy.hp -= damage;
-    // Knockback away from the attacker, clamped inside the arena.
-    const dx = enemy.x - srcX;
-    const dz = enemy.z - srcZ;
-    const dist = Math.hypot(dx, dz) || 1;
-    enemy.x = clamp(enemy.x + dx / dist * SERVER.enemy.hitKnockback, -this.half, this.half);
-    enemy.z = clamp(enemy.z + dz / dist * SERVER.enemy.hitKnockback, -this.half, this.half);
-    if (enemy.hp <= 0) {
-      enemy.hp = 0;
+    // Shared strike math: HP drop + knockback, dead-stays-dead guard.
+    const { hit, killed } = strikeEnemy(enemy, damage, srcX, srcZ, SERVER.enemy.hitKnockback, this.half);
+    if (!hit) return false;
+    if (killed) {
       if (killer) killer.score += SERVER.enemy.killScore;
       this.logEvent('enemy_killed', { wave: this.state.wave, by: killer?.name });
       return true;
     }
     // Survived the hit: stagger — no chase, no contact damage until the
     // stun expires (this is what makes hits read as impactful).
+    const now = Date.now();
     enemy.anim = 'hit';
     this.enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
     this.enemyStunUntil.set(enemy, now + SERVER.enemy.hitStunMs);
@@ -572,25 +555,17 @@ export default class GameRoom extends Room {
     if (!player || player.hp <= 0) return; // ghosts cannot swing
     player.anim = 'attack'; // movePlayers preserves this during animUntil
     const cfg = SERVER.player;
-    // Facing vector from rotY (atan2 convention: +Z is 0).
-    const fx = Math.sin(player.rotY);
-    const fz = Math.cos(player.rotY);
-    const inArc = (dx, dz) => {
-      const dist = Math.hypot(dx, dz);
-      return dist <= cfg.attackRange && (dx * fx + dz * fz) / (dist || 1) >= cfg.attackArcCos;
-    };
-    for (const enemy of this.state.enemies) {
-      const dx = enemy.x - player.x;
-      const dz = enemy.z - player.z;
-      if (enemy.hp <= 0 || !inArc(dx, dz)) continue;
+    // Shared arc math: which enemies (and players) this swing covers.
+    for (const i of meleeHits(player, [...this.state.enemies], cfg)) {
+      const enemy = this.state.enemies[i];
       this.hitEnemy(enemy, cfg.attackDamage, player.x, player.z, player);
     }
     // PvP: same swing also hurts other living players in the arc.
     for (const [osid, victim] of this.state.players) {
       if (osid === sid || victim.hp <= 0) continue;
-      const dx = victim.x - player.x;
-      const dz = victim.z - player.z;
-      if (inArc(dx, dz)) this.damagePlayer(osid, victim, cfg.attackPvpDamage, player.x, player.z);
+      if (meleeHits(player, [victim], cfg).length) {
+        this.damagePlayer(osid, victim, cfg.attackPvpDamage, player.x, player.z);
+      }
     }
   }
 
