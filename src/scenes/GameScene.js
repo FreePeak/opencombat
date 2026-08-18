@@ -82,6 +82,7 @@ export default class GameScene {
     this.orbViews = [];            // { mesh, state } pairs
     this.powerUpViews = [];        // { mesh, state } pairs
     this.nametags = new Map();     // sessionId -> { div, state }
+    this.projectiles = new Map(); // projectile id -> { mesh, light? }
     this.wired = false;
     this.cameraRigged = false;     // camera snapped to the player yet?
     this.models = null;
@@ -405,6 +406,12 @@ export default class GameScene {
 
     $(state.orbs).onAdd((orb, i) => this.addOrb(i, orb), false);
     $(state.powerUps).onAdd((pu, i) => this.addPowerUp(i, pu), false);
+
+    $(state.projectiles).onAdd((proj, id) => this.addProjectile(id, proj), false);
+    $(state.projectiles).onRemove((_proj, id) => {
+      const v = this.projectiles.get(id);
+      if (v) { this.scene.remove(v.mesh); this.projectiles.delete(id); }
+    });
   }
 
   /** Remove every entity + nametag (called before re-wiring on reconnect). */
@@ -419,6 +426,8 @@ export default class GameScene {
     this.orbViews = [];
     for (const v of this.powerUpViews) this.scene.remove(v.mesh);
     this.powerUpViews = [];
+    for (const v of this.projectiles.values()) this.scene.remove(v.mesh);
+    this.projectiles.clear();
     for (const tag of this.nametags.values()) tag.div.remove();
     this.nametags.clear();
   }
@@ -477,6 +486,37 @@ export default class GameScene {
     mesh.position.set(pu.x, CONFIG.powerUps.y, pu.z);
     this.scene.add(mesh);
     this.powerUpViews[i] = { mesh, state: pu, color };
+  }
+
+  /** Create a projectile mesh (arrow cylinder, fireball sphere+light, lightning box). */
+  addProjectile(id, proj) {
+    const cfg = CONFIG.projectiles[proj.kind] ?? CONFIG.projectiles.arrow;
+    let mesh;
+    if (proj.kind === 'arrow') {
+      mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(cfg.scale, cfg.scale * 0.5, cfg.height, 6),
+        new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.emissive, emissiveIntensity: 0.6 })
+      );
+      mesh.rotation.x = Math.PI / 2; // point forward along Z
+    } else if (proj.kind === 'fireball') {
+      mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(cfg.scale, 8, 6),
+        new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.emissive, emissiveIntensity: 1 })
+      );
+      const light = new THREE.PointLight(cfg.lightColor, cfg.lightIntensity, 4);
+      mesh.add(light);
+    } else {
+      // lightning: thin box
+      mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(cfg.scale, cfg.scale, cfg.height),
+        new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.emissive, emissiveIntensity: 0.8 })
+      );
+    }
+    mesh.position.set(proj.x, 0.8, proj.z);
+    // Orient mesh to face the direction of travel
+    mesh.rotation.y = Math.atan2(proj.dirX, proj.dirZ);
+    this.scene.add(mesh);
+    this.projectiles.set(id, { mesh });
   }
 
   // ============================ World =====================================
@@ -639,6 +679,23 @@ export default class GameScene {
       view.mesh.scale.setScalar(pulse);
       view.mesh.position.y = CONFIG.powerUps.y + Math.sin(now / 350) * 0.15;
       view.mesh.rotation.y += dt * 1.5;
+    }
+
+    // Projectiles: sync position from server state, remove stale views.
+    for (const [id, proj] of state.projectiles) {
+      const v = this.projectiles.get(id);
+      if (v) {
+        v.mesh.position.x = proj.x;
+        v.mesh.position.z = proj.z;
+        v.mesh.rotation.y = Math.atan2(proj.dirX, proj.dirZ);
+      }
+    }
+    // Remove client views for projectiles the server already spliced out.
+    for (const [id, v] of this.projectiles) {
+      if (!state.projectiles.find((p) => p.id === id)) {
+        this.scene.remove(v.mesh);
+        this.projectiles.delete(id);
+      }
     }
 
     // Speed power-up trail: emit particles behind any runner with it.

@@ -118,6 +118,13 @@ export const CONFIG = {
     nametagBg: 'rgba(0,0,0,0.55)'
   },
 
+  // Projectile visuals per kind (Phase 1 ranged normals).
+  projectiles: {
+    arrow:    { color: 0xd4a574, emissive: 0x8b6914, scale: 0.12, height: 0.6 },
+    fireball: { color: 0xff4500, emissive: 0xff2200, scale: 0.25, lightColor: 0xff6600, lightIntensity: 2 },
+    lightning: { color: 0x7b68ee, emissive: 0x5b4cdd, scale: 0.1, height: 0.8 }
+  },
+
   // Selectable player characters. `key` indexes the loaded GLB map in
   // GameScene.loadModels(); `scale` normalizes every model to the same
   // in-game height (~1.55 units, the adventurer's height at 0.85); `anims`

@@ -9,6 +9,9 @@ import { stepPlayer } from './server/movement.js';
 import { skillFor, resolveSkillHits } from './shared/skills.js';
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from './shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/combat.js';
+import { attackFor } from './shared/classes.js';
+import { stepProjectile, projectileExpired, projectileHitsTarget,
+         resolveProjectileEnemyHit, resolveProjectilePlayerHit } from './shared/projectiles.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -42,6 +45,7 @@ export class LocalRoom {
     this._enemyAnimUntil = new Map();  // enemy -> ms of 'hit'/'attack' override
     this._enemyStunUntil = new Map();  // enemy -> ms of HIT-STUN (no actions)
     this._pendingStrikes = [];         // {sid, at} — melee impacts land mid-swing
+    this._projectileId = 0;           // monotonic ID for projectile spawn
     // Browsers drive the sim with rAF; headless environments (the test suite)
     // get a 16ms timer so the same room class runs in Node.
     this._raf = typeof requestAnimationFrame === 'function';
@@ -222,11 +226,17 @@ export class LocalRoom {
 
       // Attack (J) — playing only, rejected while blocking. The strike is
       // SCHEDULED: damage lands attackImpactMs in, aligned with the swing.
+      // Ranged classes (archer/mage/demon) fire a projectile instead.
       if (playing && this._playerInput.attack && me.attackCd <= 0 && !me.blocking) {
         me.attackCd = SERVER.player.attackCooldownMs;
         me.anim = 'attack';
         me.animUntil = performance.now() + SERVER.player.attackAnimMs;
-        this._pendingStrikes.push({ at: performance.now() + SERVER.player.attackImpactMs });
+        const atk = attackFor(me.character);
+        if (atk.kind === 'projectile') {
+          this._spawnProjectile(me, atk);
+        } else {
+          this._pendingStrikes.push({ at: performance.now() + SERVER.player.attackImpactMs });
+        }
       }
 
       // Skill (K) — same gating as the melee; skills resolve at cast (their
@@ -254,6 +264,9 @@ export class LocalRoom {
       // Effect timers
       this._updateEffects(me, dt * 1000);
     }
+
+    // --- Projectiles (playing only) ---------------------------------------
+    if (playing) this._updateProjectiles(dt);
 
     // --- Enemies (playing only — intermission has none alive) ------------
     if (playing) {
@@ -311,6 +324,7 @@ export class LocalRoom {
       if (this.state.enemies.length > 0 && alive === 0) {
         this.state.matchState = 'intermission';
         this._pendingStrikes = [];
+        this.state.projectiles.clear();
         this._notifyStateChange();
         return;
       }
@@ -406,6 +420,73 @@ export class LocalRoom {
     }
   }
 
+  /**
+   * Spawn a projectile from the player's position in the facing direction.
+   * The projectile is stored as a plain object in a local array (no Colyseus
+   * schema needed for the offline sim — the state.projectiles ArraySchema is
+   * only used by the networked GameRoom).
+   */
+  _spawnProjectile(player, atkDef) {
+    const fx = Math.sin(player.rotY);
+    const fz = Math.cos(player.rotY);
+    this.state.projectiles.push({
+      id: this._projectileId++,
+      ownerSid: this._myPlayerId,
+      kind: atkDef.projKind,
+      x: player.x,
+      z: player.z,
+      dirX: fx,
+      dirZ: fz,
+      speed: atkDef.speed,
+      damage: atkDef.damage,
+      ttl: atkDef.ttlMs,
+      ownerIsPlayer: true
+    });
+  }
+
+  /**
+   * Tick every live projectile: step forward, check collision with enemies
+   * and the local player (PvP), remove on hit or TTL/bounds expiry. Mirror
+   * of GameRoom.updateProjectiles().
+   */
+  _updateProjectiles(dt) {
+    const half = SERVER.world.size / 2;
+    const hitRadius = SERVER.projectile.hitRadius;
+    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
+      const proj = this.state.projectiles[i];
+      stepProjectile(proj, dt);
+      if (projectileExpired(proj, half)) {
+        this.state.projectiles.splice(i, 1);
+        continue;
+      }
+      let removed = false;
+      // Hit enemies
+      if (proj.ownerIsPlayer) {
+        for (const enemy of this.state.enemies) {
+          if (enemy.hp <= 0) continue;
+          if (projectileHitsTarget(proj, enemy, hitRadius)) {
+            this._hitEnemy(enemy, proj.damage, proj.x, proj.z,
+              this.state.players.get(proj.ownerSid));
+            this.state.projectiles.splice(i, 1);
+            removed = true;
+            break;
+          }
+        }
+      }
+      // PvP: projectile can hit the local player if fired by someone else
+      // (in the offline sim there's only one player, so this is a no-op for
+      // now — but the code is here for future multiplayer offline tests).
+      if (!removed && !proj.ownerIsPlayer) {
+        const me = this.state.players.get(this._myPlayerId);
+        if (me && me.hp > 0 && projectileHitsTarget(proj, me, hitRadius)) {
+          this._damagePlayer(me, proj.damage, proj);
+          this.state.projectiles.splice(i, 1);
+          removed = true;
+        }
+      }
+    }
+  }
+
   /** One hit against the local player: outside 'playing' (intermission!)
    *  everyone is INVULNERABLE; BLOCK (frontal) negates it entirely, the
    *  SHIELD power-up absorbs one hit, otherwise HP drops. */
@@ -459,6 +540,7 @@ export class LocalRoom {
   _requestNextWave() {
     if (this.state.matchState !== 'intermission') return;
     this._pendingStrikes = [];
+    this.state.projectiles.clear();
     this._spawnWave(this.state.wave + 1);
     this.state.matchState = 'countdown';
     this.state.countdown = SERVER.match.countdownSeconds;
@@ -475,6 +557,7 @@ export class LocalRoom {
     this.state.winnerId = '';
     this.state.winnerName = '';
     this._pendingStrikes = [];
+    this.state.projectiles.clear();
 
     // Reset local player
     const me = this.state.players.get(this.sessionId);

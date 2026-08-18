@@ -58,6 +58,8 @@ export const SERVER = {
     attackDamage: 1,          // melee damage per hit vs enemies (enemy.hp hits kill)
     attackPvpDamage: 10,      // melee damage vs other players
     skillPvpDamage: 15,       // skill (K) damage vs other players
+    rangedDamage: 1,          // base ranged normal damage vs enemies
+    rangedPvpDamage: 8,       // ranged normal damage vs other players
     // L block: while held the player is rooted and every hit whose source
     // lies inside the FRONTAL hemisphere (dot >= 0) deals no damage.
     blockArcCos: 0,
@@ -105,6 +107,22 @@ export const SERVER = {
     speed:  { durationMs: 5000,  multiplier: 2 },  // 2x move speed
     shield: { durationMs: 15000 },                 // blocks ONE enemy hit
     double: { durationMs: 10000, multiplier: 2 }   // 2x orb score
+  },
+
+  // Projectile config: ranged normal attacks (Phase 1). Each class that fires
+  // a projectile (archer/mage/demon) uses these numbers; the knight stays melee.
+  projectile: {
+    hitRadius: 0.8,            // collision sphere radius for projectile vs target
+    arrowSpeed: 18,            // units/second
+    arrowDamage: 1,
+    arrowTtlMs: 1500,          // max lifetime (18 * 1.5 = 27 units range)
+    fireballSpeed: 14,
+    fireballDamage: 1,
+    fireballTtlMs: 2000,       // 14 * 2 = 28 units range
+    lightningSpeed: 22,
+    lightningDamage: 1,
+    lightningTtlMs: 1200,      // 22 * 1.2 = 26.4 units range
+    rangedPvpDamage: 8         // PvP damage for all ranged normals
   },
 
   // Server-assigned player colors: same name always gets the same color

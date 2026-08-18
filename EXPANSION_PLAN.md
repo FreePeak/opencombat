@@ -19,7 +19,7 @@ at the end of every phase. Per-session checklist:
 
 ---
 
-## Phase 0 — Shared combat core + test runner (foundation)
+## Phase 0 — Shared combat core + test runner (foundation) ✅ DONE (db7b4a2)
 
 Extract the duplicated combat logic so every later phase's rule change is
 edited once, not twice (GameRoom.js AND LocalRoom.js currently mirror every
@@ -43,7 +43,7 @@ rule; offline parity is a tested contract).
   `Spike Man` → `Demon`. GLB file stays `spike.glb`; character index 3 and
   localStorage (index-based) unchanged. Update README roster mentions.
 
-## Phase 1 — Ranged normals (projectiles)
+## Phase 1 — Ranged normals (projectiles) ✅ DONE
 
 No projectile system exists yet; this phase introduces the first one.
 

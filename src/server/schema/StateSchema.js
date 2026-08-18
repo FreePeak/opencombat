@@ -87,6 +87,37 @@ defineTypes(EnemyState, {
   anim: 'string'
 });
 
+// One in-flight projectile (arrow / fireball / lightning bolt). The server
+// spawns it on attack input, steps it each tick, and removes it on hit or
+// TTL expiry. The client renders it and plays impact VFX.
+export class ProjectileState extends Schema {
+  constructor(id = 0, ownerSid = '', kind = '', x = 0, z = 0, dirX = 0, dirZ = 0) {
+    super();
+    this.id = id;
+    this.ownerSid = ownerSid;
+    this.kind = kind;         // 'arrow' | 'fireball' | 'lightning'
+    this.x = x;
+    this.z = z;
+    this.dirX = dirX;
+    this.dirZ = dirZ;
+    this.speed = 0;
+    this.damage = 0;
+    this.ttl = 0;             // remaining ms
+    this.ownerIsPlayer = true;
+  }
+}
+defineTypes(ProjectileState, {
+  id: 'number',
+  ownerSid: 'string',
+  kind: 'string',
+  x: 'number', z: 'number',
+  dirX: 'number', dirZ: 'number',
+  speed: 'number',
+  damage: 'number',
+  ttl: 'number',
+  ownerIsPlayer: 'boolean'
+});
+
 // Top-level room state. players is keyed by sessionId so join/leave maps
 // 1:1 onto the MapSchema add/remove patches.
 export class WorldState extends Schema {
@@ -96,6 +127,7 @@ export class WorldState extends Schema {
     this.orbs = new ArraySchema();
     this.enemies = new ArraySchema();
     this.powerUps = new ArraySchema();
+    this.projectiles = new ArraySchema();
     this.matchState = 'lobby';  // 'lobby' | 'countdown' | 'playing' | 'intermission' | 'gameover'
     this.countdown = 0;         // seconds left in the countdown (0 otherwise)
     this.wave = 1;              // current enemy wave (1-based)
@@ -108,6 +140,7 @@ defineTypes(WorldState, {
   orbs: [OrbState],
   enemies: [EnemyState],
   powerUps: [PowerUpState],
+  projectiles: [ProjectileState],
   matchState: 'string',
   countdown: 'number',
   wave: 'number',

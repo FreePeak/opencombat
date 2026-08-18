@@ -14,7 +14,7 @@
 //   - names are sanitized (trim, length cap) and the leaderboard HTML is
 //     escaped client-side — no XSS surface from user input
 import { Room, CloseCode } from 'colyseus';
-import { WorldState, PlayerState, OrbState, PowerUpState, EnemyState } from '../schema/StateSchema.js';
+import { WorldState, PlayerState, OrbState, PowerUpState, EnemyState, ProjectileState } from '../schema/StateSchema.js';
 import { SERVER } from '../config.js';
 import { log, warn } from '../log.js';
 import { takeToken, normalizeIp } from '../ratelimit.js';
@@ -22,6 +22,9 @@ import { stepPlayer } from '../movement.js';
 import { skillFor, resolveSkillHits } from '../../shared/skills.js';
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from '../../shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/combat.js';
+import { attackFor } from '../../shared/classes.js';
+import { stepProjectile, projectileExpired, projectileHitsTarget,
+         resolveProjectileEnemyHit, resolveProjectilePlayerHit } from '../../shared/projectiles.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -61,6 +64,7 @@ export default class GameRoom extends Room {
     this.enemyStunUntil = new Map();// enemy -> ms of HIT-STUN (no move/attack)
     this.pendingMelee = [];      // {sid, at} — impacts land mid-swing, not at press
     this.powerUpTimers = new Map(); // powerUp -> seconds until it respawns
+    this._projectileId = 0;        // monotonic ID for projectile spawn
 
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
@@ -428,7 +432,12 @@ export default class GameRoom extends Room {
         // connects — resolved in updatePlaying() when the impact comes due.
         // Cooldown/anim apply immediately so the HUD + animation match the
         // swing the player sees.
-        this.pendingMelee.push({ sid, at: now + SERVER.player.attackImpactMs });
+        const atk = attackFor(player.character);
+        if (atk.kind === 'projectile') {
+          this.spawnProjectile(sid, player, atk);
+        } else {
+          this.pendingMelee.push({ sid, at: now + SERVER.player.attackImpactMs });
+        }
       }
     }
 
@@ -607,6 +616,78 @@ export default class GameRoom extends Room {
     this.logEvent('skill_cast', { sid, character: player.character, skill: def.key });
   }
 
+  /**
+   * Spawn a projectile from `player`'s current position in the facing direction.
+   * The projectile is authoritative (server steps it each tick) and added to
+   * WorldState.projectiles so every client sees it via Colyseus patches.
+   */
+  spawnProjectile(sid, player, atkDef) {
+    const { fx, fz } = { fx: Math.sin(player.rotY), fz: Math.cos(player.rotY) };
+    const proj = new ProjectileState(
+      this._projectileId++,
+      sid,
+      atkDef.projKind,
+      player.x,
+      player.z,
+      fx,
+      fz
+    );
+    proj.speed = atkDef.speed;
+    proj.damage = atkDef.damage;
+    proj.ttl = atkDef.ttlMs;
+    proj.ownerIsPlayer = true;
+    this.state.projectiles.push(proj);
+  }
+
+  /**
+   * Tick every live projectile: step forward, check collision with enemies and
+   * other players (PvP), remove on hit or TTL/bounds expiry. Called from
+   * updatePlaying() each fixed timestep.
+   */
+  updateProjectiles(dt) {
+    const state = this.state;
+    const hitRadius = SERVER.projectile.hitRadius;
+    for (let i = state.projectiles.length - 1; i >= 0; i--) {
+      const proj = state.projectiles[i];
+      stepProjectile(proj, dt);
+
+      // Expired (TTL or out of arena)?
+      if (projectileExpired(proj, this.half)) {
+        state.projectiles.splice(i, 1);
+        continue;
+      }
+
+      let removed = false;
+
+      // Hit enemies?
+      if (proj.ownerIsPlayer) {
+        for (const enemy of state.enemies) {
+          if (enemy.hp <= 0) continue;
+          if (projectileHitsTarget(proj, enemy, hitRadius)) {
+            this.hitEnemy(enemy, proj.damage, proj.x, proj.z,
+              state.players.get(proj.ownerSid));
+            state.projectiles.splice(i, 1);
+            removed = true;
+            break;
+          }
+        }
+      }
+
+      // PvP: hit other players?
+      if (!removed && proj.ownerIsPlayer) {
+        for (const [osid, victim] of state.players) {
+          if (osid === proj.ownerSid || victim.hp <= 0) continue;
+          if (projectileHitsTarget(proj, victim, hitRadius)) {
+            this.damagePlayer(osid, victim, proj.damage, proj.x, proj.z);
+            state.projectiles.splice(i, 1);
+            removed = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   /** One fixed timestep of the simulation, dispatched by match phase. */
   update(dt) {
     const state = this.state;
@@ -716,6 +797,7 @@ export default class GameRoom extends Room {
     this.movePlayers(dt);
     this.updateEffects(dt * 1000);
     this.updatePickups(dt);
+    this.updateProjectiles(dt);
 
     // --- Enemies: chase the nearest LIVING player, hurt on contact -------
     let alive = 0;
