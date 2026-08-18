@@ -215,8 +215,12 @@ export default class Player {
       (k.d.isDown || k.right.isDown ? 1 : 0) - (k.a.isDown || k.left.isDown ? 1 : 0);
     const iz = this.blocking ? 0 :
       (k.w.isDown || k.up.isDown ? 1 : 0) - (k.s.isDown || k.down.isDown ? 1 : 0);
-    this.moving = ix !== 0 || iz !== 0;
-    const dir = cameraMoveDir(ix, iz, CONFIG.player.camera.yaw);
+    // Touch joystick overrides digital WASD axes (analog, partial deflection = slower).
+    const stick = this.blocking ? null : this.scene.touchStick;
+    const fi = stick ? stick.x : ix;
+    const fz = stick ? stick.z : iz;
+    this.moving = fi !== 0 || fz !== 0;
+    const dir = cameraMoveDir(fi, fz, CONFIG.player.camera.yaw);
     this.dirX = dir.x;
     this.dirZ = dir.z;
 

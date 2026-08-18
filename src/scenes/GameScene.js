@@ -16,6 +16,7 @@ import FloatingTextPool from '../effects/FloatingTextPool.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, joinErrorMessage, serverAvailable } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { stripRootMotion, frameDamp, cameraOffset } from '../anim/AnimUtils.js';
+import TouchControls from '../ui/TouchControls.js';
 
 // Deterministic LCG: scatters props identically on every client so the
 // arena looks the same for all players, without a network round trip.
@@ -71,6 +72,7 @@ export default class GameScene {
     // --- World state holders --------------------------------------------
     this.keys = {};
     this.buildKeyboard();
+    this.touchControls = new TouchControls(this);
     this.buildGround();
     this.props = [];
 
@@ -222,6 +224,7 @@ export default class GameScene {
       }
       this.setNetBadge(online);
       this.wireRoom();
+      this.touchControls?.show();
     } catch (err) {
       console.error(err);
       this.loginError.textContent = joinErrorMessage(err);
@@ -643,6 +646,7 @@ export default class GameScene {
         CONFIG.effects.speed.color, 2, 1.2, 0.4);
     }
 
+    this.touchControls?.update();
     this.particles.update(dt);
     this.floatTexts.update(dt, this.camera, window.innerWidth, window.innerHeight);
     this.updateNametags();
@@ -724,7 +728,9 @@ export default class GameScene {
       `wave ${state.wave}   score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
       (state.matchState === 'intermission' ? '   ★ INVULNERABLE — wave cleared' : '') +
       (me.blocking ? '   🛡 BLOCKING' : '') +
-      '   WASD move · J attack · K skill · L block (hold) · M mute';
+      (this.touchControls?.active
+        ? '   joystick move · ⚔ attack · ✨ skill · 🛡 block'
+        : '   WASD move · J attack · K skill · L block (hold) · M mute');
     // Cooldown bar: drains while J is on cooldown (server mirrors it).
     const cdMs = Math.max(me.attackCd, this.local.attackCd * 1000);
     this.cooldownFill.style.width = Math.min(100, cdMs / CONFIG.player.attackCooldownMs * 100) + '%';

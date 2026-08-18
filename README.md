@@ -130,6 +130,18 @@ All optional; the defaults run a single-process game on :2567.
 | M | Mute / unmute sound |
 | Click a character card (login) | Choose Swordsman / Archer / Mage / Spike Man |
 
+### Mobile (touch)
+
+Touch controls activate automatically on phones/tablets (or with `?touch=1`):
+
+| Control | Action |
+|---------|--------|
+| Left-half drag | Floating joystick — analog movement (partial deflection = slower) |
+| ⚔ button (bottom-right) | Melee swing — tap repeatedly while off cooldown |
+| ✨ button (above ⚔) | Character skill |
+| 🛡 button (left of ⚔) | Block (hold) |
+| 🔊 button (bottom-center) | Mute / unmute sound |
+
 ## Match lifecycle (server-authoritative)
 
 `LOBBY → COUNTDOWN → PLAYING → GAME_OVER`, enforced entirely on the server;
