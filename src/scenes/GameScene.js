@@ -685,7 +685,7 @@ export default class GameScene {
     // onAdd never fires — the update loop must be the view factory there),
     // sync positions, then remove views for spliced-out projectiles.
     const liveIds = new Set();
-    for (const proj of state.projectiles) {
+    for (const proj of this.room?.state?.projectiles ?? []) {
       liveIds.add(proj.id);
       let v = this.projectiles.get(proj.id);
       if (!v) {
