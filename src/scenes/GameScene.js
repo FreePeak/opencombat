@@ -407,10 +407,10 @@ export default class GameScene {
     $(state.orbs).onAdd((orb, i) => this.addOrb(i, orb), false);
     $(state.powerUps).onAdd((pu, i) => this.addPowerUp(i, pu), false);
 
-    $(state.projectiles).onAdd((proj, id) => this.addProjectile(id, proj), false);
-    $(state.projectiles).onRemove((_proj, id) => {
-      const v = this.projectiles.get(id);
-      if (v) { this.scene.remove(v.mesh); this.projectiles.delete(id); }
+    $(state.projectiles).onAdd((proj) => this.addProjectile(proj.id, proj), false);
+    $(state.projectiles).onRemove((proj) => {
+      const v = this.projectiles.get(proj.id);
+      if (v) { this.scene.remove(v.mesh); this.projectiles.delete(proj.id); }
     });
   }
 
@@ -682,8 +682,10 @@ export default class GameScene {
     }
 
     // Projectiles: sync position from server state, remove stale views.
-    for (const [id, proj] of state.projectiles) {
-      const v = this.projectiles.get(id);
+    const liveIds = new Set();
+    for (const proj of state.projectiles) {
+      liveIds.add(proj.id);
+      const v = this.projectiles.get(proj.id);
       if (v) {
         v.mesh.position.x = proj.x;
         v.mesh.position.z = proj.z;
@@ -692,7 +694,7 @@ export default class GameScene {
     }
     // Remove client views for projectiles the server already spliced out.
     for (const [id, v] of this.projectiles) {
-      if (!state.projectiles.find((p) => p.id === id)) {
+      if (!liveIds.has(id)) {
         this.scene.remove(v.mesh);
         this.projectiles.delete(id);
       }
