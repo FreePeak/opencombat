@@ -31,7 +31,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   findRootMotionClip, stripRootMotion, attackTimeScale,
-  dampFactor, frameDamp, shouldSendInput, subclipAttack
+  dampFactor, frameDamp, shouldSendInput, subclipAnims
 } from '../src/anim/AnimUtils.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -142,29 +142,32 @@ assert.ok(Math.abs(frameDamp(0.25, 1 / 60) - 0.25) < 1e-9, 'frameDamp(p, 1/60) =
 const f30 = frameDamp(0.25, 1 / 30);
 assert.ok(Math.abs((1 - f30) - 0.75 * 0.75) < 1e-9, 'frameDamp(p, 1/30) == 1-(1-p)^2');
 
-// --- subclipAttack: trim static hold from the knight's attack clip --------
+// --- subclipAnims: trim problem content out of the knight's clips ---------
 // The knight's Attack clip is 1.433s — 1.07s is a static raised-sword pose;
-// only the last ~0.33s is the visible slash. subclipAttack trims to that
-// window so each attack is one swing, not a repeated draw loop.
+// only the last ~0.33s is the visible slash. subclipAnims trims to that
+// window so each attack is one swing, not a repeated draw loop. The Idle
+// clip (1.5s) embeds a big arm gesture (a "draw") between t≈0.3–1.15s before
+// settling — subclipAnims also trims it to the calm settled stance so the
+// loop cannot replay the draw while standing still.
 {
   // Characters WITH attackSubclip: the attack clip is trimmed.
   const knightAnims = knight.animations;
-  const trimmed = subclipAttack(knightAnims, {
+  const trimmed = subclipAnims(knightAnims, {
     attackSubclip: { startFrame: 65, endFrame: 86, fps: 60 },
     anims: { attack: 'CharacterArmature|Attack' }
   });
   const trimmedAttack = trimmed.find(c => c.name.includes('Attack'));
   const origAttack = knightAnims.find(c => c.name.includes('Attack'));
-  assert.ok(trimmedAttack !== origAttack, 'subclipAttack returns a new clip (clone)');
+  assert.ok(trimmedAttack !== origAttack, 'subclipAnims returns a new clip (clone)');
   assert.equal(trimmedAttack.name, origAttack.name, 'trimmed clip keeps original name');
   // Duration = (86 - 65) / 60 = 0.35s (endFrame exclusive)
   assert.ok(Math.abs(trimmedAttack.duration - 0.35) < 0.02,
     `trimmed attack duration ~0.35s, got ${trimmedAttack.duration.toFixed(3)}`);
   assert.ok(trimmedAttack.duration < origAttack.duration * 0.3,
     'trimmed clip is under 30% of original (static hold removed)');
-  // Idle and Run are untouched.
+  // Idle and Run are untouched when only attackSubclip is set.
   assert.equal(trimmed.find(c => c.name.includes('Idle')), knightAnims.find(c => c.name.includes('Idle')),
-    'Idle clip is not modified');
+    'Idle clip is not modified without idleSubclip');
   assert.equal(trimmed.find(c => c.name.includes('Run')), knightAnims.find(c => c.name.includes('Run')),
     'Run clip is not modified');
   // attackTimeScale now produces a ≤1x speed (the slash fits the window).
@@ -174,18 +177,60 @@ assert.ok(Math.abs((1 - f30) - 0.75 * 0.75) < 1e-9, 'frameDamp(p, 1/30) == 1-(1-
 }
 
 {
-  // Characters WITHOUT attackSubclip: passes through unchanged.
-  const passThrough = subclipAttack(archer.animations, {
+  // idleSubclip trims the Idle clip to its calm settled loop (frames 77–90;
+  // startFrame 76 compensates fp32 key quantization — see config.js).
+  // Mirrors the real pipeline: stripRootMotion first, then subclipAnims.
+  const knightAnims = stripRootMotion(knight.animations);
+  const trimmed = subclipAnims(knightAnims, {
+    idleSubclip: { startFrame: 76, endFrame: 91, fps: 60 },
+    anims: { idle: 'CharacterArmature|Idle' }
+  });
+  const trimmedIdle = trimmed.find(c => c.name.includes('Idle'));
+  const origIdle = knightAnims.find(c => c.name.includes('Idle'));
+  assert.ok(trimmedIdle !== origIdle, 'idle clip with idleSubclip is cloned');
+  // Duration = (90 - 77) / 60 ≈ 0.217s (kept keys; endFrame exclusive)
+  assert.ok(Math.abs(trimmedIdle.duration - 13 / 60) < 0.02,
+    `trimmed idle duration ~0.217s, got ${trimmedIdle.duration.toFixed(3)}`);
+  // The trim drops the gesture keys: every track's value range in the
+  // trimmed clip must be tiny (calm stance), far below the full clip's.
+  const trackMaxRange = (clip) => {
+    let m = 0;
+    for (const t of clip.tracks) {
+      const n = t.getValueSize();
+      for (let a = 0; a < n; a++) {
+        let lo = Infinity, hi = -Infinity;
+        for (let i = a; i < t.values.length; i += n) {
+          lo = Math.min(lo, t.values[i]); hi = Math.max(hi, t.values[i]);
+        }
+        m = Math.max(m, hi - lo);
+      }
+    }
+    return m;
+  };
+  assert.ok(trackMaxRange(trimmedIdle) < 0.15,
+    'trimmed idle is the calm window (all bone deltas small)');
+  assert.ok(trackMaxRange(origIdle) > 0.5,
+    'original idle contains the big gesture (sanity: trim was needed)');
+  // Attack is untouched when only idleSubclip is set.
+  assert.equal(trimmed.find(c => c.name.includes('Attack')), knightAnims.find(c => c.name.includes('Attack')),
+    'Attack clip is not modified without attackSubclip');
+}
+
+{
+  // Characters WITHOUT any subclip config: passes through unchanged.
+  const passThrough = subclipAnims(archer.animations, {
     anims: { attack: 'CharacterArmature|Punch' }
   });
   assert.deepEqual(passThrough, archer.animations,
-    'no attackSubclip config → animations pass through unchanged');
+    'no subclip config → animations pass through unchanged');
 }
 
 {
   // null / undefined animations: safe pass-through.
-  assert.equal(subclipAttack(null, { attackSubclip: {} }), null);
-  assert.equal(subclipAttack(undefined, {}), undefined);
+  assert.equal(subclipAnims(null, { attackSubclip: {} }), null);
+  assert.equal(subclipAnims(undefined, {}), undefined);
+  assert.equal(subclipAnims(archer.animations, undefined), archer.animations,
+    'undefined def passes through');
 }
 
 console.log('ok — movementAttack.test.mjs: all root-cause contracts pass');

@@ -15,7 +15,7 @@ import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, joinErrorMessage, serverAvailable } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
-import { stripRootMotion, frameDamp, cameraOffset, subclipAttack } from '../anim/AnimUtils.js';
+import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
 import TouchControls from '../ui/TouchControls.js';
 
 // Deterministic LCG: scatters props identically on every client so the
@@ -259,16 +259,16 @@ export default class GameScene {
       // Promise.all resolves FLAT: [char0..charN, sword, enemy, tree, rock].
       const [sword, enemy, tree, rock] = all.slice(CONFIG.characters.length);
       const characters = {};
-      // RC1: strip baked root motion (Mixamo hips translation) from every
-      // clip at load time — the server owns x/z, animated hips must not
-      // drag the mesh away from its lerped position. Clean rigs (archer/
-      // mage/spike) pass through untouched.
-      CONFIG.characters.forEach((c, i) => {
-        const animations = stripRootMotion(all[i].animations);
-        // Swordsman: trim the 1.07s static hold from the attack clip so
-        // each attack is one visible slash, not a repeated draw loop.
-        characters[c.key] = { scene: all[i].scene, animations: subclipAttack(animations, c) };
-      });
+        // RC1: strip baked root motion (Mixamo hips translation) from every
+        // clip at load time — the server owns x/z, animated hips must not
+        // drag the mesh away from its lerped position. Clean rigs (archer/
+        // mage/spike) pass through untouched.
+        CONFIG.characters.forEach((c, i) => {
+          const animations = stripRootMotion(all[i].animations);
+          // Swordsman: trim the attack static hold AND the draw gesture
+          // embedded in the Idle clip (see config.js subclip comments).
+          characters[c.key] = { scene: all[i].scene, animations: subclipAnims(animations, c) };
+        });
       return {
         characters,
         sword: sword.scene,

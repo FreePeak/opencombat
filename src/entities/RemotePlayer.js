@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { attachWeapon, ProceduralAnim } from './Sword.js';
 import { CONFIG } from '../config.js';
-import { attackTimeScale, frameDamp, MOVING_ATTACK_RUN_BLEND, ACTION_BLEND, remoteMoveHold } from '../anim/AnimUtils.js';
+import { attackTimeScale, frameDamp, MOVING_ATTACK_RUN_BLEND, ACTION_BLEND, remoteMoveHold, SPAWN_DRAW_S } from '../anim/AnimUtils.js';
 import { skillFor } from '../shared/skills.js';
 
 export default class RemotePlayer {
@@ -80,13 +80,16 @@ export default class RemotePlayer {
       action.setEffectiveWeight(0);
       action.play();
     }
-    // Attack clip plays once then clamps — prevents phantom draw-loop under
-    // idle (residual weight was looping the full clip before the first swing).
+    // Attack clip plays once then clamps — LoopOnce at construction makes
+    // the SPAWN DRAW below a true one-shot that can never loop under idle.
     if (this.clips.attack) {
       this.clips.attack.setLoop(THREE.LoopOnce);
       this.clips.attack.clampWhenFinished = true;
     }
     if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
+    // Draw-sword once on spawn (same gesture the local player sees on their
+    // own knight); afterwards idle/run play clean with no attack residue.
+    this.drawT = this.clips.attack ? SPAWN_DRAW_S : 0;
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
 
     // RC9: fetch the server patch position so a "moving" hold can be armed
@@ -131,13 +134,17 @@ export default class RemotePlayer {
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
         atk.play();
       }
+    } else if (this.drawT > 0 && atk) {
+      // One-time spawn draw: full-weight single playthrough of the clip,
+      // legs blending under it when the remote is already moving.
+      tAtk = 1;
+      if (moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
+      this.currentName = 'draw';
     } else if (moving && run) {
       tRun = 1;
-      tAtk = 0.12; // sword stays "drawn" — no sheathing drop
       this.currentName = 'run';
     } else {
       tIdle = 1;
-      tAtk = 0.12; // sword stays "drawn" — no sheathing drop
       this.currentName = 'idle';
     }
 
@@ -161,6 +168,7 @@ export default class RemotePlayer {
 
   update(dt) {
     const s = this.state;
+    this.drawT = Math.max(0, this.drawT - dt);
     // Guard wall follows the server's blocking flag.
     this.guardMesh.visible = !!s.blocking;
     // Lerp toward the last received position to avoid jitter. RC4: the old

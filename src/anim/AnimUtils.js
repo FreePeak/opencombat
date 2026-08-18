@@ -158,6 +158,12 @@ export const MOVING_ATTACK_RUN_BLEND = 0.42;
 // swing start and end with a visible pop.
 export const ACTION_BLEND = 0.5;
 
+// One-time draw-sword on spawn: the attack clip plays once at full weight
+// while this window counts down (~100ms fade-in + the 0.35s trimmed slash +
+// margin), then idle/run take over CLEAN — the drawn stance is a spawn
+// gesture, not the default look.
+export const SPAWN_DRAW_S = 0.55;
+
 // RC9: how long a remote player is treated as "moving" after ANY server
 // position patch delta. Server patches arrive at ~20Hz (SERVER.tickMs = 50), so
 // a per-frame lerp-lead check (root trailing the target) decays below its
@@ -181,18 +187,35 @@ export function remoteMoveHold(sx, sz, carry, dt) {
 }
 
 /**
- * Trim an attack clip to only its active phase (e.g. the knight's sword
- * slash) when `def.attackSubclip` is set, removing the long static hold
- * that made every attack look like repeated draw-sword loops.
+ * Trim per-character clips at load time when the shipped GLB clip contains
+ * content that must not play in-game, keyed by `def`:
+ *
+ *   def.attackSubclip — keep only the active phase of the attack clip (the
+ *     knight's Attack is a 1.07s static raised-sword hold + slash; trimming
+ *     made each attack one visible swing instead of a repeated draw loop).
+ *   def.idleSubclip — keep only the calm settled phase of the idle clip.
+ *     The knight's "Idle" is NOT a calm loop: between t≈0.3s and t≈1.15s the
+ *     right arm sweeps through a large sword-draw-like gesture (RightArm
+ *     quaternion y swings −0.03 → −0.68 → back, elbow bends −0.29 → −0.70),
+ *     and the clip LOOPS every 1.5s — so standing still replayed the draw
+ *     after every attack/run. Frames 77–90 (t=1.283–1.5) are the settled
+ *     stance: every bone's rotation delta there is ≤ ~0.09 (vs ~1.2 peak).
  *
  * AnimationUtils.subclip clones the clip and shifts keyframe times to t=0
  * so the trimmed clip plays naturally from the start.
  */
-export function subclipAttack(animations, def) {
-  const sub = def?.attackSubclip;
-  if (!sub || !animations) return animations;
-  return animations.map((clip) => {
-    if (!clip.name.includes('Attack')) return clip;
+const SUBCLIP_FRAGMENTS = ['Attack', 'Idle', 'Run'];
+
+export function subclipAnims(animations, def) {
+  if (!animations || !def) return animations;
+  let changed = false;
+  const out = animations.map((clip) => {
+    const frag = SUBCLIP_FRAGMENTS.find((f) => clip.name.includes(f));
+    if (!frag) return clip;
+    const sub = def[frag.toLowerCase() + 'Subclip'];
+    if (!sub) return clip;
+    changed = true;
     return AnimationUtils.subclip(clip, clip.name, sub.startFrame, sub.endFrame, sub.fps);
   });
+  return changed ? out : animations;
 }

@@ -11,7 +11,7 @@ import IdleState from '../fsm/states/IdleState.js';
 import RunState from '../fsm/states/RunState.js';
 import { CONFIG } from '../config.js';
 import { sendInput } from '../network.js';
-import { attackTimeScale, shouldSendInput, cameraMoveDir, frameDamp, MOVING_ATTACK_RUN_BLEND, ACTION_BLEND } from '../anim/AnimUtils.js';
+import { attackTimeScale, shouldSendInput, cameraMoveDir, frameDamp, MOVING_ATTACK_RUN_BLEND, ACTION_BLEND, SPAWN_DRAW_S } from '../anim/AnimUtils.js';
 import { skillFor } from '../shared/skills.js';
 
 export default class Player {
@@ -101,14 +101,19 @@ export default class Player {
       action.setEffectiveWeight(0);
       action.play();
     }
-    // Attack clip plays once then clamps to its final frame — this prevents
-    // a phantom low-amplitude draw-loop under idle (residual 12% weight was
-    // looping the full clip before the first swing triggered LoopOnce).
+    // Attack clip plays once then clamps to its final frame. LoopOnce at
+    // construction is what makes the SPAWN DRAW a one-shot: the clip plays
+    // through a single time at full weight (see drawT below) and can never
+    // loop a phantom draw under idle.
     if (this.clips.attack) {
       this.clips.attack.setLoop(THREE.LoopOnce);
       this.clips.attack.clampWhenFinished = true;
     }
     if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
+    // Draw-sword happens ONCE, on spawn: while drawT counts down the attack
+    // clip blends at full weight (a single ready/draw gesture); afterwards
+    // idle and run play clean with no residual attack pose.
+    this.drawT = this.clips.attack ? SPAWN_DRAW_S : 0;
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
 
     // Keys: state objects updated by GameScene's window listeners.
@@ -151,6 +156,7 @@ export default class Player {
   updateClipAnims(_dt) {
     const casting = this.skillAnimT > 0;
     const swinging = casting || this.attackAnimT > 0;
+    const drawing = this.drawT > 0;
     const atk = this.clips.attack;
     const run = this.clips.run;
     const idle = this.clips.idle;
@@ -170,16 +176,18 @@ export default class Player {
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
         atk.play();
       }
+    } else if (drawing && atk) {
+      // One-time spawn draw: full-weight single playthrough of the clip
+      // (LoopOnce + clamp were set at construction), legs still stepping if
+      // the player is already moving.
+      tAtk = 1;
+      if (this.moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
+      this.currentName = 'draw';
     } else if (this.moving && run) {
       tRun = 1;
-      // Sword stays "drawn" between swings: a residual attack-clip weight
-      // keeps the arm forward so there is no visible "put away" drop when
-      // the swing ends and locomotion takes over.
-      tAtk = 0.12;
       this.currentName = 'run';
     } else {
       tIdle = 1;
-      tAtk = 0.12;
       this.currentName = 'idle';
     }
 
@@ -236,6 +244,7 @@ export default class Player {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.skillAnimT = Math.max(0, this.skillAnimT - dt);
     this.skillCd = Math.max(0, this.skillCd - dt);
+    this.drawT = Math.max(0, this.drawT - dt);
     // COMBAT RULE (mirrored by the server): an attack CANNOT be started while
     // blocking — the J/K press is consumed with a hint instead. Attacks ARE
     // allowed while moving.

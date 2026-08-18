@@ -135,6 +135,16 @@ export const CONFIG = {
       // of drawing the sword (frames are 0-indexed, fps=60, endFrame is
       // exclusive — stops before the snap-back key at frame 86).
       attackSubclip: { startFrame: 65, endFrame: 86, fps: 60 },
+      // The knight Idle clip (1.5s) EMBEDS a sword-draw gesture: from
+      // t≈0.3–1.15s the arm sweeps through a big raise, then settles.
+      // Looping the full clip replayed the "draw" every 1.5s whenever the
+      // knight stood still (after an attack or after stopping). Frames
+      // 77–90 are the settled calm stance (all bone deltas ≤ ~0.09) — loop
+      // only that. startFrame is 76, one earlier than intended: GLB key
+      // times are fp32-quantized, so the frame-77 key lands at 76.9998 and
+      // the subclip's `frame < startFrame` filter drops it unless the
+      // window starts at 76. endFrame 91 is exclusive (keeps frame 90).
+      idleSubclip: { startFrame: 76, endFrame: 91, fps: 60 },
       anims: {
         idle: 'CharacterArmature|Idle',
         run: 'CharacterArmature|Run',
