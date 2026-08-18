@@ -2,6 +2,9 @@
 // source of truth for ranged normal attacks (archer arrow, mage fireball,
 // demon lightning). These pin the pure rules — movement, collision, TTL,
 // block interaction — against the real SERVER tunables.
+// Also verifies the INTEGRATION: a LocalRoom archer firing actually spawns a
+// projectile into state.projectiles (typed ArraySchema — a plain object would
+// throw EncodeSchemaError and crash the offline sim) and it flies + hits.
 // Run: node --test (or node test/projectiles.test.mjs)
 import assert from 'node:assert/strict';
 import { SERVER } from '../src/server/config.js';
@@ -10,6 +13,9 @@ import {
   resolveProjectileEnemyHit, resolveProjectilePlayerHit
 } from '../src/shared/projectiles.js';
 import { attackFor } from '../src/shared/classes.js';
+import { LocalRoom } from '../src/LocalRoom.js';
+
+const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const half = SERVER.world.size / 2;
 const p = SERVER.projectile;
@@ -116,5 +122,63 @@ const p = SERVER.projectile;
   assert.equal(p3.hp, 95, 'hp dropped');
 }
 
-console.log('ok — projectiles.test.mjs: projectile math (step/expire/collide/block) matches both sims');
+// --- INTEGRATION: LocalRoom archer fires a real projectile ------------------
+// Regression guard: _spawnProjectile must push a ProjectileState instance into
+// the typed ArraySchema — a plain object throws EncodeSchemaError and crashes
+// the offline sim on ANY ranged attack (missed by the pure-math tests above).
+{
+  const room = new LocalRoom();
+  await room.join('SoloArcher', 1); // archer = projectile normal attack
+  room._running = false;            // stop the auto-tick; drive _step manually
+  room._countdownTimer = 0;
+  room.state.matchState = 'playing';
+
+  const me = room.state.players.get(room.sessionId);
+  me.x = 0; me.z = 0; me.rotY = 0; // faces +Z
+
+  // Park every enemy except slot 0, put it in the arrow's path.
+  room.state.enemies.forEach((e, i) => { if (i > 0) { e.x = 25; e.z = 25; } });
+  const enemy = room.state.enemies[0];
+  enemy.x = 0; enemy.z = 6; enemy.hp = SERVER.enemy.hp;
+
+  // Fire: the attack must NOT throw, and a projectile must appear in state.
+  room.send('input', { dirX: 0, dirZ: 1, attack: true, skill: false, anim: 'run', block: false });
+  room._step(0.05);
+  assert.equal(room.state.projectiles.length, 1,
+    'archer attack spawns exactly one projectile (no EncodeSchemaError)');
+  const proj = room.state.projectiles[0];
+  assert.equal(proj.kind, 'arrow', 'projectile kind is arrow');
+  assert.ok(Math.abs(proj.dirX - 0) < 1e-9 && Math.abs(proj.dirZ - 1) < 1e-9,
+    'projectile flies in the facing direction');
+
+  // Step it forward ~40 ticks at 1/20s: 18 units/s * 2s = 36 units, enough to
+  // cover the 6-unit gap. The enemy (hp 2, arrow damage 1) must take damage.
+  let hit = false;
+  for (let i = 0; i < 40 && !hit; i++) {
+    room._step(0.05);
+    hit = room.state.projectiles.length === 0;
+  }
+  assert.ok(hit, 'projectile removed after reaching the enemy');
+  assert.equal(enemy.hp, SERVER.enemy.hp - SERVER.projectile.arrowDamage,
+    'arrow damage applied to the enemy');
+  assert.equal(enemy.anim, 'hit', 'struck enemy is in hit-stun');
+}
+
+// --- INTEGRATION: knight attack spawns NO projectile -------------------------
+{
+  const room = new LocalRoom();
+  await room.join('SoloKnight', 0); // knight = melee normal attack
+  room._running = false;
+  room._countdownTimer = 0;
+  room.state.matchState = 'playing';
+
+  const me = room.state.players.get(room.sessionId);
+  me.x = 0; me.z = 0; me.rotY = 0;
+
+  room.send('input', { dirX: 0, dirZ: 1, attack: true, skill: false, anim: 'run', block: false });
+  room._step(0.05);
+  assert.equal(room.state.projectiles.length, 0, 'knight attack spawns no projectile');
+}
+
+console.log('ok — projectiles.test.mjs: projectile math + LocalRoom integration (spawn/fly/hit) matches both sims');
 process.exit(0);

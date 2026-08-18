@@ -681,11 +681,17 @@ export default class GameScene {
       view.mesh.rotation.y += dt * 1.5;
     }
 
-    // Projectiles: sync position from server state, remove stale views.
+    // Projectiles: create missing views (LocalRoom has no serializer so
+    // onAdd never fires — the update loop must be the view factory there),
+    // sync positions, then remove views for spliced-out projectiles.
     const liveIds = new Set();
     for (const proj of state.projectiles) {
       liveIds.add(proj.id);
-      const v = this.projectiles.get(proj.id);
+      let v = this.projectiles.get(proj.id);
+      if (!v) {
+        this.addProjectile(proj.id, proj);
+        v = this.projectiles.get(proj.id);
+      }
       if (v) {
         v.mesh.position.x = proj.x;
         v.mesh.position.z = proj.z;

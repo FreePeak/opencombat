@@ -3,7 +3,7 @@
 // lifecycle, match lifecycle) but entirely in the browser — no server, no
 // WebSocket. Used for GitHub Pages static hosting.
 
-import { WorldState, PlayerState, OrbState, EnemyState, PowerUpState } from './server/schema/StateSchema.js';
+import { WorldState, PlayerState, OrbState, EnemyState, PowerUpState, ProjectileState } from './server/schema/StateSchema.js';
 import { SERVER } from './server/config.js';
 import { stepPlayer } from './server/movement.js';
 import { skillFor, resolveSkillHits } from './shared/skills.js';
@@ -422,26 +422,22 @@ export class LocalRoom {
 
   /**
    * Spawn a projectile from the player's position in the facing direction.
-   * The projectile is stored as a plain object in a local array (no Colyseus
-   * schema needed for the offline sim — the state.projectiles ArraySchema is
-   * only used by the networked GameRoom).
+   * Must be a ProjectileState instance — state.projectiles is a typed
+   * ArraySchema, and pushing a plain object throws EncodeSchemaError
+   * (confirmed: offline sim crashed on any ranged attack).
    */
   _spawnProjectile(player, atkDef) {
     const fx = Math.sin(player.rotY);
     const fz = Math.cos(player.rotY);
-    this.state.projectiles.push({
-      id: this._projectileId++,
-      ownerSid: this._myPlayerId,
-      kind: atkDef.projKind,
-      x: player.x,
-      z: player.z,
-      dirX: fx,
-      dirZ: fz,
-      speed: atkDef.speed,
-      damage: atkDef.damage,
-      ttl: atkDef.ttlMs,
-      ownerIsPlayer: true
-    });
+    const proj = new ProjectileState(
+      this._projectileId++, this._myPlayerId, atkDef.projKind,
+      player.x, player.z, fx, fz
+    );
+    proj.speed = atkDef.speed;
+    proj.damage = atkDef.damage;
+    proj.ttl = atkDef.ttlMs;
+    proj.ownerIsPlayer = true;
+    this.state.projectiles.push(proj);
   }
 
   /**
