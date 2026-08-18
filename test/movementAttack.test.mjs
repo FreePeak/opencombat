@@ -31,7 +31,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   findRootMotionClip, stripRootMotion, attackTimeScale,
-  dampFactor, frameDamp, shouldSendInput
+  dampFactor, frameDamp, shouldSendInput, subclipAttack
 } from '../src/anim/AnimUtils.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -141,5 +141,51 @@ assert.ok(Math.abs(converge(() => 1 / 60 + (Math.random() - 0.5) * 0.004, T) - e
 assert.ok(Math.abs(frameDamp(0.25, 1 / 60) - 0.25) < 1e-9, 'frameDamp(p, 1/60) == p (continuity)');
 const f30 = frameDamp(0.25, 1 / 30);
 assert.ok(Math.abs((1 - f30) - 0.75 * 0.75) < 1e-9, 'frameDamp(p, 1/30) == 1-(1-p)^2');
+
+// --- subclipAttack: trim static hold from the knight's attack clip --------
+// The knight's Attack clip is 1.433s — 1.07s is a static raised-sword pose;
+// only the last ~0.33s is the visible slash. subclipAttack trims to that
+// window so each attack is one swing, not a repeated draw loop.
+{
+  // Characters WITH attackSubclip: the attack clip is trimmed.
+  const knightAnims = knight.animations;
+  const trimmed = subclipAttack(knightAnims, {
+    attackSubclip: { startFrame: 65, endFrame: 86, fps: 60 },
+    anims: { attack: 'CharacterArmature|Attack' }
+  });
+  const trimmedAttack = trimmed.find(c => c.name.includes('Attack'));
+  const origAttack = knightAnims.find(c => c.name.includes('Attack'));
+  assert.ok(trimmedAttack !== origAttack, 'subclipAttack returns a new clip (clone)');
+  assert.equal(trimmedAttack.name, origAttack.name, 'trimmed clip keeps original name');
+  // Duration = (86 - 65) / 60 = 0.35s (endFrame exclusive)
+  assert.ok(Math.abs(trimmedAttack.duration - 0.35) < 0.02,
+    `trimmed attack duration ~0.35s, got ${trimmedAttack.duration.toFixed(3)}`);
+  assert.ok(trimmedAttack.duration < origAttack.duration * 0.3,
+    'trimmed clip is under 30% of original (static hold removed)');
+  // Idle and Run are untouched.
+  assert.equal(trimmed.find(c => c.name.includes('Idle')), knightAnims.find(c => c.name.includes('Idle')),
+    'Idle clip is not modified');
+  assert.equal(trimmed.find(c => c.name.includes('Run')), knightAnims.find(c => c.name.includes('Run')),
+    'Run clip is not modified');
+  // attackTimeScale now produces a ≤1x speed (the slash fits the window).
+  const scale = attackTimeScale(trimmedAttack, 450);
+  assert.ok(scale <= 1.2,
+    `attackTimeScale with trimmed clip ≤ 1.2x (full-speed visible swing), got ${scale.toFixed(3)}`);
+}
+
+{
+  // Characters WITHOUT attackSubclip: passes through unchanged.
+  const passThrough = subclipAttack(archer.animations, {
+    anims: { attack: 'CharacterArmature|Punch' }
+  });
+  assert.deepEqual(passThrough, archer.animations,
+    'no attackSubclip config → animations pass through unchanged');
+}
+
+{
+  // null / undefined animations: safe pass-through.
+  assert.equal(subclipAttack(null, { attackSubclip: {} }), null);
+  assert.equal(subclipAttack(undefined, {}), undefined);
+}
 
 console.log('ok — movementAttack.test.mjs: all root-cause contracts pass');

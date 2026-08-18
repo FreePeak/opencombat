@@ -423,6 +423,7 @@ export default class GameRoom extends Room {
       } else {
         this.attackAt.set(sid, now + SERVER.player.attackCooldownMs);
         this.animUntil.set(sid, now + SERVER.player.attackAnimMs);
+        player.anim = 'attack'; // movePlayers preserves this during animUntil
         // IMPACT ALIGNMENT: the swing starts now but the damage lands at
         // ~40% into the arc (attackImpactMs), where the blade visually
         // connects — resolved in updatePlaying() when the impact comes due.

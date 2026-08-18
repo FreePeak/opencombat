@@ -60,7 +60,13 @@ const parkOthers = (sr, keep = 0) => {
 
   const scoreBefore = me.score;
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
-  await waitMs(SERVER.player.attackImpactMs - 60); // last pre-impact sample
+  // ANIM: the swing anim starts at press time — remote clients must see
+  // the attack clip from the start, not only at impact time (180ms later).
+  // The send is async; wait one server tick for it to be processed.
+  await waitMs(SERVER.tickMs + 50);
+  assert.equal(me.anim, 'attack', 'anim is attack after J press (before impact)');
+  // Wait until just before impact (remaining time after the tick wait).
+  await waitMs(Math.max(10, SERVER.player.attackImpactMs - SERVER.tickMs - 50 - 40));
   assert.equal(enemy.hp, SERVER.enemy.hp, 'no damage before the impact frame');
   const xBeforeImpact = enemy.x; // still approaching the player (x falling)
   await waitImpact();

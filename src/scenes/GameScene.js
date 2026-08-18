@@ -15,7 +15,7 @@ import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, joinErrorMessage, serverAvailable } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
-import { stripRootMotion, frameDamp, cameraOffset } from '../anim/AnimUtils.js';
+import { stripRootMotion, frameDamp, cameraOffset, subclipAttack } from '../anim/AnimUtils.js';
 import TouchControls from '../ui/TouchControls.js';
 
 // Deterministic LCG: scatters props identically on every client so the
@@ -264,7 +264,10 @@ export default class GameScene {
       // drag the mesh away from its lerped position. Clean rigs (archer/
       // mage/spike) pass through untouched.
       CONFIG.characters.forEach((c, i) => {
-        characters[c.key] = { scene: all[i].scene, animations: stripRootMotion(all[i].animations) };
+        const animations = stripRootMotion(all[i].animations);
+        // Swordsman: trim the 1.07s static hold from the attack clip so
+        // each attack is one visible slash, not a repeated draw loop.
+        characters[c.key] = { scene: all[i].scene, animations: subclipAttack(animations, c) };
       });
       return {
         characters,

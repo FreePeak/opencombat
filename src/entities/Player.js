@@ -101,6 +101,13 @@ export default class Player {
       action.setEffectiveWeight(0);
       action.play();
     }
+    // Attack clip plays once then clamps to its final frame — this prevents
+    // a phantom low-amplitude draw-loop under idle (residual 12% weight was
+    // looping the full clip before the first swing triggered LoopOnce).
+    if (this.clips.attack) {
+      this.clips.attack.setLoop(THREE.LoopOnce);
+      this.clips.attack.clampWhenFinished = true;
+    }
     if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
 

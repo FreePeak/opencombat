@@ -18,6 +18,7 @@
 //        FIXED azimuth instead of the character's own yaw, so A/D strafes in a
 //        straight line and the camera can no longer orbit round and round.
 import * as THREE from 'three';
+import { AnimationUtils } from 'three';
 
 // Translation range (in clip units) below which a bone position track is
 // considered cosmetic jitter rather than baked root motion. Measured margin
@@ -177,4 +178,21 @@ export function remoteMoveHold(sx, sz, carry, dt) {
   carry.sz = sz;
   carry.hold = moved ? REMOTE_MOVE_HOLD : Math.max(0, (carry.hold || 0) - dt);
   return carry.hold;
+}
+
+/**
+ * Trim an attack clip to only its active phase (e.g. the knight's sword
+ * slash) when `def.attackSubclip` is set, removing the long static hold
+ * that made every attack look like repeated draw-sword loops.
+ *
+ * AnimationUtils.subclip clones the clip and shifts keyframe times to t=0
+ * so the trimmed clip plays naturally from the start.
+ */
+export function subclipAttack(animations, def) {
+  const sub = def?.attackSubclip;
+  if (!sub || !animations) return animations;
+  return animations.map((clip) => {
+    if (!clip.name.includes('Attack')) return clip;
+    return AnimationUtils.subclip(clip, clip.name, sub.startFrame, sub.endFrame, sub.fps);
+  });
 }

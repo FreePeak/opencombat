@@ -129,6 +129,12 @@ export const CONFIG = {
   characters: [
     {
       key: 'swordsman', label: 'Knight', file: 'knight_mixamo.glb', scale: 0.97, weapon: null,
+      // The knight Attack clip (1.43s) is a static raised-sword pose for
+      // the first 1.07s (frames 1–64); the real slash is only frames 65–85.
+      // Trim to the slash so each attack is one visible swing, not a loop
+      // of drawing the sword (frames are 0-indexed, fps=60, endFrame is
+      // exclusive — stops before the snap-back key at frame 86).
+      attackSubclip: { startFrame: 65, endFrame: 86, fps: 60 },
       anims: {
         idle: 'CharacterArmature|Idle',
         run: 'CharacterArmature|Run',

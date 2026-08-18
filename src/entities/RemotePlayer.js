@@ -80,6 +80,12 @@ export default class RemotePlayer {
       action.setEffectiveWeight(0);
       action.play();
     }
+    // Attack clip plays once then clamps — prevents phantom draw-loop under
+    // idle (residual weight was looping the full clip before the first swing).
+    if (this.clips.attack) {
+      this.clips.attack.setLoop(THREE.LoopOnce);
+      this.clips.attack.clampWhenFinished = true;
+    }
     if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
     this.proc = Object.keys(this.clips).length ? null : new ProceduralAnim(this.root, this.weapon);
 
