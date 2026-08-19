@@ -161,10 +161,9 @@ export const CONFIG = {
     {
       key: 'archer', label: 'Archer', file: 'archer.glb', scale: 0.85, weapon: 'bow',
       anims: {
-        idle: 'CharacterArmature|Idle',
+        idle: 'CharacterArmature|Idle_Gun',
         run: 'CharacterArmature|Run',
-        attack: 'CharacterArmature|Sword_Slash',
-        // Phase 3: multishot uses Gun_Shoot clip
+        attack: 'CharacterArmature|Gun_Shoot',
         skill: 'CharacterArmature|Gun_Shoot'
       }
     },

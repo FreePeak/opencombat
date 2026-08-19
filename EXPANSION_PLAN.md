@@ -65,7 +65,7 @@ Combat feel pass.
 - `anim='hit'` for players when they take damage.
 - `BloodPool`: red burst + floor splats on unblocked hits.
 
-## Phase 3 — Per-class signature skills + base stats
+## Phase 3 — Per-class signature skills + base stats ✅ DONE (e8bd79b)
 
 Replace the shared skill roster with distinct class identities.
 

@@ -112,8 +112,16 @@ export function buildBow() {
   return bow;
 }
 
-/** Attach a procedural bow to the LEFT hand (right hand stays free to swing). */
+/** Attach a procedural bow to the LEFT hand (right hand stays free to swing).
+ *  Also hides any baked-in weapon node (the archer GLB ships with a sword
+ *  mesh parented to the armature — the bow replaces it, not supplements it). */
 export function attachBow(mesh) {
+  // Hide the baked-in sword (the Quaternius archer GLB includes a Sword
+  // Group node with Sword_1/2/3 children — without this the archer shows
+  // BOTH the procedural bow and the original sword).
+  mesh.traverse((o) => {
+    if (/^sword$/i.test(o.name)) o.visible = false;
+  });
   const hand = findBone(mesh, LEFT_HAND);
   if (!hand) return null;
   const bow = buildBow();
