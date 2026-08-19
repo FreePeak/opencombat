@@ -57,7 +57,7 @@ export const SERVER = {
                               // not at button-press (production combat feel)
     attackDamage: 1,          // melee damage per hit vs enemies (enemy.hp hits kill)
     attackPvpDamage: 10,      // melee damage vs other players
-    skillPvpDamage: 15,       // skill (K) damage vs other players
+    // skillPvpDamage removed in Phase 3 — per-class values live in CLASS_STATS
     rangedDamage: 1,          // base ranged normal damage vs enemies
     rangedPvpDamage: 8,       // ranged normal damage vs other players
     // L block: while held the player strafes at reduced speed and every hit

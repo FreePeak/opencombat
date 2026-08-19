@@ -117,6 +117,11 @@ export default class Player {
       this.clips.attack.setLoop(THREE.LoopOnce);
       this.clips.attack.clampWhenFinished = true;
     }
+    // Phase 3 skill clip: also a one-shot (reset/replayed per cast).
+    if (this.clips.skill) {
+      this.clips.skill.setLoop(THREE.LoopOnce);
+      this.clips.skill.clampWhenFinished = true;
+    }
     if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
     // Draw-sword happens ONCE, on spawn: while drawT counts down the attack
     // clip blends at full weight (a single ready/draw gesture); afterwards
@@ -166,23 +171,27 @@ export default class Player {
     const swinging = casting || this.attackAnimT > 0;
     const drawing = this.drawT > 0;
     const atk = this.clips.attack;
+    const skl = this.clips.skill; // Phase 3: dedicated skill clip (knight falls back to attack)
     const run = this.clips.run;
     const idle = this.clips.idle;
 
     // Target weights for this frame.
     let tAtk = 0, tRun = 0, tIdle = 0;
-    if (swinging && atk) {
+    // The active action: the skill clip while casting (when the class ships
+    // one), otherwise the attack clip.
+    const act = casting && skl ? skl : atk;
+    if ((casting || this.attackAnimT > 0) && act) {
       tAtk = 1;
       if (this.moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
       const name = casting ? 'skill' : 'attack';
       if (this.currentName !== name) {
         this.currentName = name;
-        atk.reset();
-        atk.setLoop(THREE.LoopOnce);
-        atk.clampWhenFinished = true;
-        atk.timeScale = attackTimeScale(atk.getClip(),
+        act.reset();
+        act.setLoop(THREE.LoopOnce);
+        act.clampWhenFinished = true;
+        act.timeScale = attackTimeScale(act.getClip(),
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
-        atk.play();
+        act.play();
       }
     } else if (drawing && atk) {
       // One-time spawn draw: full-weight single playthrough of the clip
@@ -204,7 +213,11 @@ export default class Player {
     this.wAtk += (tAtk - this.wAtk) * e;
     this.wRun += (tRun - this.wRun) * e;
     this.wIdle += (tIdle - this.wIdle) * e;
-    atk?.setEffectiveWeight(this.wAtk);
+    // Whichever of attack/skill is NOT the active action gets weight 0, so
+    // switching between them is a clean cut (a cast starting pops the swing
+    // out immediately instead of ghost-blending two actions).
+    act?.setEffectiveWeight(this.wAtk);
+    (act === skl ? atk : skl)?.setEffectiveWeight(0);
     run?.setEffectiveWeight(this.wRun);
     idle?.setEffectiveWeight(this.wIdle);
 
@@ -276,6 +289,11 @@ export default class Player {
       this.attackCd = CONFIG.player.attackCooldownMs / 1000;
       this.attackAnimT = CONFIG.player.attackAnimMs / 1000;
       this.scene.sound.swing();       // combat feedback
+      // Knight melee: the "flying sword slash" — a crescent energy arc in
+      // front of the swing so the melee read as hard as the ranged normals.
+      if (this.def.key === 'swordsman') {
+        this.scene.skillFx?.slash(this.root.position, this.root.rotation.y, 0xffffff, 1);
+      }
     }
     // K casts the per-character skill; the server applies the class's
     // damage/cooldown authoritatively. Casts work while moving.
@@ -290,7 +308,7 @@ export default class Player {
       this.skillCd = this.skillDef.cooldownMs / 1000;
       this.skillAnimT = this.skillDef.animMs / 1000;
       this.scene.sound.swing();
-      this.onSkill?.(this.root.position, this.skillDef); // cast VFX hook
+      this.onSkill?.(this.root.position, this.skillDef, this.root.rotation.y); // cast VFX hook
     }
     this.fsm.update(this, dt);
     // A cast overrides a swing, which overrides run/idle.

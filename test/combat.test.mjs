@@ -13,8 +13,12 @@ import { WorldState } from '../src/server/schema/StateSchema.js';
 import { SERVER } from '../src/server/config.js';
 import { buildHttpApp } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
-import { SKILLS } from '../src/shared/skills.js';
+import { SKILLS, classStats } from '../src/shared/skills.js';
 import { LocalRoom } from '../src/LocalRoom.js';
+
+// Phase 3: all combat tests run as the KNIGHT (default character 0) — its
+// per-class stats (150 HP, melee 2 / PvP 15) replaced the old globals.
+const KS = classStats(0);
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const half = SERVER.world.size / 2;
@@ -56,7 +60,10 @@ const parkOthers = (sr, keep = 0) => {
   me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
   parkOthers(sr, 0);
   const enemy = sr.state.enemies[0];
-  enemy.x = 2; enemy.z = 0; enemy.hp = SERVER.enemy.hp;
+  enemy.x = 2; enemy.z = 0;
+  // Knight melee (2) one-shots a wave-1 enemy (hp 2) — give it enough HP to
+  // SURVIVE the first swing so the hit-stun assertions below have a survivor.
+  enemy.hp = SERVER.enemy.hp + KS.meleeDamage;
 
   const scoreBefore = me.score;
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
@@ -67,10 +74,10 @@ const parkOthers = (sr, keep = 0) => {
   assert.equal(me.anim, 'attack', 'anim is attack after J press (before impact)');
   // Wait until just before impact (remaining time after the tick wait).
   await waitMs(Math.max(10, SERVER.player.attackImpactMs - SERVER.tickMs - 50 - 40));
-  assert.equal(enemy.hp, SERVER.enemy.hp, 'no damage before the impact frame');
+  assert.equal(enemy.hp, SERVER.enemy.hp + KS.meleeDamage, 'no damage before the impact frame');
   const xBeforeImpact = enemy.x; // still approaching the player (x falling)
   await waitImpact();
-  assert.equal(enemy.hp, SERVER.enemy.hp - SERVER.player.attackDamage, 'J melee costs enemy HP at impact');
+  assert.equal(enemy.hp, SERVER.enemy.hp, 'J melee costs enemy HP at impact (knight melee 2)');
   // HIT-STUN: the struck enemy stops acting and shows the hit react.
   assert.equal(enemy.anim, 'hit', 'struck enemy is in hit-stun');
   assert.ok(enemy.x > xBeforeImpact,
@@ -104,11 +111,13 @@ const parkOthers = (sr, keep = 0) => {
   me.rotY = -Math.PI / 2; // face -X, straight at it
   host.r.send('input', { dirX: -1, dirZ: 0, attack: true, anim: 'run' });
   await waitImpact();
-  assert.equal(enemy.hp, SERVER.enemy.hp - SERVER.player.attackDamage, 'J hits WHILE MOVING (impact-aligned)');
+  assert.equal(enemy.hp, SERVER.enemy.hp - KS.meleeDamage, 'J hits WHILE MOVING (impact-aligned)');
 
   await waitMs(4000);
   me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
-  enemy.x = 1; enemy.z = 0; enemy.hp = SERVER.enemy.hp + SKILLS[0].damage;
+  // Phase 3: SKILLS[0] is now 'bash' (4-unit dash + cone at landing).
+  // Place the enemy AHEAD of the landing position so the cone catches it.
+  enemy.x = 5; enemy.z = 0; enemy.hp = SERVER.enemy.hp + SKILLS[0].damage;
   const hpBeforeSkill = enemy.hp;
   host.r.send('input', { dirX: 0, dirZ: 1, skill: true, anim: 'run' });
   await waitMs(250);
@@ -138,13 +147,13 @@ const parkOthers = (sr, keep = 0) => {
   enemy.x = 1; enemy.z = 0;
   host.r.send('input', { dirX: 0, dirZ: 0, block: true, anim: 'idle' });
   await waitMs(1600);
-  assert.equal(me.hp, SERVER.player.maxHp, 'frontal contact blocked');
+  assert.equal(me.hp, KS.hp, 'frontal contact blocked');
   assert.ok(blockedMsgs > 0, 'BLOCKED message received');
 
   enemy.x = -1; enemy.z = 0;
   host.r.send('input', { dirX: 0, dirZ: 0, block: true, anim: 'idle' });
   await waitMs(400);
-  assert.ok(me.hp < SERVER.player.maxHp, 'rear contact lands through guard');
+  assert.ok(me.hp < KS.hp, 'rear contact lands through guard');
   host.r.leave();
 }
 
@@ -164,7 +173,7 @@ const parkOthers = (sr, keep = 0) => {
 
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
   await waitImpact();
-  assert.equal(B.hp, SERVER.player.maxHp - SERVER.player.attackPvpDamage, 'PvP melee connects');
+  assert.equal(B.hp, KS.hp - KS.meleePvpDamage, 'PvP melee connects (per-class damage)');
 
   let bBlocked = 0;
   r2.onMessage('blocked', () => { bBlocked++; });
@@ -207,14 +216,15 @@ resetRateLimit();
   });
   const enemy = room.state.enemies[0];
   enemy.x = -1.5; enemy.z = 0;
+  enemy.hp = SERVER.enemy.hp + KS.meleeDamage; // survive the knight's 2-damage swing
 
   // Attack while moving connects — at the delayed impact frame.
   room.send('input', { dirX: -1, dirZ: 0, attack: true, skill: false, anim: 'run', block: false });
   room._step(0.05);
-  assert.equal(enemy.hp, SERVER.enemy.hp, 'LOCAL: no damage before the impact frame');
+  assert.equal(enemy.hp, SERVER.enemy.hp + KS.meleeDamage, 'LOCAL: no damage before the impact frame');
   await waitMs(SERVER.player.attackImpactMs + 200);
   room._step(0.05);
-  assert.equal(enemy.hp, SERVER.enemy.hp - SERVER.player.attackDamage, 'LOCAL: J hits while moving (impact-aligned)');
+  assert.equal(enemy.hp, SERVER.enemy.hp, 'LOCAL: J hits while moving (impact-aligned)');
   assert.equal(enemy.anim, 'hit', 'LOCAL: struck enemy is in hit-stun');
 
   // Guard blocks frontal contact (stop, reset the encounter, wait out the
@@ -222,17 +232,17 @@ resetRateLimit();
   room.send('input', { dirX: 0, dirZ: 0, attack: false, skill: false, anim: 'idle', block: false });
   await waitMs(SERVER.enemy.hitStunMs + 250);
   me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
-  me.hp = SERVER.player.maxHp; // undo any contact damage from the chase
+  me.hp = KS.hp; // undo any contact damage from the chase
   me._lastHit = 0;
   enemy.x = 1; enemy.z = 0; enemy.hp = SERVER.enemy.hp;
   room.send('input', { dirX: 0, dirZ: 0, block: true, anim: 'idle' });
   for (let i = 0; i < 30; i++) room._step(0.05);
-  assert.equal(me.hp, SERVER.player.maxHp, 'LOCAL: frontal contact blocked');
+  assert.equal(me.hp, KS.hp, 'LOCAL: frontal contact blocked');
   assert.ok(blockedMsgs > 0, 'LOCAL: BLOCKED feedback emitted');
 
   enemy.x = -1; enemy.z = 0;
   room._step(0.05); room._step(0.05);
-  assert.ok(me.hp < SERVER.player.maxHp, 'LOCAL: rear contact lands');
+  assert.ok(me.hp < KS.hp, 'LOCAL: rear contact lands');
 
   room.leave();
 }

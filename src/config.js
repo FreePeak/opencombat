@@ -163,7 +163,9 @@ export const CONFIG = {
       anims: {
         idle: 'CharacterArmature|Idle',
         run: 'CharacterArmature|Run',
-        attack: 'CharacterArmature|Sword_Slash'
+        attack: 'CharacterArmature|Sword_Slash',
+        // Phase 3: multishot uses Gun_Shoot clip
+        skill: 'CharacterArmature|Gun_Shoot'
       }
     },
     {
@@ -171,7 +173,9 @@ export const CONFIG = {
       anims: {
         idle: 'CharacterArmature|Idle',
         run: 'CharacterArmature|Run',
-        attack: 'CharacterArmature|Staff_Attack'
+        attack: 'CharacterArmature|Staff_Attack',
+        // Phase 3: firewave uses Spell clip
+        skill: 'CharacterArmature|Spell'
       }
     },
     {
@@ -181,7 +185,9 @@ export const CONFIG = {
       anims: {
         idle: 'CharacterArmature|Idle',
         run: 'CharacterArmature|Run',
-        attack: 'CharacterArmature|Punch'
+        attack: 'CharacterArmature|Punch',
+        // Phase 3: chain lightning uses Weapon clip
+        skill: 'CharacterArmature|Weapon'
       }
     }
   ],

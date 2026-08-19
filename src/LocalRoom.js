@@ -6,7 +6,9 @@
 import { WorldState, PlayerState, OrbState, EnemyState, PowerUpState, ProjectileState } from './server/schema/StateSchema.js';
 import { SERVER } from './server/config.js';
 import { stepPlayer } from './server/movement.js';
-import { skillFor, resolveSkillHits } from './shared/skills.js';
+import { skillFor, resolveSkillHits, classStats } from './shared/skills.js';
+// Per-class base stats (Phase 3): hp/speed/melee numbers diverge per class.
+const statsOf = (player) => classStats(player.character);
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from './shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/combat.js';
 import { attackFor } from './shared/classes.js';
@@ -93,7 +95,7 @@ export class LocalRoom {
     me.name = name.slice(0, 16);
     me.character = clamp(character, 0, SERVER.characters.count - 1);
     me.color = SERVER.colors[0];
-    me.hp = SERVER.player.maxHp;
+    me.hp = statsOf(me).hp; // Phase 3: per-class base HP
     this.state.players.set(this.sessionId, me);
     this._myPlayerId = this.sessionId;
 
@@ -219,7 +221,8 @@ export class LocalRoom {
       me.blocking = !!this._playerInput.block;
       const dirX = inX;
       const dirZ = inZ;
-      const speed = SERVER.player.speed * (me.blocking ? SERVER.player.blockSpeedMult : 1);
+      const speed = (statsOf(me).speed ?? SERVER.player.speed) *
+        (me.blocking ? SERVER.player.blockSpeedMult : 1);
       const moved = stepPlayer(me.x, me.z, me.rotY, dirX, dirZ, speed, dt, half);
       me.x = moved.x;
       me.z = moved.z;
@@ -264,6 +267,20 @@ export class LocalRoom {
 
       // Effect timers
       this._updateEffects(me, dt * 1000);
+      // Burn DoT: tick damage on burning enemies
+      if (this._activeBurns) {
+        const now = performance.now();
+        for (const [enemy, burn] of this._activeBurns) {
+          if (enemy.hp <= 0) { this._activeBurns.delete(enemy); continue; }
+          const elapsed = now - burn.lastTickMs;
+          if (elapsed >= burn.tickMs) {
+            enemy.hp = Math.max(0, enemy.hp - burn.damage);
+            burn.lastTickMs = now;
+            burn.remainingMs -= elapsed;
+          }
+          if (burn.remainingMs <= 0) this._activeBurns.delete(enemy);
+        }
+      }
     }
 
     // --- Projectiles (playing only) ---------------------------------------
@@ -404,20 +421,73 @@ export class LocalRoom {
 
   _resolveMelee(attacker) {
     // Shared arc math: which enemies this swing covers (dead ones skipped).
+    const stats = statsOf(attacker); // Phase 3: per-class melee numbers
+    const dmg = stats.meleeDamage ?? SERVER.player.attackDamage;
     for (const i of meleeHits(attacker, this.state.enemies, SERVER.player)) {
       const enemy = this.state.enemies[i];
       // Hit: the enemy stays down at 0 HP until the next wave revives
       // its slot (killed enemies no longer teleport-respawn).
-      this._hitEnemy(enemy, SERVER.player.attackDamage, attacker.x, attacker.z, attacker);
+      this._hitEnemy(enemy, dmg, attacker.x, attacker.z, attacker);
     }
   }
 
   _resolveSkill(caster, skill) {
-    const hits = resolveSkillHits(skill, caster, [...this.state.enemies]);
-    for (const idx of hits) {
-      const enemy = this.state.enemies[idx];
-      if (!enemy || enemy.hp <= 0) continue;
-      this._hitEnemy(enemy, skill.damage, caster.x, caster.z, caster);
+    const enemies = [...this.state.enemies];
+    const targets = enemies.map((e) => ({ x: e.x, z: e.z }));
+    const result = resolveSkillHits(skill, caster, targets);
+
+    // Bash: move the caster to the landing position
+    if (result.movement) {
+      const half = SERVER.world.size / 2;
+      const nx = Math.max(-half, Math.min(half, caster.x + result.movement.dx));
+      const nz = Math.max(-half, Math.min(half, caster.z + result.movement.dz));
+      caster.x = nx;
+      caster.z = nz;
+    }
+
+    // Direct hits (bash, chainlight, legacy aoe/cone). Bash carries its own
+    // knockback + 1s stun (mirror of GameRoom.castSkill).
+    if (result.hits.length > 0) {
+      const now = performance.now();
+      for (const i of result.hits) {
+        const enemy = enemies[i];
+        if (!enemy || enemy.hp <= 0) continue;
+        const dmg = result.damagePerHit ? result.damagePerHit[result.hits.indexOf(i)] : skill.damage;
+        if (skill.kind === 'bash') {
+          const { hit, killed } = strikeEnemy(enemy, dmg, caster.x, caster.z, skill.knockback, SERVER.world.size / 2);
+          if (hit) {
+            if (killed) {
+              if (caster) caster.score += SERVER.enemy.killScore;
+            } else {
+              enemy.anim = 'hit';
+              this._enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
+              this._enemyStunUntil.set(enemy, now + (skill.stunDurationMs || 1000));
+            }
+          }
+        } else {
+          this._hitEnemy(enemy, dmg, caster.x, caster.z, caster);
+        }
+      }
+    }
+
+    // Projectile-spawning skills (multishot, firewave)
+    if (result.projectiles) {
+      for (const pDef of result.projectiles) {
+        const proj = new ProjectileState(
+          this._projectileId++, this._myPlayerId, pDef.projKind,
+          caster.x, caster.z, pDef.dirX, pDef.dirZ
+        );
+        proj.speed = pDef.speed;
+        proj.damage = pDef.damage;
+        proj.ttl = pDef.ttlMs;
+        proj.ownerIsPlayer = true;
+        this.state.projectiles.push(proj);
+        // Firewave burn DoT: track per-projectile so the hit handler can apply it
+        if (pDef.effects && pDef.effects.burn) {
+          this._burnByProjId = this._burnByProjId || new Map();
+          this._burnByProjId.set(proj.id, pDef.effects.burn);
+        }
+      }
     }
   }
 
@@ -464,6 +534,18 @@ export class LocalRoom {
           if (projectileHitsTarget(proj, enemy, hitRadius)) {
             this._hitEnemy(enemy, proj.damage, proj.x, proj.z,
               this.state.players.get(proj.ownerSid));
+            // Firewave burn DoT: apply burn when a fireball hits
+            if (this._burnByProjId && this._burnByProjId.has(proj.id)) {
+              const burn = this._burnByProjId.get(proj.id);
+              this._burnByProjId.delete(proj.id);
+              this._activeBurns = this._activeBurns || new Map();
+              this._activeBurns.set(enemy, {
+                damage: burn.damage,
+                remainingMs: burn.durationMs,
+                tickMs: burn.tickMs,
+                lastTickMs: performance.now(),
+              });
+            }
             this.state.projectiles.splice(i, 1);
             removed = true;
             break;
@@ -525,7 +607,7 @@ export class LocalRoom {
   _requestRespawn() {
     const me = this.state.players.get(this.sessionId);
     if (me && me.hp <= 0 && this.state.matchState !== 'gameover') {
-      me.hp = SERVER.player.maxHp;
+      me.hp = statsOf(me).hp; // Phase 3: per-class base HP
       me.x = 0;
       me.z = 0;
       me.rotY = 0;
@@ -563,7 +645,7 @@ export class LocalRoom {
     const me = this.state.players.get(this.sessionId);
     if (me) {
       me.x = 0; me.z = 0; me.rotY = 0;
-      me.hp = SERVER.player.maxHp;
+      me.hp = statsOf(me).hp; // Phase 3: per-class base HP
       me.score = 0;
       me.anim = 'idle';
       me.blocking = false;

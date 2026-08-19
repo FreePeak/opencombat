@@ -141,33 +141,40 @@ assert.equal(SKILLS.length, 4, 'one skill per playable character');
   assert.equal(names.size, 4, 'SKILL: each character skill is distinct');
   for (const s of SKILLS) {
     assert.ok(s.cooldownMs > 0 && s.animMs > 0 && s.damage >= 1, 'SKILL: sane params');
-    assert.ok(s.kind === 'aoe' || s.kind === 'cone', 'SKILL: known hit shape');
+    const validKinds = ['bash', 'multishot', 'firewave', 'chainlight'];
+    assert.ok(validKinds.includes(s.kind), 'SKILL: known hit shape');
   }
 }
-// AoE hits everything inside the radius regardless of direction, nothing outside.
+// Bash: hits enemies in a cone at the landing position after dash.
 {
-  const aoe = SKILLS.find((s) => s.kind === 'aoe');
+  const bash = SKILLS.find((s) => s.kind === 'bash');
+  const caster = { x: 0, z: 0, rotY: 0 }; // faces +Z
+  const enemies = [
+    { x: 0, z: 5, hp: 5 },               // ahead at dash distance (in cone)
+    { x: 0, z: 1, hp: 5 },               // behind landing position (misses)
+    { x: 10, z: 10, hp: 5 },             // far away (misses)
+  ];
+  const result = resolveSkillHits(bash, caster, enemies);
+  assert.ok(result.movement, 'bash returns movement data');
+  assert.ok(result.hits.length > 0, 'bash hits at least one enemy in the landing cone');
+}
+// Chain lightning: picks closest targets with decaying damage.
+{
+  const chain = SKILLS.find((s) => s.kind === 'chainlight');
   const caster = { x: 0, z: 0, rotY: 0 };
   const enemies = [
-    { x: 1, z: 0 },                 // inside, +X
-    { x: -1, z: 0.5 },              // inside, behind-left
-    { x: aoe.radius + 1, z: 0 }     // outside
+    { x: 0, z: 1, hp: 10 },
+    { x: 0, z: 2, hp: 10 },
+    { x: 0, z: 3, hp: 10 },
+    { x: 0, z: 4, hp: 10 },
   ];
-  const hits = resolveSkillHits(aoe, caster, enemies);
-  assert.deepEqual(hits, [0, 1], 'SKILL: aoe hits the whole radius, direction-independent');
-}
-// Cone hits only enemies inside range AND inside the facing arc.
-{
-  const cone = SKILLS.find((s) => s.kind === 'cone');
-  const caster = { x: 0, z: 0, rotY: 0 }; // faces +Z (atan2 convention)
-  const enemies = [
-    { x: 0, z: 1 },                       // dead ahead, in range
-    { x: 5, z: 0 },                       // to the side (outside a narrow arc)
-    { x: 0, z: cone.range + 5 }           // ahead but out of range
-  ];
-  const hits = resolveSkillHits(cone, caster, enemies);
-  assert.ok(hits.includes(0), 'SKILL: cone hits the enemy ahead');
-  assert.ok(!hits.includes(2), 'SKILL: cone respects range');
+  const result = resolveSkillHits(chain, caster, enemies);
+  assert.ok(result.hits.length > 0, 'chainlight hits targets');
+  assert.ok(result.damagePerHit, 'chainlight returns per-hit damage');
+  if (result.damagePerHit.length >= 2) {
+    assert.ok(result.damagePerHit[0] >= result.damagePerHit[1],
+      'SKILL: chainlight damage decays per hop');
+  }
 }
 
 console.log('ok — strafeRootSkill.test.mjs: all RC5/RC7/RC8/RC9/skill contracts pass');

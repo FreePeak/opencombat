@@ -23,8 +23,11 @@ import { SERVER } from '../src/server/config.js';
 import { buildHttpApp, attachHttpLogging } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
 import { joinErrorMessage } from '../src/joinError.js';
+import { classStats } from '../src/shared/skills.js';
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
+// Phase 3: default join character is knight (0) — per-class melee damage
+const KS = classStats(0);
 const waitFor = async (cond, timeoutMs = 10000, label = 'condition') => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -65,7 +68,7 @@ assert.ok(seenStates.includes('countdown:3') || seenStates.includes('countdown:2
 
 const me = () => room.state.players.get(room.sessionId);
 assert.ok(me(), 'joined player exists in the state map');
-assert.equal(me().hp, 100, 'fresh player starts at full HP');
+assert.equal(me().hp, classStats(0).hp, 'fresh player starts at full (per-class) HP');
 assert.equal(me().name, 'Tester1', 'pre-join name rides the join options');
 assert.equal(me().character, 0, 'join without a character defaults to swordsman');
 assert.ok(me().color > 0, 'server assigned a palette color');
@@ -267,7 +270,7 @@ const half = SERVER.world.size / 2;
   //    (Give the corpse a buff first — it must die with it.)
   bState().effects.set('double', 10000);
   b.r.send('respawn');
-  await waitFor(() => bClient().hp === 100, 3000, 'corpse respawned to full hp');
+  await waitFor(() => bClient().hp === classStats(bClient().character).hp, 3000, 'corpse respawned to full (per-class) hp');
   assert.equal(bClient().effects.size, 0, 'effects cleared on respawn');
   assert.ok(sr.invulnUntil.get(b.r.sessionId) > Date.now(), 'spawn invulnerability set');
   assert.equal(bClient().score, 0, 'respawn keeps score (still 0 here)');
@@ -296,7 +299,7 @@ const half = SERVER.world.size / 2;
   const hp0 = enemy.hp;
   r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
   await waitFor(() => enemy.hp < hp0, 2000, 'swing during playing deals damage');
-  assert.equal(enemy.hp, hp0 - 1, 'one melee hit during playing');
+  assert.equal(enemy.hp, hp0 - KS.meleeDamage, 'one melee hit during playing (per-class damage)');
   r.leave();
 }
 {
@@ -358,7 +361,7 @@ const half = SERVER.world.size / 2;
   await waitFor(() => a.r.state.matchState === 'countdown', 3000, 'play again -> countdown');
   assert.equal(sr.state.winnerId, '', 'winnerId cleared on play again');
   assert.equal(sr.state.winnerName, '', 'winnerName cleared on play again');
-  assert.equal(p().hp, 100, 'hp restored on play again');
+  assert.equal(p().hp, classStats(p().character).hp, 'hp restored on play again (per-class)');
   assert.equal(p().score, 0, 'score reset on play again');
   assert.equal(p().effects.size, 0, 'effects cleared on play again');
   a.r.leave();
@@ -385,7 +388,7 @@ const half = SERVER.world.size / 2;
     await waitFor(() => roomOf(t.r).state.matchState === 'countdown', 3000,
       'empty gameover room auto-restarts on join');
     assert.equal(roomOf(t.r).state.winnerId, '', 'auto-restart clears the old winner');
-    assert.equal(roomOf(t.r).state.players.get(late.r.sessionId).hp, 100, 'latecomer at full hp');
+    assert.equal(roomOf(t.r).state.players.get(late.r.sessionId).hp, classStats(roomOf(t.r).state.players.get(late.r.sessionId).character).hp, 'latecomer at full (per-class) hp');
     late.r.leave();
   } finally {
     SERVER.match.matchDurationSeconds = prevDuration;

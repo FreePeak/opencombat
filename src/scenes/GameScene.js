@@ -13,6 +13,8 @@ import Enemy from '../entities/Enemy.js';
 import SoundManager from '../audio/SoundManager.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
+import SkillFx from '../effects/SkillFx.js';
+import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, joinErrorMessage, serverAvailable } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
@@ -68,6 +70,7 @@ export default class GameScene {
     this.sound = new SoundManager();
     this.particles = new ParticlePool(this.scene, 256);
     this.floatTexts = new FloatingTextPool(document.getElementById('float-layer'), 24);
+    this.skillFx = new SkillFx(this.scene); // Phase 3 cast visuals (slash/ring/arcs)
 
     // --- World state holders --------------------------------------------
     this.keys = {};
@@ -442,9 +445,23 @@ export default class GameScene {
       // Our own player: the camera follows this one.
       this.local = new Player(this, this.room, pack, def, color, this.models.sword);
       this.local.state = player;
-      // Skill cast VFX: a burst in the class's skill color at the caster.
-      this.local.onSkill = (pos, sdef) =>
+      // Skill cast VFX, per kind (Phase 3): bash = slash + landing ring +
+      // burst; chainlight = arcs through the targets (same shared chain math
+      // the server used, so the arcs land on what actually got hit);
+      // multishot / firewave = muzzle burst (the projectiles themselves
+      // render through the projectile pool).
+      this.local.onSkill = (pos, sdef, rotY) => {
         this.particles.spawnBurst({ x: pos.x, y: 1.0, z: pos.z }, sdef.color, 30, 6, 0.7);
+        if (sdef.kind === 'bash') {
+          this.skillFx.slash(pos, rotY, sdef.color, 1.4);
+          this.skillFx.ring({
+            x: pos.x + Math.sin(rotY) * BASH_RANGE,
+            z: pos.z + Math.cos(rotY) * BASH_RANGE
+          }, sdef.color, 3);
+        } else if (sdef.kind === 'chainlight') {
+          this._chainArcsFrom(pos, sdef);
+        }
+      };
       this.local.root.position.set(player.x, 0, player.z); // snap to spawn
       this.cameraRigged = false;
       this.lastHp = player.hp;
@@ -489,6 +506,23 @@ export default class GameScene {
     mesh.position.set(pu.x, CONFIG.powerUps.y, pu.z);
     this.scene.add(mesh);
     this.powerUpViews[i] = { mesh, state: pu, color };
+  }
+
+  /**
+   * Chain-lightning VFX: run the SAME shared chain-target selection the
+   * server just ran (resolveChainTargets over the live enemy list) and draw
+   * jagged arcs hopping caster -> each target in chain order.
+   */
+  _chainArcsFrom(casterPos, sdef) {
+    const enemies = [...(this.room?.state?.enemies ?? [])]
+      .filter((e) => e.hp > 0)
+      .map((e) => ({ x: e.x, z: e.z }));
+    const chain = resolveChainTargets(
+      { x: casterPos.x, z: casterPos.z }, enemies, sdef.damage, sdef.maxTargets);
+    if (!chain.length) return;
+    const points = [{ x: casterPos.x, z: casterPos.z }];
+    for (const c of chain) points.push(enemies[c.idx]);
+    this.skillFx.chain(points, sdef.color);
   }
 
   /** Create a projectile mesh (arrow cylinder, fireball sphere+light, lightning box). */
@@ -659,7 +693,25 @@ export default class GameScene {
 
       this.updateMatchUi(dt);
     }
-    for (const rp of this.remotePlayers.values()) rp.update(dt);
+    for (const rp of this.remotePlayers.values()) {
+      rp.update(dt);
+      // Phase 3 remote cast visuals: fire the knight slash / bash ring on the
+      // anim EDGE (idle|run -> attack|skill), same feedback the local caster
+      // sees on their own character.
+      const a = rp.state.anim;
+      if (a !== rp.lastFxAnim) {
+        rp.lastFxAnim = a;
+        const p = rp.root.position;
+        if (a === 'attack' && rp.def.key === 'swordsman') {
+          this.skillFx.slash(p, rp.root.rotation.y, 0xffffff, 1);
+        } else if (a === 'skill' && rp.skillDef.kind === 'bash') {
+          this.skillFx.slash(p, rp.root.rotation.y, rp.skillDef.color, 1.4);
+          this.skillFx.ring({ x: p.x + Math.sin(rp.root.rotation.y) * BASH_RANGE, z: p.z + Math.cos(rp.root.rotation.y) * BASH_RANGE }, rp.skillDef.color, 3);
+        } else if (a === 'skill' && rp.skillDef.kind === 'chainlight') {
+          this._chainArcsFrom(p, rp.skillDef);
+        }
+      }
+    }
     const w = window.innerWidth;
     const h = window.innerHeight;
     for (const e of this.enemies.values()) e.update(dt, this.camera, w, h);
@@ -719,6 +771,7 @@ export default class GameScene {
 
     this.touchControls?.update();
     this.particles.update(dt);
+    this.skillFx.update(dt);
     this.floatTexts.update(dt, this.camera, window.innerWidth, window.innerHeight);
     this.updateNametags();
     this.updateLeaderboard();

@@ -86,6 +86,11 @@ export default class RemotePlayer {
       this.clips.attack.setLoop(THREE.LoopOnce);
       this.clips.attack.clampWhenFinished = true;
     }
+    // Phase 3 skill clip: also a one-shot (reset/replayed per cast).
+    if (this.clips.skill) {
+      this.clips.skill.setLoop(THREE.LoopOnce);
+      this.clips.skill.clampWhenFinished = true;
+    }
     if (this.clips.idle) this.clips.idle.setEffectiveWeight(1);
     // Draw-sword once on spawn (same gesture the local player sees on their
     // own knight); afterwards idle/run play clean with no attack residue.
@@ -115,24 +120,26 @@ export default class RemotePlayer {
     const casting = s.anim === 'skill';
     const swinging = casting || s.anim === 'attack';
     const atk = this.clips.attack;
+    const skl = this.clips.skill; // Phase 3: dedicated skill clip
     const run = this.clips.run;
     const idle = this.clips.idle;
 
     // Target weights for this frame.
     let tAtk = 0, tRun = 0, tIdle = 0;
-    if (swinging && atk) {
+    const act = casting && skl ? skl : atk;
+    if (swinging && act) {
       tAtk = 1;
       if (moving && run) tRun = MOVING_ATTACK_RUN_BLEND;
       if (this.currentName !== s.anim) {
         this.currentName = s.anim;
-        atk.reset();
-        atk.setLoop(THREE.LoopOnce);
-        atk.clampWhenFinished = true;
+        act.reset();
+        act.setLoop(THREE.LoopOnce);
+        act.clampWhenFinished = true;
         // RC2: same time-scaled swing as the local player, so a remote knight
         // shows the full arc inside the server's attackAnimMs window.
-        atk.timeScale = attackTimeScale(atk.getClip(),
+        act.timeScale = attackTimeScale(act.getClip(),
           casting ? this.skillDef.animMs : CONFIG.player.attackAnimMs);
-        atk.play();
+        act.play();
       }
     } else if (this.drawT > 0 && atk) {
       // One-time spawn draw: full-weight single playthrough of the clip,
@@ -153,7 +160,8 @@ export default class RemotePlayer {
     this.wAtk += (tAtk - this.wAtk) * e;
     this.wRun += (tRun - this.wRun) * e;
     this.wIdle += (tIdle - this.wIdle) * e;
-    atk?.setEffectiveWeight(this.wAtk);
+    act?.setEffectiveWeight(this.wAtk);
+    (act === skl ? atk : skl)?.setEffectiveWeight(0);
     run?.setEffectiveWeight(this.wRun);
     idle?.setEffectiveWeight(this.wIdle);
   }
