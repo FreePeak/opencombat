@@ -401,12 +401,10 @@ export default class GameRoom extends Room {
     const len = Math.hypot(dirX, dirZ);
     if (len > 1) { dirX /= len; dirZ /= len; } // clamp diagonal input
 
-    // L (hold) = block: a guarding player is rooted — the movement intent is
-    // zeroed here (and again in movePlayers, belt + braces against a client
-    // that keeps sending a stale direction).
+    // L (hold) = block: the player strafes at reduced speed while guarding.
+    // Direction is no longer zeroed — blockSpeedMult is applied in movePlayers.
     const blocking = !!msg.block;
     player.blocking = blocking;
-    if (blocking) { dirX = 0; dirZ = 0; }
     const moving = dirX !== 0 || dirZ !== 0;
     this.inputs.set(sid, { dirX, dirZ });
 
@@ -524,6 +522,10 @@ export default class GameRoom extends Room {
     }
     this.invulnUntil.set(sid, now + SERVER.player.invulnMs);
     strikePlayer(victim, amount, srcX, srcZ, SERVER.player.knockback * 0.15, this.half);
+    // Hit react: brief 'hit' anim override (300ms) so all clients see the
+    // victim flinch — mirrors the enemy hit-stun pattern.
+    victim.anim = 'hit';
+    this.animUntil.set(sid, now + 300);
     return true;
   }
 
@@ -746,11 +748,10 @@ export default class GameRoom extends Room {
         continue;
       }
       const intent = this.inputs.get(sid);
-      // Blocking roots the player: guarding feet are planted, so a stale
-      // movement intent cannot drag the blocker around.
-      const dirX = player.blocking ? 0 : intent.dirX;
-      const dirZ = player.blocking ? 0 : intent.dirZ;
+      const dirX = intent.dirX;
+      const dirZ = intent.dirZ;
       const speed = SERVER.player.speed *
+        (player.blocking ? SERVER.player.blockSpeedMult : 1) *
         (player.effects.has('speed') ? SERVER.powerUps.speed.multiplier : 1);
       // RC7: attacking/casting NEVER blocks movement — a player can move and
       // attack at the same time. stepPlayer always integrates; the swing/cast

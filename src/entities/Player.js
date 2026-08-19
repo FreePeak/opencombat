@@ -82,6 +82,14 @@ export default class Player {
     this.root.add(this.guardMesh);
     this.blocking = false;    // L held this frame (predicted locally)
 
+    // Procedural guard pose: find the right wrist bone and rotate it upward
+    // when blocking. Works for all classes (including the knight which has no clips).
+    this.wGuard = 0;          // guard weight, eased toward 0/1
+    this.guardBone = null;
+    this.mesh.traverse((o) => {
+      if (!this.guardBone && o.isBone && /^wrist[._]?r$/i.test(o.name)) this.guardBone = o;
+    });
+
     // Animation clips, keyed by our logical names (see CONFIG.characters).
     // Models that ship no clips (the knight) get ProceduralAnim instead.
     // RC10: every action is started ONCE here and blending is done purely
@@ -199,6 +207,15 @@ export default class Player {
     atk?.setEffectiveWeight(this.wAtk);
     run?.setEffectiveWeight(this.wRun);
     idle?.setEffectiveWeight(this.wIdle);
+
+    // Procedural guard pose: ease the guard bone (right wrist) upward when
+    // blocking. Rotates the forearm ~45° up around X to raise the sword in
+    // front of the character — works for all classes, no extra clips needed.
+    if (this.guardBone) {
+      const tGuard = (this.blocking && !swinging) ? 1 : 0;
+      this.wGuard += (tGuard - this.wGuard) * e;
+      this.guardBone.rotation.x = this.wGuard * -0.78; // ~-45° = raised guard
+    }
   }
 
   /** Render the timed power-up effects straight from PlayerState.effects. */
@@ -222,16 +239,16 @@ export default class Player {
     // fixed azimuth), so there is no turn->move->turn feedback loop: holding A
     // or D strafes along a constant world direction (a straight line) instead
     // of steering the player — and the camera — round and round in a circle.
-    // L (hold) = block: guarding roots the player (no movement input) and the
-    // swing/cast cannot be started while blocking.
+    // L (hold) = block: guarding reduces speed (blockSpeedMult applied server-side)
+    // and the swing/cast cannot be started while blocking.
     this.blocking = !!k.l?.isDown;
     this.guardMesh.visible = this.blocking;
-    const ix = this.blocking ? 0 :
+    const ix =
       (k.d.isDown || k.right.isDown ? 1 : 0) - (k.a.isDown || k.left.isDown ? 1 : 0);
-    const iz = this.blocking ? 0 :
+    const iz =
       (k.w.isDown || k.up.isDown ? 1 : 0) - (k.s.isDown || k.down.isDown ? 1 : 0);
     // Touch joystick overrides digital WASD axes (analog, partial deflection = slower).
-    const stick = this.blocking ? null : this.scene.touchStick;
+    const stick = this.scene.touchStick;
     const fi = stick ? stick.x : ix;
     const fz = stick ? stick.z : iz;
     this.moving = fi !== 0 || fz !== 0;

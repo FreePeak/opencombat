@@ -214,12 +214,13 @@ export class LocalRoom {
     //     the wave-cleared breather keeps free movement, just no combat) ---
     if (me && me.hp > 0) {
       const { dirX: inX, dirZ: inZ } = this._playerInput;
-      // Combat rules mirror GameRoom: holding L (block) roots the player, and
+      // Combat rules mirror GameRoom: holding L (block) reduces speed, and
       // attacks/skills cannot be started while blocking (but work while moving).
       me.blocking = !!this._playerInput.block;
-      const dirX = me.blocking ? 0 : inX;
-      const dirZ = me.blocking ? 0 : inZ;
-      const moved = stepPlayer(me.x, me.z, me.rotY, dirX, dirZ, SERVER.player.speed, dt, half);
+      const dirX = inX;
+      const dirZ = inZ;
+      const speed = SERVER.player.speed * (me.blocking ? SERVER.player.blockSpeedMult : 1);
+      const moved = stepPlayer(me.x, me.z, me.rotY, dirX, dirZ, speed, dt, half);
       me.x = moved.x;
       me.z = moved.z;
       me.rotY = moved.rotY;
@@ -502,6 +503,9 @@ export class LocalRoom {
     // Knockback 0: the offline sim has never shoved the player (server does,
     // via strikePlayer with the configured nudge) — one code path, per-room.
     strikePlayer(player, amount, source?.x ?? player.x, source?.z ?? player.z, 0, SERVER.world.size / 2);
+    // Hit react: brief 'hit' anim override so the player flinches.
+    player.anim = 'hit';
+    player.animUntil = performance.now() + 300;
     if (player.hp <= 0) {
       player.anim = 'hit';
     }

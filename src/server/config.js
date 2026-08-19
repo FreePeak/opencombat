@@ -60,10 +60,11 @@ export const SERVER = {
     skillPvpDamage: 15,       // skill (K) damage vs other players
     rangedDamage: 1,          // base ranged normal damage vs enemies
     rangedPvpDamage: 8,       // ranged normal damage vs other players
-    // L block: while held the player is rooted and every hit whose source
-    // lies inside the FRONTAL hemisphere (dot >= 0) deals no damage.
+    // L block: while held the player strafes at reduced speed and every hit
+    // whose source lies inside the FRONTAL hemisphere (dot >= 0) deals no damage.
     blockArcCos: 0,
-    blockKnockback: 1.1       // nudge applied to a blocked victim (cosmetic)
+    blockKnockback: 1.1,      // nudge applied to a blocked victim (cosmetic)
+    blockSpeedMult: 0.45      // movement speed multiplier while guarding
   },
 
   orb: {

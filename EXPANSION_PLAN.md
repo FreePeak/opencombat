@@ -56,7 +56,7 @@ No projectile system exists yet; this phase introduces the first one.
 - Server-authoritative projectile movement + hit resolution; reuse
   `src/shared/combat.js` from Phase 0.
 
-## Phase 2 — Block-while-moving + blood
+## Phase 2 — Block-while-moving + blood ✅ DONE
 
 Combat feel pass.
 

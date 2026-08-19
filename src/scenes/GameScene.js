@@ -459,7 +459,10 @@ export default class GameScene {
   addEnemy(i, enemy) {
     const e = new Enemy(this, enemy, this.models.enemy, this.models.enemyAnims, 0.55);
     e.onBurst = (pos, color) => this.particles.spawnBurst(pos, color, 26, 5.5, 0.8);
-    e.onHitSpark = (pos) => this.particles.spawnBurst(pos, 0xffffff, 10, 3, 0.35);
+    e.onHitSpark = (pos) => {
+      this.particles.spawnBurst(pos, 0xffffff, 10, 3, 0.35);  // spark
+      this.particles.spawnBurst(pos, 0xcc0000, 8, 4, 0.5);    // blood
+    };
     e.onDamage = (pos, amount) => this.floatTexts.spawn(pos.x, pos.y, pos.z, amount, '#ffd54f');
     this.enemies.set(i, e);
   }
@@ -806,13 +809,14 @@ export default class GameScene {
     const scdMs = Math.max(me.skillCd, this.local.skillCd * 1000);
     this.skillCooldownFill.style.width = Math.min(100, scdMs / this.local.skillDef.cooldownMs * 100) + '%';
 
-    // --- Damage feedback: red flash + shake + sound + number ------------
+    // --- Damage feedback: red flash + shake + sound + number + blood ------
     if (me.hp < this.lastHp) {
       const dmg = this.lastHp - me.hp;
       this.flashT = 0.3;
       this.shakeT = CONFIG.player.shake.duration;
       this.sound.hit();
       this.floatTexts.spawn(me.x, 2.4, me.z, String(dmg), '#ff5252');
+      this.particles.spawnBurst({ x: me.x, y: 1.0, z: me.z }, 0xcc0000, 6, 3, 0.4);
     }
     this.lastHp = me.hp;
     this.flashT = Math.max(0, this.flashT - dt);
