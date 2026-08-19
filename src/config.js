@@ -163,8 +163,13 @@ export const CONFIG = {
       anims: {
         idle: 'CharacterArmature|Idle_Gun',
         run: 'CharacterArmature|Run',
+        // Gun_Shoot is the closest to a bow shot (0.75s quick release).
+        // Skill uses Sword_Slash (1.29s sweeping motion → reads as multishot
+        // fan). They MUST be different clips — when attack === skill the
+        // animation weight is immediately zeroed by the blended-action guard
+        // in updateClipAnims.
         attack: 'CharacterArmature|Gun_Shoot',
-        skill: 'CharacterArmature|Gun_Shoot'
+        skill: 'CharacterArmature|Sword_Slash'
       }
     },
     {

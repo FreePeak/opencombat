@@ -161,7 +161,8 @@ export default class RemotePlayer {
     this.wRun += (tRun - this.wRun) * e;
     this.wIdle += (tIdle - this.wIdle) * e;
     act?.setEffectiveWeight(this.wAtk);
-    (act === skl ? atk : skl)?.setEffectiveWeight(0);
+    if (atk && act !== atk) atk.setEffectiveWeight(0);
+    if (skl && act !== skl) skl.setEffectiveWeight(0);
     run?.setEffectiveWeight(this.wRun);
     idle?.setEffectiveWeight(this.wIdle);
   }

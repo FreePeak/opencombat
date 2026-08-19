@@ -216,8 +216,12 @@ export default class Player {
     // Whichever of attack/skill is NOT the active action gets weight 0, so
     // switching between them is a clean cut (a cast starting pops the swing
     // out immediately instead of ghost-blending two actions).
+    // DEFENSIVE: when attack and skill share the same clip, act === skl AND
+    // act === atk — the old `(act === skl ? atk : skl)` would zero the very
+    // weight we just set. Guard against that by only zeroing the OTHER clip.
     act?.setEffectiveWeight(this.wAtk);
-    (act === skl ? atk : skl)?.setEffectiveWeight(0);
+    if (atk && act !== atk) atk.setEffectiveWeight(0);
+    if (skl && act !== skl) skl.setEffectiveWeight(0);
     run?.setEffectiveWeight(this.wRun);
     idle?.setEffectiveWeight(this.wIdle);
 
