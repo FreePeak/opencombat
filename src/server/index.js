@@ -16,6 +16,7 @@ import { buildHttpApp, attachHttpLogging } from './http.js';
 import GameRoom from './rooms/GameRoom.js';
 import ArenaRoom from './rooms/ArenaRoom.js';
 import LobbyRoom from './rooms/LobbyRoom.js';
+import WorldRoom from './rooms/WorldRoom.js';
 import { log } from './log.js';
 
 const httpServer = http.createServer();
@@ -35,6 +36,7 @@ const gameServer = new Server({
 gameServer.define('game', GameRoom);
 gameServer.define('arena', ArenaRoom);
 gameServer.define('lobby', LobbyRoom);
+gameServer.define('world', WorldRoom);
 
 await gameServer.listen(SERVER.port);
 log('server_listening', { port: SERVER.port, publicUrl: SERVER.publicUrl || '(same-origin)', redis: SERVER.redis.url ? 'yes' : 'no' });

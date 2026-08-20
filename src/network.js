@@ -93,3 +93,24 @@ export function sendNextWave(room) {
 export function sendChooseUpgrade(room, choice) {
   room.send('chooseUpgrade', { choice });
 }
+
+/** Join the open world (Phase 6) — infinite chunked world with persistence. */
+export async function joinWorld(name, character) {
+  return currentClient().joinOrCreate('world', { name, character }, WorldState);
+}
+
+/** Join the lobby for PvP arena matchmaking (Phase 5). */
+export async function joinLobby(name, character) {
+  const { LobbyState } = await import('./server/schema/StateSchema.js');
+  return currentClient().joinOrCreate('lobby', { name, character }, LobbyState);
+}
+
+/** Queue for an arena mode from the lobby (Phase 5). */
+export function sendQueue(room, mode, pve = false, roundsToWin = 2) {
+  room.send('queue', { mode, pve, roundsToWin });
+}
+
+/** Join an arena directly (bypass lobby) — for testing / direct connect. */
+export async function joinArena(name, character, mode = 'ffa', pve = false, roundsToWin = 2) {
+  return currentClient().joinOrCreate('arena', { name, character, mode, pve, roundsToWin }, WorldState);
+}

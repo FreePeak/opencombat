@@ -1,2 +1,3 @@
 # Local agent/tool session state (never part of the project).
 .zcode/
+data/

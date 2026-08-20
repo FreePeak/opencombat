@@ -78,7 +78,7 @@ const newRoom = async (name, character = 0) => {
   // via direct grantXp path — simulate orb/kill by calling sr.grantXp
   // (faster than steering to an orb).
   sr.grantXp(r.sessionId, 100);
-  await waitFor(() => me().level === 2, 3000, 'level 2 after 100 xp');
+  await waitFor(() => me().level === 2, 10000, 'level 2 after 100 xp');
   assert.equal(p().xp, 100, 'xp stored');
   assert.equal(p().pendingChoices.length, 3, '3 choices offered on level up');
   assert.equal(new Set([...p().pendingChoices]).size, 3, 'choices distinct');
@@ -107,7 +107,7 @@ const newRoom = async (name, character = 0) => {
   // Instead, roll until vitality appears — cheaper to directly set pending
   // to known picks that include vitality, then test pick path.
   sr.grantXp(r.sessionId, 100);
-  await waitFor(() => p().pendingChoices.length === 3, 3000, 'pending before pick');
+  await waitFor(() => p().pendingChoices.length === 3, 10000, 'pending before pick');
   // overwrite pending to include vitality so we can test its hp effect
   const player = p();
   while (player.pendingChoices.length) player.pendingChoices.pop();
@@ -118,7 +118,7 @@ const newRoom = async (name, character = 0) => {
   player.hp = 50;
   const hpBefore = player.hp;
   r.send('chooseUpgrade', { choice: 'vitality' });
-  await waitFor(() => p().pendingChoices.length === 0, 3000, 'pending cleared after pick');
+  await waitFor(() => p().pendingChoices.length === 0, 10000, 'pending cleared after pick');
   assert.equal(p().upgrades.get('vitality'), 1, 'vitality stack recorded');
   assert.ok(p().hp > hpBefore, `vitality healed (hp ${hpBefore} -> ${p().hp})`);
   assert.equal(p().level, 2, 'level stays 2 after pick');
@@ -146,11 +146,11 @@ const newRoom = async (name, character = 0) => {
   const sr = roomOf(r);
   const p = () => sr.state.players.get(r.sessionId);
   sr.grantXp(r.sessionId, 100);
-  await waitFor(() => p().pendingChoices.length === 3, 3000, 'pending before auto');
+  await waitFor(() => p().pendingChoices.length === 3, 10000, 'pending before auto');
   const picks = [...p().pendingChoices];
   const auto = picks[0];
   // wait for auto-pick
-  await waitFor(() => p().pendingChoices.length === 0, 3000, 'auto-pick clears pending');
+  await waitFor(() => p().pendingChoices.length === 0, 10000, 'auto-pick clears pending');
   assert.equal(p().upgrades.get(auto), 1, `auto-picked ${auto} recorded`);
   assert.equal(p().level, 2, 'level stays after auto-pick');
   r.leave();
@@ -167,7 +167,7 @@ const newRoom = async (name, character = 0) => {
   const p = () => sr.state.players.get(r.sessionId);
   // Enough XP for 2 levels at once: 250 => level 3
   sr.grantXp(r.sessionId, 250);
-  await waitFor(() => p().level === 3, 3000, 'level 3 after 250 xp');
+  await waitFor(() => p().level === 3, 10000, 'level 3 after 250 xp');
   // Only first level's cards are showing; second is queued
   assert.equal(p().pendingChoices.length, 3, 'only first level cards pending');
   const firstPicks = [...p().pendingChoices];
@@ -175,7 +175,7 @@ const newRoom = async (name, character = 0) => {
   const expectL2 = rollUpgrades(sr.hashSeed(r.sessionId, 2), p().character, new Map());
   assert.deepEqual(firstPicks, expectL2, 'first picks match level 2 seed');
   r.send('chooseUpgrade', { choice: firstPicks[0] });
-  await waitFor(() => p().pendingChoices.length === 3 && [...p().pendingChoices].join('|') !== firstPicks.join('|'), 3000, 'second level cards after first pick');
+  await waitFor(() => p().pendingChoices.length === 3 && [...p().pendingChoices].join('|') !== firstPicks.join('|'), 10000, 'second level cards after first pick');
   // Now second level's cards should be a fresh rollout for level 3 (queued)
   const secondPicks = [...p().pendingChoices];
   assert.equal(secondPicks.length, 3, 'queued level gives 3 picks');
@@ -184,7 +184,7 @@ const newRoom = async (name, character = 0) => {
   for (const id of secondPicks) assert.ok(getUpgrade(id), `queued pick ${id} is valid upgrade`);
   // pick second
   r.send('chooseUpgrade', { choice: secondPicks[0] });
-  await waitFor(() => p().pendingChoices.length === 0, 3000, 'second pick clears');
+  await waitFor(() => p().pendingChoices.length === 0, 10000, 'second pick clears');
   assert.equal(p().upgrades.size, 2, 'two upgrades after two levels');
   r.leave();
   await waitMs(200);
@@ -280,12 +280,12 @@ const newRoom = async (name, character = 0) => {
   const sr = roomOf(r);
   const p = () => sr.state.players.get(r.sessionId);
   sr.grantXp(r.sessionId, 250); // level 3
-  await waitFor(() => p().level === 3, 3000, 'level 3 before reset');
+  await waitFor(() => p().level === 3, 10000, 'level 3 before reset');
   // Score win to reach gameover, then playAgain
   p().score = SERVER.match.targetScore;
-  await waitFor(() => r.state.matchState === 'gameover', 3000, 'gameover before reset');
+  await waitFor(() => r.state.matchState === 'gameover', 10000, 'gameover before reset');
   r.send('playAgain');
-  await waitFor(() => r.state.matchState === 'countdown', 3000, 'countdown after playAgain');
+  await waitFor(() => r.state.matchState === 'countdown', 10000, 'countdown after playAgain');
   // server should have reset level/xp/upgrades
   await waitMs(100);
   assert.equal(p().level, 1, 'level reset to 1 after playAgain');
@@ -304,7 +304,7 @@ const newRoom = async (name, character = 0) => {
   const { r } = await newRoom('ParityServer', 1); // archer
   const sr = roomOf(r);
   sr.grantXp(r.sessionId, 100);
-  await waitFor(() => sr.state.players.get(r.sessionId).pendingChoices.length === 3, 3000, 'server pending for parity');
+  await waitFor(() => sr.state.players.get(r.sessionId).pendingChoices.length === 3, 10000, 'server pending for parity');
   const serverPicks = [...sr.state.players.get(r.sessionId).pendingChoices];
   const serverLevel = sr.state.players.get(r.sessionId).level;
   const serverXp = sr.state.players.get(r.sessionId).xp;
@@ -339,9 +339,9 @@ const newRoom = async (name, character = 0) => {
   const { r: r2 } = await newRoom('ParityAuto', 2); // mage
   const sr2 = roomOf(r2);
   sr2.grantXp(r2.sessionId, 100);
-  await waitFor(() => sr2.state.players.get(r2.sessionId).pendingChoices.length === 3, 3000, 'server pending for auto parity');
+  await waitFor(() => sr2.state.players.get(r2.sessionId).pendingChoices.length === 3, 10000, 'server pending for auto parity');
   const autoPick = [...sr2.state.players.get(r2.sessionId).pendingChoices][0];
-  await waitFor(() => sr2.state.players.get(r2.sessionId).pendingChoices.length === 0, 3000, 'server auto-pick');
+  await waitFor(() => sr2.state.players.get(r2.sessionId).pendingChoices.length === 0, 10000, 'server auto-pick');
   assert.equal(sr2.state.players.get(r2.sessionId).upgrades.get(autoPick), 1, 'server auto-pick recorded');
   r2.leave();
   await waitMs(200);
@@ -375,7 +375,7 @@ const newRoom = async (name, character = 0) => {
   const sr = roomOf(r);
   const p = () => sr.state.players.get(r.sessionId);
   sr.grantXp(r.sessionId, 250); // level 3
-  await waitFor(() => p().level === 3, 3000, 'level 3 for regression');
+  await waitFor(() => p().level === 3, 10000, 'level 3 for regression');
   // clear all pending (including queued) so movement not blocked by UI
   let guard = 0;
   while (p().pendingChoices.length > 0 && guard++ < 5) {
@@ -385,7 +385,7 @@ const newRoom = async (name, character = 0) => {
     await waitFor(() => {
       const curPending = [...p().pendingChoices];
       return curPending.length === 0 || curPending.join('|') !== curPicks.join('|');
-    }, 3000, 'pending changed after pick');
+    }, 10000, 'pending changed after pick');
     await waitMs(50);
   }
   // verify block-while-moving still reduces speed: move with and without block

@@ -15,6 +15,7 @@ import { SERVER } from './config.js';
 import GameRoom from './rooms/GameRoom.js';
 import ArenaRoom from './rooms/ArenaRoom.js';
 import LobbyRoom from './rooms/LobbyRoom.js';
+import WorldRoom from './rooms/WorldRoom.js';
 import { log } from './log.js';
 import { createLiveReload } from './liveReload.js';
 
@@ -47,8 +48,7 @@ const liveRooms = () => {
   for (const room of GameRoom.instances) { players += room.state.players.size; rooms++; }
   for (const room of ArenaRoom.instances) { players += room.state.players.size; rooms++; }
   for (const room of LobbyRoom.instances) { players += room.state.players?.size ?? room.state.queueCount ?? 0; rooms++; }
-  // Also count any LobbyState queued? lobby players are not in state.players but in queueCount
-  // For metrics, players is total across all room types
+  for (const room of WorldRoom.instances) { players += room.state.players.size; rooms++; }
   return { rooms, players };
 };
 
@@ -93,13 +93,14 @@ export function buildHttpApp(app) {
   app.get('/metrics', (_req, res) => {
     const { rooms, players } = liveRooms();
     const cutoff = Date.now() - 1000;
-    // Merge stats from both game and arena rooms
     const gStats = GameRoom.stats;
     const aStats = ArenaRoom.stats;
+    const wStats = WorldRoom.stats;
     gStats.inputTimes = gStats.inputTimes.filter((t) => t >= cutoff);
     aStats.inputTimes = aStats.inputTimes.filter((t) => t >= cutoff);
-    const allInputs = gStats.inputTimes.length + aStats.inputTimes.length;
-    const lastTick = Math.max(gStats.lastTickMs, aStats.lastTickMs);
+    wStats.inputTimes = wStats.inputTimes.filter((t) => t >= cutoff);
+    const allInputs = gStats.inputTimes.length + aStats.inputTimes.length + wStats.inputTimes.length;
+    const lastTick = Math.max(gStats.lastTickMs, aStats.lastTickMs, wStats.lastTickMs);
     const lines = [
       '# HELP opengame_rooms Number of active game rooms',
       '# TYPE opengame_rooms gauge',

@@ -27,7 +27,21 @@ export const SERVER = {
   tickMs: Number(env.TICK_MS || 50),
 
   // Square arena centered on the origin: [-half, half] on both X and Z.
-  world: { size: 60 },
+  // Open world chunked generation (Phase 6) reuses the same world size for arena, but
+  // chunked generation is unbounded (chunk size 32, radius 2, seeded).
+  world: {
+    size: 60,
+    chunkSize: 32,
+    chunkRadius: 2,
+    seed: Number(env.WORLD_SEED || 1337),
+    activeChunkRadius: 2,
+  },
+
+  // Persistence: per-player JSON files `data/players/<name>.json`, debounced 2s (Phase 6).
+  persistence: {
+    dir: 'data/players',
+    debounceMs: 2000,
+  },
 
   // Match lifecycle: LOBBY -> COUNTDOWN -> PLAYING -> GAME_OVER.
   // Design choice (documented in README): with minPlayers = 1 the countdown
