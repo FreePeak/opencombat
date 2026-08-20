@@ -15,8 +15,9 @@ import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
-import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, joinErrorMessage, serverAvailable } from '../network.js';
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, joinErrorMessage, serverAvailable } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
+import { getUpgrade } from '../shared/progression.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
 import TouchControls from '../ui/TouchControls.js';
 
@@ -119,6 +120,13 @@ export default class GameScene {
     this.loginError = document.getElementById('login-error');
     this.loginBtn = document.getElementById('login-btn');
     this.netBadge = document.getElementById('net-badge');
+    // Phase 4: upgrade card overlay
+    this.upgradeOverlay = document.getElementById('upgrade-overlay');
+    this.upgradeGrid = document.getElementById('upgrade-grid');
+    this.upgradeTimer = document.getElementById('upgrade-timer');
+    this.upgradeTitle = document.getElementById('upgrade-title');
+    this._pendingChoicesStr = '';
+    this._upgradeDeadline = 0;
 
     // One overlay serves three ends: death (respawn), wave cleared (next
     // wave) and match end (again). Priority in that order on click.
@@ -309,6 +317,18 @@ export default class GameScene {
       const z = d?.z ?? this.local?.root.position.z ?? 0;
       this.floatTexts.spawn(x, 2.6, z, 'BLOCKED', '#7ec8ff');
       this.particles.spawnBurst({ x, y: 1.2, z }, CONFIG.effects.block.color, 14, 3, 0.45);
+    });
+
+    // Phase 4: leveling toasts + upgrade results
+    this.room.onMessage('levelUp', (d) => {
+      this.sound.powerUp();
+      const lvl = d?.level ?? '?';
+      this.floatTexts.spawn(this.local?.root.position.x ?? 0, 2.8, this.local?.root.position.z ?? 0, `LEVEL ${lvl}!`, '#ffd54f');
+    });
+    this.room.onMessage('upgradeResult', (d) => {
+      const name = getUpgrade(d?.picked)?.name ?? d?.picked ?? '';
+      const suffix = d?.auto ? ' (auto)' : '';
+      if (name) this.floatTexts.spawn(this.local?.root.position.x ?? 0, 2.6, this.local?.root.position.z ?? 0, name + suffix, '#a5d6a7');
     });
 
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
@@ -888,6 +908,55 @@ export default class GameScene {
     for (const name of [...this.lastEffects.keys()]) {
       if (!me.effects.has(name)) this.lastEffects.delete(name);
     }
+
+    // --- Level-up upgrade cards (Phase 4) --------------------------------
+    const pending = [...(me.pendingChoices ?? [])];
+    const pendingStr = pending.join('|');
+    if (pending.length > 0) {
+      if (pendingStr !== this._pendingChoicesStr) {
+        this._pendingChoicesStr = pendingStr;
+        this._upgradeDeadline = performance.now() + 10000;
+        this.upgradeTitle.textContent = `LEVEL ${me.level} — Choose an upgrade`;
+        this.upgradeGrid.innerHTML = '';
+        pending.forEach((id, idx) => {
+          const def = getUpgrade(id) ?? { name: id, desc: '' };
+          const card = document.createElement('div');
+          card.className = 'up-card';
+          card.innerHTML = `<div class="up-title">${idx + 1}. ${def.name}</div><div class="up-desc">${def.desc}</div>`;
+          card.addEventListener('click', () => {
+            sendChooseUpgrade(this.room, id);
+            this.upgradeOverlay.classList.remove('visible');
+          });
+          this.upgradeGrid.appendChild(card);
+        });
+        if (this._upgradeKeyHandler) window.removeEventListener('keydown', this._upgradeKeyHandler);
+        this._upgradeKeyHandler = (e) => {
+          if (e.key >= '1' && e.key <= '3') {
+            const i = Number(e.key) - 1;
+            if (pending[i]) sendChooseUpgrade(this.room, pending[i]);
+          }
+        };
+        window.addEventListener('keydown', this._upgradeKeyHandler);
+      }
+      const remain = Math.max(0, Math.ceil((this._upgradeDeadline - performance.now()) / 1000));
+      this.upgradeTimer.textContent = `auto-picks ${getUpgrade(pending[0])?.name ?? pending[0]} in ${remain}s — press 1/2/3 or click`;
+      this.upgradeOverlay.classList.add('visible');
+    } else if (this._pendingChoicesStr !== '') {
+      this._pendingChoicesStr = '';
+      this._upgradeDeadline = 0;
+      this.upgradeOverlay.classList.remove('visible');
+      if (this._upgradeKeyHandler) { window.removeEventListener('keydown', this._upgradeKeyHandler); this._upgradeKeyHandler = null; }
+    }
+
+    // HUD: show level + XP alongside score
+    this.hudText.textContent =
+      `Lv ${me.level} (${me.xp} XP)  wave ${state.wave}  score ${me.score}  players ${state.players.size}  target ${CONFIG.match.targetScore}` +
+      (state.matchState === 'intermission' ? '  ★ INVULNERABLE — wave cleared' : '') +
+      (me.blocking ? '  🛡 BLOCKING' : '') +
+      (pending.length ? '  ★ CHOOSE UPGRADE!' : '') +
+      (this.touchControls?.active
+        ? '  joystick move · ⚔ attack · ✨ skill · 🛡 block'
+        : '  WASD move · J attack · K skill · L block (hold) · M mute · 1/2/3 pick upgrade');
   }
 
   /** Billboarded nametags (name + HP) projected above each player. */

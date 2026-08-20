@@ -14,6 +14,10 @@ import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/comba
 import { attackFor } from './shared/classes.js';
 import { stepProjectile, projectileExpired, projectileHitsTarget,
          resolveProjectileEnemyHit, resolveProjectilePlayerHit } from './shared/projectiles.js';
+import { xpForLevel, rollUpgrades, getUpgrade,
+         effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
+         effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectiveXp, effectivePickupMult,
+         aggregateBonuses, AUTO_PICK_MS } from './shared/progression.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -48,6 +52,8 @@ export class LocalRoom {
     this._enemyStunUntil = new Map();  // enemy -> ms of HIT-STUN (no actions)
     this._pendingStrikes = [];         // {sid, at} — melee impacts land mid-swing
     this._projectileId = 0;           // monotonic ID for projectile spawn
+    this._pendingUntil = null;        // ms deadline for upgrade auto-pick (local player)
+    this._pendingQueue = [];          // queued level numbers waiting for card pick
     // Browsers drive the sim with rAF; headless environments (the test suite)
     // get a 16ms timer so the same room class runs in Node.
     this._raf = typeof requestAnimationFrame === 'function';
@@ -75,6 +81,7 @@ export class LocalRoom {
     else if (type === 'respawn') this._requestRespawn();
     else if (type === 'playAgain') this._resetMatch();
     else if (type === 'nextWave') this._requestNextWave();
+    else if (type === 'chooseUpgrade') this._chooseUpgrade(data?.choice ?? data?.id);
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -96,6 +103,12 @@ export class LocalRoom {
     me.character = clamp(character, 0, SERVER.characters.count - 1);
     me.color = SERVER.colors[0];
     me.hp = statsOf(me).hp; // Phase 3: per-class base HP
+    me.level = 1;
+    me.xp = 0;
+    while (me.pendingChoices.length) me.pendingChoices.pop();
+    me.upgrades.clear();
+    this._pendingUntil = null;
+    this._pendingQueue = [];
     this.state.players.set(this.sessionId, me);
     this._myPlayerId = this.sessionId;
 
@@ -177,10 +190,108 @@ export class LocalRoom {
     this.state.wave = n;
   }
 
+  // -------------------------------------------------------------------------
+  // Progression (Phase 4) — mirror of GameRoom progression logic
+  // -------------------------------------------------------------------------
+  _hashSeed(sid, level) {
+    let h = 0;
+    const s = sid + ':' + level;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h || 1;
+  }
+
+  _grantXp(baseXp) {
+    const me = this.state.players.get(this.sessionId);
+    if (!me) return;
+    const amt = effectiveXp(baseXp, me.upgrades);
+    if (amt <= 0) return;
+    me.xp += amt;
+    this._maybeLevelUp();
+  }
+
+  _maybeLevelUp() {
+    const me = this.state.players.get(this.sessionId);
+    if (!me) return;
+    while (me.xp >= xpForLevel(me.level + 1)) {
+      const nextLevel = me.level + 1;
+      if (me.pendingChoices.length > 0 || this._pendingQueue.length > 0) {
+        me.level = nextLevel;
+        this._pendingQueue.push(nextLevel);
+        continue;
+      }
+      me.level = nextLevel;
+      const seed = this._hashSeed(this.sessionId, me.level);
+      const picks = rollUpgrades(seed, me.character, me.upgrades);
+      while (me.pendingChoices.length) me.pendingChoices.pop();
+      for (const id of picks) me.pendingChoices.push(id);
+      const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
+      this._pendingUntil = performance.now() + ms;
+      this._emitMessage('levelUp', { level: me.level, choices: picks });
+    }
+  }
+
+  _showNextQueued() {
+    const me = this.state.players.get(this.sessionId);
+    if (!me || this._pendingQueue.length === 0) return;
+    const lvl = this._pendingQueue.shift();
+    const seed = this._hashSeed(this.sessionId, lvl);
+    const picks = rollUpgrades(seed, me.character, me.upgrades);
+    while (me.pendingChoices.length) me.pendingChoices.pop();
+    for (const id of picks) me.pendingChoices.push(id);
+    const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
+    this._pendingUntil = performance.now() + ms;
+    this._emitMessage('levelUp', { level: lvl, choices: picks });
+  }
+
+  _applyUpgrade(id) {
+    const me = this.state.players.get(this.sessionId);
+    if (!me) return false;
+    const def = getUpgrade(id);
+    if (!def) return false;
+    const cur = me.upgrades.get(id) || 0;
+    if (cur >= (def.maxStacks ?? 99)) return false;
+    me.upgrades.set(id, cur + 1);
+    if (id === 'vitality') {
+      const maxHp = effectiveMaxHp(me.character, me.upgrades);
+      me.hp = Math.min(maxHp, me.hp + 30);
+    }
+    return true;
+  }
+
+  _checkAutoPicks() {
+    const me = this.state.players.get(this.sessionId);
+    if (!me || me.pendingChoices.length === 0 || this._pendingUntil == null) return;
+    if (performance.now() < this._pendingUntil) return;
+    const auto = me.pendingChoices[0];
+    while (me.pendingChoices.length) me.pendingChoices.pop();
+    this._pendingUntil = null;
+    this._applyUpgrade(auto);
+    this._emitMessage('upgradeResult', { picked: auto, auto: true });
+    if (this._pendingQueue.length > 0) this._showNextQueued();
+    else this._maybeLevelUp();
+  }
+
+  _chooseUpgrade(choice) {
+    const me = this.state.players.get(this.sessionId);
+    if (!me || me.pendingChoices.length === 0) return;
+    const c = String(choice || '');
+    if (!me.pendingChoices.includes(c)) return;
+    while (me.pendingChoices.length) me.pendingChoices.pop();
+    this._pendingUntil = null;
+    const ok = this._applyUpgrade(c);
+    if (!ok) return;
+    this._emitMessage('upgradeResult', { picked: c, auto: false });
+    if (this._pendingQueue.length > 0) this._showNextQueued();
+    else this._maybeLevelUp();
+  }
+
   _step(dt) {
     const half = SERVER.world.size / 2;
     const players = this.state.players;
     const me = players.get(this.sessionId);
+
+    // Phase 4: auto-pick stalled upgrade cards
+    this._checkAutoPicks();
 
     // Countdown
     if (this.state.matchState === 'countdown') {
@@ -222,6 +333,7 @@ export class LocalRoom {
       const dirX = inX;
       const dirZ = inZ;
       const speed = (statsOf(me).speed ?? SERVER.player.speed) *
+        effectiveSpeedMult(me.upgrades) *
         (me.blocking ? SERVER.player.blockSpeedMult : 1);
       const moved = stepPlayer(me.x, me.z, me.rotY, dirX, dirZ, speed, dt, half);
       me.x = moved.x;
@@ -232,7 +344,8 @@ export class LocalRoom {
       // SCHEDULED: damage lands attackImpactMs in, aligned with the swing.
       // Ranged classes (archer/mage/demon) fire a projectile instead.
       if (playing && this._playerInput.attack && me.attackCd <= 0 && !me.blocking) {
-        me.attackCd = SERVER.player.attackCooldownMs;
+        const cd = SERVER.player.attackCooldownMs * effectiveAttackCdMult(me.upgrades);
+        me.attackCd = cd;
         me.anim = 'attack';
         me.animUntil = performance.now() + SERVER.player.attackAnimMs;
         const atk = attackFor(me.character);
@@ -246,8 +359,9 @@ export class LocalRoom {
       // Skill (K) — same gating as the melee; skills resolve at cast (their
       // VFX burst reads as the hit moment). Works while moving.
       if (playing && this._playerInput.skill && me.skillCd <= 0 && !me.blocking) {
-        const skill = skillFor(me.character);
-        me.skillCd = skill.cooldownMs;
+        const baseSkill = skillFor(me.character);
+        const skill = effectiveSkill(baseSkill, me.upgrades);
+        me.skillCd = skill.cooldownMs * effectiveSkillCdMult(me.upgrades);
         me.anim = 'skill';
         me.animUntil = performance.now() + skill.animMs;
         this._resolveSkill(me, skill);
@@ -352,11 +466,13 @@ export class LocalRoom {
     for (const orb of this.state.orbs) {
       for (const p of players.values()) {
         if (p.hp <= 0) continue;
+        const mult = effectivePickupMult(p.upgrades);
         const d = Math.hypot(p.x - orb.x, p.z - orb.z);
-        if (d <= SERVER.orb.radius + SERVER.player.radius) {
+        if (d <= (SERVER.orb.radius * mult) + SERVER.player.radius) {
           let score = SERVER.orb.score;
           if (p.effects.has('double')) score *= 2;
           p.score += score;
+          if (p === this.state.players.get(this.sessionId)) this._grantXp(SERVER.progression?.xpPerOrb ?? 20);
           // Respawn orb
           const pos = randomInCircle(this._rng, half - 2);
           orb.x = pos.x;
@@ -371,8 +487,9 @@ export class LocalRoom {
       if (!pu.active) continue;
       for (const p of players.values()) {
         if (p.hp <= 0) continue;
+        const mult = effectivePickupMult(p.upgrades);
         const d = Math.hypot(p.x - pu.x, p.z - pu.z);
-        if (d <= SERVER.powerUps.radius + SERVER.player.radius) {
+        if (d <= (SERVER.powerUps.radius * mult) + SERVER.player.radius) {
           pu.active = false;
           p.effects.set(pu.type, pu.type === 'speed' ? SERVER.powerUps.speed.durationMs
                           : pu.type === 'shield' ? SERVER.powerUps.shield.durationMs
@@ -404,12 +521,15 @@ export class LocalRoom {
   }
 
   /** Shared enemy-hit resolution (mirror of GameRoom.hitEnemy): knockback,
-   *  HIT-STUN on survivors, stay-dead + kill score on kills. */
+   *  HIT-STUN on survivors, stay-dead + kill score + XP on kills. */
   _hitEnemy(enemy, damage, srcX, srcZ, killer) {
     const { hit, killed } = strikeEnemy(enemy, damage, srcX, srcZ, SERVER.enemy.hitKnockback, SERVER.world.size / 2);
     if (!hit) return false;
     if (killed) {
-      if (killer) killer.score += SERVER.enemy.killScore;
+      if (killer) {
+        killer.score += SERVER.enemy.killScore;
+        if (killer === this.state.players.get(this.sessionId)) this._grantXp(SERVER.progression?.xpPerKill ?? 30);
+      }
       return true;
     }
     const now = performance.now();
@@ -421,8 +541,7 @@ export class LocalRoom {
 
   _resolveMelee(attacker) {
     // Shared arc math: which enemies this swing covers (dead ones skipped).
-    const stats = statsOf(attacker); // Phase 3: per-class melee numbers
-    const dmg = stats.meleeDamage ?? SERVER.player.attackDamage;
+    const dmg = effectiveMeleeDamage(attacker.character, attacker.upgrades);
     for (const i of meleeHits(attacker, this.state.enemies, SERVER.player)) {
       const enemy = this.state.enemies[i];
       // Hit: the enemy stays down at 0 HP until the next wave revives
@@ -457,7 +576,10 @@ export class LocalRoom {
           const { hit, killed } = strikeEnemy(enemy, dmg, caster.x, caster.z, skill.knockback, SERVER.world.size / 2);
           if (hit) {
             if (killed) {
-              if (caster) caster.score += SERVER.enemy.killScore;
+              if (caster) {
+                caster.score += SERVER.enemy.killScore;
+                if (caster === this.state.players.get(this.sessionId)) this._grantXp(SERVER.progression?.xpPerKill ?? 30);
+              }
             } else {
               enemy.anim = 'hit';
               this._enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
@@ -505,7 +627,7 @@ export class LocalRoom {
       player.x, player.z, fx, fz
     );
     proj.speed = atkDef.speed;
-    proj.damage = atkDef.damage;
+    proj.damage = effectiveRangedDamage(player.character, player.upgrades);
     proj.ttl = atkDef.ttlMs;
     proj.ownerIsPlayer = true;
     this.state.projectiles.push(proj);
@@ -607,7 +729,7 @@ export class LocalRoom {
   _requestRespawn() {
     const me = this.state.players.get(this.sessionId);
     if (me && me.hp <= 0 && this.state.matchState !== 'gameover') {
-      me.hp = statsOf(me).hp; // Phase 3: per-class base HP
+      me.hp = effectiveMaxHp(me.character, me.upgrades);
       me.x = 0;
       me.z = 0;
       me.rotY = 0;
@@ -641,17 +763,23 @@ export class LocalRoom {
     this._pendingStrikes = [];
     this.state.projectiles.clear();
 
-    // Reset local player
+    // Reset local player (Phase 4: back to level 1, no upgrades)
     const me = this.state.players.get(this.sessionId);
     if (me) {
       me.x = 0; me.z = 0; me.rotY = 0;
-      me.hp = statsOf(me).hp; // Phase 3: per-class base HP
+      me.hp = statsOf(me).hp; // base; upgrades cleared next line
       me.score = 0;
       me.anim = 'idle';
       me.blocking = false;
       me.effects.clear();
       me.attackCd = 0;
       me.skillCd = 0;
+      me.level = 1;
+      me.xp = 0;
+      while (me.pendingChoices.length) me.pendingChoices.pop();
+      me.upgrades.clear();
+      this._pendingUntil = null;
+      this._pendingQueue = [];
     }
 
     // Reset orbs

@@ -88,3 +88,8 @@ export function sendPlayAgain(room) {
 export function sendNextWave(room) {
   room.send('nextWave');
 }
+
+/** Pick one of the 3 upgrade cards after leveling (Phase 4). */
+export function sendChooseUpgrade(room, choice) {
+  room.send('chooseUpgrade', { choice });
+}

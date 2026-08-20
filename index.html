@@ -86,6 +86,15 @@
     #reconnect.visible { display: grid; }
     #reconnect .card { color: #fff; font-size: 20px; text-align: center; }
     #reconnect .sub { color: #bbb; font-size: 13px; margin-top: 8px; }
+    #upgrade-overlay { position: fixed; inset: 0; display: none; place-items: center; z-index: 22; background: #0007; }
+    #upgrade-overlay.visible { display: grid; }
+    #upgrade-overlay .upgrade-grid { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    #upgrade-overlay .up-card { width: 180px; min-height: 120px; background: #1b2332; border: 1px solid #4caf50; border-radius: 10px;
+      padding: 12px; color: #fff; text-align: center; cursor: pointer; transition: transform .12s, border-color .12s; }
+    #upgrade-overlay .up-card:hover { transform: translateY(-4px); border-color: #ffd54f; }
+    #upgrade-overlay .up-title { font-size: 14px; font-weight: bold; color: #ffd54f; margin-bottom: 6px; }
+    #upgrade-overlay .up-desc { font-size: 12px; color: #ccc; }
+    #upgrade-overlay .up-timer { margin-top: 10px; font-size: 12px; color: #aaa; }
     #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #ccc; font-size: 15px; z-index: 5; }
     #nametag-layer { position: fixed; inset: 0; z-index: 8; pointer-events: none; }
     .nametag { position: absolute; top: 0; left: 0; transform: translate(-50%, -100%);
@@ -117,6 +126,13 @@
   </div>
   <div id="reconnect">
     <div class="card">connection lost<div class="sub">retrying…</div></div>
+  </div>
+  <div id="upgrade-overlay">
+    <div style="text-align:center;">
+      <div id="upgrade-title" style="color:#fff;font-size:20px;margin-bottom:12px;">LEVEL UP! Choose an upgrade</div>
+      <div id="upgrade-grid" class="upgrade-grid"></div>
+      <div id="upgrade-timer" class="up-timer"></div>
+    </div>
   </div>
   <div id="login">
     <div class="card">

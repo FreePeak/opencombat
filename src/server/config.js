@@ -130,6 +130,13 @@ export const SERVER = {
   // (stable across joins/reconnects).
   colors: [0xff8a65, 0xffd54f, 0xce93d8, 0xa5d6a7, 0xf48fb1, 0x90caf9, 0x4fc3f7],
 
+  // Progression (Phase 4): leveling + upgrade cards.
+  progression: {
+    xpPerOrb: 20,               // XP per orb collected
+    xpPerKill: 30,              // XP per enemy kill
+    autoPickMs: 10000           // auto-pick first card after this long
+  },
+
   // Playable character roster size — mirrors the length of CONFIG.characters
   // in the client config (src/config.js). Join options are clamped to this.
   characters: { count: 4 },

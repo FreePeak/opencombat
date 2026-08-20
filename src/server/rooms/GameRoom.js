@@ -27,6 +27,10 @@ import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/c
 import { attackFor } from '../../shared/classes.js';
 import { stepProjectile, projectileExpired, projectileHitsTarget,
          resolveProjectileEnemyHit, resolveProjectilePlayerHit } from '../../shared/projectiles.js';
+import { xpForLevel, rollUpgrades, getUpgrade, aggregateBonuses,
+         effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
+         effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectiveXp, effectivePickupMult,
+         AUTO_PICK_MS } from '../../shared/progression.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -67,6 +71,8 @@ export default class GameRoom extends Room {
     this.pendingMelee = [];      // {sid, at} — impacts land mid-swing, not at press
     this.powerUpTimers = new Map(); // powerUp -> seconds until it respawns
     this._projectileId = 0;        // monotonic ID for projectile spawn
+    this.pendingUntil = new Map(); // sid -> ms deadline for upgrade auto-pick
+    this.pendingQueue = new Map(); // sid -> queued level-ups waiting for card pick
 
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
@@ -85,6 +91,7 @@ export default class GameRoom extends Room {
     // whole room — the popup on the other clients closes when the shared
     // matchState moves to 'countdown'.
     this.onMessage('nextWave', (client) => this.onNextWave(client));
+    this.onMessage('chooseUpgrade', (client, msg) => this.onChooseUpgrade(client, msg));
 
     // --- Fixed-timestep loop, dt from REAL elapsed time ------------------
     // this.clock.setInterval drifts under load (GC, event-loop stalls); the
@@ -207,6 +214,11 @@ export default class GameRoom extends Room {
       player.character = this.sanitizeCharacter(options.character);
       player.hp = statsOf(player).hp; // Phase 3: per-class base HP
       player.color = SERVER.colors[nameHash(name) % SERVER.colors.length];
+      // Phase 4: leveling defaults (schema already defaults these, be explicit)
+      player.level = 1;
+      player.xp = 0;
+      while (player.pendingChoices.length) player.pendingChoices.pop();
+      player.upgrades.clear();
       this.state.players.set(client.sessionId, player);
       this.logEvent('player_join', { sid: client.sessionId, name, players: this.state.players.size });
     }
@@ -263,6 +275,8 @@ export default class GameRoom extends Room {
     this.invulnUntil.delete(sid);
     this.animUntil.delete(sid);
     this.msgTimes.delete(sid);
+    this.pendingUntil.delete(sid);
+    this.pendingQueue?.delete(sid);
     const t = this.graceTimers.get(sid);
     if (t) { clearTimeout(t); this.graceTimers.delete(sid); }
     this.logEvent('player_remove', { sid, players: this.state.players.size });
@@ -277,6 +291,151 @@ export default class GameRoom extends Room {
   randomPos() {
     const m = this.half - 1.5;
     return { x: -m + Math.random() * m * 2, z: -m + Math.random() * m * 2 };
+  }
+
+  // -------------------------------------------------------------------------
+  // Progression (Phase 4): XP, level-up, upgrade cards
+  // -------------------------------------------------------------------------
+
+  /** Grant `baseXp` to `sid`, respecting the Scholar bonus, then maybe level up. */
+  grantXp(sid, baseXp) {
+    const player = this.state.players.get(sid);
+    if (!player) return;
+    const amt = effectiveXp(baseXp, player.upgrades);
+    if (amt <= 0) return;
+    player.xp += amt;
+    this.logEvent('xp_gain', { sid, amount: amt, total: player.xp });
+    this.maybeLevelUp(sid);
+  }
+
+  /** While XP suffices for the next level, level up and roll 3 choices (or queue). */
+  maybeLevelUp(sid) {
+    const player = this.state.players.get(sid);
+    if (!player) return;
+    // Ensure queue storage exists
+    if (!this.pendingQueue) this.pendingQueue = new Map();
+    let queue = this.pendingQueue.get(sid);
+    if (!queue) { queue = []; this.pendingQueue.set(sid, queue); }
+    while (player.xp >= xpForLevel(player.level + 1)) {
+      const nextLevel = player.level + 1;
+      // If a card is already showing or there is a queue, don't show the new
+      // level's cards immediately — level still increments (so the HUD updates)
+      // but the cards are queued for after the current pick(s).
+      if (player.pendingChoices.length > 0 || queue.length > 0) {
+        player.level = nextLevel;
+        queue.push(nextLevel);
+        this.logEvent('level_queued', { sid, level: player.level, queued: queue.length });
+        continue;
+      }
+      player.level = nextLevel;
+      const seed = this.hashSeed(sid, player.level);
+      const picks = rollUpgrades(seed, player.character, player.upgrades);
+      // ArraySchema: clear then push
+      while (player.pendingChoices.length) player.pendingChoices.pop();
+      for (const id of picks) player.pendingChoices.push(id);
+      const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
+      this.pendingUntil.set(sid, Date.now() + ms);
+      this.logEvent('level_up', { sid, level: player.level, choices: picks });
+      // Tell the client via state patch + direct message for toast.
+      const client = this.clients.find((c) => c.sessionId === sid);
+      client?.send('levelUp', { level: player.level, choices: picks });
+    }
+  }
+
+  /** Pop the next queued level-up (if any) and show its cards. */
+  showNextQueued(sid) {
+    const player = this.state.players.get(sid);
+    if (!player) return;
+    const queue = this.pendingQueue?.get(sid);
+    if (!queue || queue.length === 0) return;
+    const lvl = queue.shift(); // next queued level number
+    // The player's level already reflects this queued level (incremented earlier),
+    // so seed for `lvl` is correct. If queue had multiple, `lvl` is the smallest.
+    const seed = this.hashSeed(sid, lvl);
+    const picks = rollUpgrades(seed, player.character, player.upgrades);
+    while (player.pendingChoices.length) player.pendingChoices.pop();
+    for (const id of picks) player.pendingChoices.push(id);
+    const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
+    this.pendingUntil.set(sid, Date.now() + ms);
+    this.logEvent('level_up_queued_show', { sid, level: lvl, choices: picks });
+    const client = this.clients.find((c) => c.sessionId === sid);
+    client?.send('levelUp', { level: lvl, choices: picks });
+  }
+
+  hashSeed(sid, level) {
+    // Deterministic seed from sid + level (so the same level-up for the same
+    // player always rolls the same 3 cards, but different players/levels differ).
+    let h = 0;
+    const s = sid + ':' + level;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h || 1;
+  }
+
+  /** Apply `upgradeId` to `player` (sid for logging), returns true if applied. */
+  applyUpgrade(player, sid, upgradeId) {
+    const def = getUpgrade(upgradeId);
+    if (!def) return false;
+    const cur = player.upgrades.get(upgradeId) || 0;
+    if (cur >= (def.maxStacks ?? 99)) return false;
+    player.upgrades.set(upgradeId, cur + 1);
+    // Vitality: immediately heal the bonus so the pick feels impactful.
+    if (upgradeId === 'vitality') {
+      const maxHp = effectiveMaxHp(player.character, player.upgrades);
+      player.hp = Math.min(maxHp, player.hp + 30);
+    }
+    this.logEvent('upgrade_pick', { sid, upgradeId, stacks: cur + 1, level: player.level });
+    return true;
+  }
+
+  /** Auto-pick deadline check: every tick. */
+  checkAutoPicks() {
+    const now = Date.now();
+    for (const [sid, deadline] of [...this.pendingUntil.entries()]) {
+      if (now < deadline) continue;
+      const player = this.state.players.get(sid);
+      if (!player || player.pendingChoices.length === 0) {
+        this.pendingUntil.delete(sid);
+        continue;
+      }
+      const auto = player.pendingChoices[0];
+      this.logEvent('upgrade_auto_pick', { sid, upgradeId: auto });
+      while (player.pendingChoices.length) player.pendingChoices.pop();
+      this.pendingUntil.delete(sid);
+      this.applyUpgrade(player, sid, auto);
+      const client = this.clients.find((c) => c.sessionId === sid);
+      client?.send('upgradeResult', { picked: auto, auto: true });
+      // If there are queued level-ups, show the next one; otherwise check for new XP-based levels.
+      const queue = this.pendingQueue?.get(sid);
+      if (queue && queue.length > 0) this.showNextQueued(sid);
+      else this.maybeLevelUp(sid);
+    }
+  }
+
+  /** Player picks one of their 3 pending upgrade cards. */
+  onChooseUpgrade(client, msg = {}) {
+    const sid = client.sessionId;
+    const player = this.state.players.get(sid);
+    if (!player) return;
+    if (player.pendingChoices.length === 0) {
+      this.warnEvent('upgrade_rejected', { sid, reason: 'no_pending' });
+      return;
+    }
+    const choice = String(msg.choice ?? msg.id ?? '');
+    if (!player.pendingChoices.includes(choice)) {
+      this.warnEvent('upgrade_rejected', { sid, reason: 'not_offered', choice });
+      return;
+    }
+    while (player.pendingChoices.length) player.pendingChoices.pop();
+    this.pendingUntil.delete(sid);
+    const ok = this.applyUpgrade(player, sid, choice);
+    if (!ok) {
+      this.warnEvent('upgrade_rejected', { sid, reason: 'apply_failed', choice });
+      return;
+    }
+    client.send('upgradeResult', { picked: choice, auto: false });
+    const queue = this.pendingQueue?.get(sid);
+    if (queue && queue.length > 0) this.showNextQueued(sid);
+    else this.maybeLevelUp(sid);
   }
 
   /** LOBBY -> COUNTDOWN. Scores/world were reset by the caller if needed. */
@@ -320,6 +479,11 @@ export default class GameRoom extends Room {
       player.attackCd = 0;
       player.skillCd = 0;
       player.effects.clear(); // buffs never carry into the next match
+      // Phase 4: fresh match = back to level 1, no cards
+      player.level = 1;
+      player.xp = 0;
+      while (player.pendingChoices.length) player.pendingChoices.pop();
+      player.upgrades.clear();
     }
     // Scratch state: no stale cooldowns/input intents across matches.
     for (const sid of state.players.keys()) {
@@ -328,6 +492,8 @@ export default class GameRoom extends Room {
       this.skillAt.set(sid, 0);
       this.invulnUntil.set(sid, 0);
       this.animUntil.set(sid, 0);
+      this.pendingUntil.delete(sid);
+      this.pendingQueue?.delete(sid);
     }
     state.winnerId = '';
     state.winnerName = '';
@@ -425,7 +591,8 @@ export default class GameRoom extends Room {
       } else if (blocking) {
         reject('blocking');
       } else {
-        this.attackAt.set(sid, now + SERVER.player.attackCooldownMs);
+        const cdMs = SERVER.player.attackCooldownMs * effectiveAttackCdMult(player.upgrades);
+        this.attackAt.set(sid, now + cdMs);
         this.animUntil.set(sid, now + SERVER.player.attackAnimMs);
         player.anim = 'attack'; // movePlayers preserves this during animUntil
         // IMPACT ALIGNMENT: the swing starts now but the damage lands at
@@ -468,7 +635,7 @@ export default class GameRoom extends Room {
     const p = this.randomPos();
     player.x = p.x;
     player.z = p.z;
-    player.hp = statsOf(player).hp; // Phase 3: per-class base HP
+    player.hp = effectiveMaxHp(player.character, player.upgrades);
     player.anim = 'idle';
     player.blocking = false;
     player.attackCd = 0;
@@ -544,7 +711,12 @@ export default class GameRoom extends Room {
     const { hit, killed } = strikeEnemy(enemy, damage, srcX, srcZ, SERVER.enemy.hitKnockback, this.half);
     if (!hit) return false;
     if (killed) {
-      if (killer) killer.score += SERVER.enemy.killScore;
+      if (killer) {
+        killer.score += SERVER.enemy.killScore;
+        // Phase 4: XP on kill
+        const sid = [...this.state.players.entries()].find(([, p]) => p === killer)?.[0];
+        if (sid) this.grantXp(sid, SERVER.progression?.xpPerKill ?? 30);
+      }
       this.logEvent('enemy_killed', { wave: this.state.wave, by: killer?.name });
       return true;
     }
@@ -570,7 +742,7 @@ export default class GameRoom extends Room {
     player.anim = 'attack'; // movePlayers preserves this during animUntil
     const cfg = SERVER.player;
     const stats = statsOf(player); // Phase 3: per-class melee numbers
-    const dmg = stats.meleeDamage ?? cfg.attackDamage;
+    const dmg = effectiveMeleeDamage(player.character, player.upgrades);
     const pvpDmg = stats.meleePvpDamage ?? cfg.attackPvpDamage;
     // Shared arc math: which enemies (and players) this swing covers.
     for (const i of meleeHits(player, [...this.state.enemies], cfg)) {
@@ -597,10 +769,13 @@ export default class GameRoom extends Room {
     const state = this.state;
     const player = state.players.get(sid);
     if (!player || player.hp <= 0) return;
-    const def = skillFor(player.character);
+    const baseDef = skillFor(player.character);
+    // Phase 4: skill-specific upgrades (damage, count, stun)
+    const def = effectiveSkill(baseDef, player.upgrades);
     const now = Date.now();
     if (now < this.skillAt.get(sid)) return; // belt + braces (onInput gates too)
-    this.skillAt.set(sid, now + def.cooldownMs);
+    const skillCd = def.cooldownMs * effectiveSkillCdMult(player.upgrades);
+    this.skillAt.set(sid, now + skillCd);
     this.animUntil.set(sid, now + def.animMs); // anim='skill' window
     player.anim = 'skill'; // movePlayers preserves this during animUntil
 
@@ -642,6 +817,7 @@ export default class GameRoom extends Room {
           if (hit) {
             if (killed) {
               player.score += SERVER.enemy.killScore;
+              this.grantXp(sid, SERVER.progression?.xpPerKill ?? 30);
               this.logEvent('enemy_killed', { wave: state.wave, by: player.name });
             } else {
               enemy.anim = 'hit';
@@ -700,7 +876,11 @@ export default class GameRoom extends Room {
       fz
     );
     proj.speed = atkDef.speed;
-    proj.damage = atkDef.damage;
+    // Phase 4: sharpshooter stacks boost projectile damage
+    const effDmg = (atkDef.kind === 'projectile')
+      ? effectiveRangedDamage(player.character, player.upgrades)
+      : atkDef.damage;
+    proj.damage = effDmg;
     proj.ttl = atkDef.ttlMs;
     proj.ownerIsPlayer = true;
     this.state.projectiles.push(proj);
@@ -784,6 +964,9 @@ export default class GameRoom extends Room {
       this.lastActiveAt = Date.now();
     }
 
+    // Phase 4: auto-pick stalled upgrade cards (PvP must never block)
+    this.checkAutoPicks();
+
     switch (state.matchState) {
       case 'lobby':
         // Free movement so players can warm up; no pickups, no enemies.
@@ -828,6 +1011,7 @@ export default class GameRoom extends Room {
       const dirX = intent.dirX;
       const dirZ = intent.dirZ;
       const speed = (statsOf(player).speed ?? SERVER.player.speed) *
+        effectiveSpeedMult(player.upgrades) *
         (player.blocking ? SERVER.player.blockSpeedMult : 1) *
         (player.effects.has('speed') ? SERVER.powerUps.speed.multiplier : 1);
       // RC7: attacking/casting NEVER blocks movement — a player can move and
@@ -950,12 +1134,14 @@ export default class GameRoom extends Room {
     const orbScore = (player) =>
       SERVER.orb.score * (player.effects.has('double') ? SERVER.powerUps.double.multiplier : 1);
     for (const orb of state.orbs) {
-      for (const player of state.players.values()) {
+      for (const [sid, player] of state.players) {
         if (player.hp <= 0) continue; // corpses cannot collect
+        const radius = SERVER.orb.radius * effectivePickupMult(player.upgrades);
         const dx = orb.x - player.x;
         const dz = orb.z - player.z;
-        if (dx * dx + dz * dz < SERVER.orb.radius * SERVER.orb.radius) {
+        if (dx * dx + dz * dz < radius * radius) {
           player.score += orbScore(player);
+          this.grantXp(sid, SERVER.progression?.xpPerOrb ?? 20);
           const p = this.randomPos();
           orb.x = p.x;
           orb.z = p.z;
@@ -982,9 +1168,10 @@ export default class GameRoom extends Room {
       const cfg = SERVER.powerUps[pu.type];
       for (const player of state.players.values()) {
         if (player.hp <= 0) continue; // corpses cannot collect
+        const radius = SERVER.powerUps.radius * effectivePickupMult(player.upgrades);
         const dx = pu.x - player.x;
         const dz = pu.z - player.z;
-        if (dx * dx + dz * dz < SERVER.powerUps.radius * SERVER.powerUps.radius) {
+        if (dx * dx + dz * dz < radius * radius) {
           player.effects.set(pu.type, cfg.durationMs); // replace timer on re-pickup
           pu.active = false;
           this.powerUpTimers.set(pu, SERVER.powerUps.respawnSeconds);

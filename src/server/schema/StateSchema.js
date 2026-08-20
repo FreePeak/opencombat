@@ -27,6 +27,11 @@ export class PlayerState extends Schema {
     this.attackCd = 0;        // ms until J works again (HUD bar + anti-cheat)
     this.skillCd = 0;         // ms until K (the per-character skill) works again
     this.blocking = false;    // L held: guarding — negates frontal hits
+    // Phase 4: leveling + upgrade cards
+    this.level = 1;
+    this.xp = 0;
+    this.pendingChoices = new ArraySchema(); // 3 ids while a level-up is pending (empty otherwise)
+    this.upgrades = new MapSchema();        // upgrade id -> stack count
   }
 }
 defineTypes(PlayerState, {
@@ -41,7 +46,11 @@ defineTypes(PlayerState, {
   effects: { map: 'number' },
   attackCd: 'number',
   skillCd: 'number',
-  blocking: 'boolean'
+  blocking: 'boolean',
+  level: 'number',
+  xp: 'number',
+  pendingChoices: ['string'],
+  upgrades: { map: 'number' }
 });
 
 // One collectible. Shared pool: first player within radius wins, the orb

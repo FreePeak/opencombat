@@ -79,12 +79,16 @@ Replace the shared skill roster with distinct class identities.
   exception (procedural animation now, Mixamo re-export later —
   `knight_mixamo.glb` only has Attack/Idle/Run).
 
-## Phase 4 — Leveling + upgrade cards
+## Phase 4 — Leveling + upgrade cards ✅ DONE
 
 - `src/shared/progression.js`: `xpForLevel`, seeded `rollUpgrades` → 3
   choices, ~16 upgrades (passives + skill-specific).
 - PlayerState grows `level / xp / upgrades / pendingChoices`.
 - 10s auto-pick timer so PvP never stalls on an unpicked card.
+- Server-authoritative XP (orb + kill, scholar bonus), queued level-ups,
+  pendingChoices + autoPickMs, vitality heal, swift/heavy_hand/etc. via
+  effective* helpers; GameRoom + LocalRoom parity tested; client upgrade
+  overlay (1/2/3 click, auto timer) + HUD level/XP.
 
 ## Phase 5 — Story + PvP arena
 
