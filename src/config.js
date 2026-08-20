@@ -78,11 +78,17 @@ export const CONFIG = {
 
   // Renderer quality knobs: dpr clamp avoids fill-rate blowups on retina
   // screens; shadows can be disabled for low-end clients (DISABLE_SHADOWS
-  // env -> /env.js -> window.__OPENGAME__.shadows).
+  // env -> /env.js -> window.__OPENGAME__.shadows). Bloom (Phase 6) is
+  // gated behind this flag + env.js (ENABLE_BLOOM), default OFF until
+  // perf-verified at 60fps dpr2.
   renderer: {
     dprMax: 2,
     shadowMapSize: 2048,
-    shadows: env.shadows !== false
+    shadows: env.shadows !== false,
+    bloom: env.bloom === true,
+    bloomStrength: 0.35,
+    bloomRadius: 0.6,
+    bloomThreshold: 0.8
   },
 
   // Loading guard: the join click fails with a clear message if the GLB

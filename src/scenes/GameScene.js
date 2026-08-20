@@ -23,7 +23,10 @@ import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/
 import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
-import { makeTuftGeometry, makeFlowerGeometry } from '../client/Grass.js';
+import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 /** Login-screen game modes. `offline` = can fall back to the browser-local
  * solo simulation when no server is reachable (PvP needs opponents and the
@@ -60,6 +63,7 @@ export default class GameScene {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
+      if (this.composer) this.composer.setSize(window.innerWidth, window.innerHeight);
     });
 
     this.scene = new THREE.Scene();
@@ -83,6 +87,24 @@ export default class GameScene {
     sun.shadow.camera.bottom = -35;
     sun.shadow.camera.far = 80;
     this.scene.add(hemi, sun);
+
+    // --- Bloom: EffectComposer + UnrealBloomPass (ARTWORK_PLAN phase 6, gated) ---
+    // Default OFF until perf-verified (60fps at dpr 2). When ENABLE_BLOOM=1 the
+    // server injects bloom:true via /env.js -> CONFIG.renderer.bloom; the
+    // composer path is used instead of the direct renderer render.
+    this.composer = null;
+    this.bloomPass = null;
+    if (CONFIG.renderer.bloom) {
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        CONFIG.renderer.bloomStrength,
+        CONFIG.renderer.bloomRadius,
+        CONFIG.renderer.bloomThreshold
+      );
+      this.composer.addPass(this.bloomPass);
+    }
 
     // --- FX: pooled particles + floating numbers (Upgrade C/F) ----------
     this.sound = new SoundManager();
@@ -627,28 +649,45 @@ export default class GameScene {
     this.enemies.set(i, e);
   }
 
-  /** Create an orb mesh (positions are read from state every frame). */
+  /** Create an orb mesh — crystal orb (Icosahedron + emissive pulse, Phase 5). */
   addOrb(i, orb) {
     const mesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.45, 1),
+      makeOrbGeometry(),
       new THREE.MeshStandardMaterial({ color: CONFIG.colors.orb, emissive: 0x22aa22, emissiveIntensity: 0.6 })
     );
+    mesh.name = 'orb';
+    mesh.userData.pickupType = 'orb';
     mesh.position.set(orb.x, CONFIG.orb.y, orb.z);
     this.scene.add(mesh);
     this.orbViews[i] = { mesh, state: orb };
   }
 
-  /** Create a power-up orb (pooled slot; pulsing + glow, per Upgrade B). */
+  /** Create a power-up with distinct silhouette per type (Phase 5).
+   *  speed = chevron cone (arrow), shield = translucent bubble sphere,
+   *  double = stacked coins (two cylinders in a Group). */
   addPowerUp(i, pu) {
     const type = pu.type || 'speed';
     const color = CONFIG.powerUps.colors[type] ?? 0xffffff;
-    const mesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.5, 1),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8 })
-    );
+    let mesh;
+    if (type === 'speed') {
+      mesh = new THREE.Mesh(
+        makeSpeedGeometry(),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.75 })
+      );
+      mesh.rotation.x = Math.PI; // point forward (chevron silhouette)
+    } else if (type === 'shield') {
+      mesh = new THREE.Mesh(
+        makeShieldGeometry(),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 })
+      );
+    } else { // double — coin stack Group
+      mesh = makeDoubleGroup(color);
+    }
+    mesh.name = `powerup-${type}`;
+    mesh.userData.pickupType = type;
     mesh.position.set(pu.x, CONFIG.powerUps.y, pu.z);
     this.scene.add(mesh);
-    this.powerUpViews[i] = { mesh, state: pu, color };
+    this.powerUpViews[i] = { mesh, state: pu, color, type };
   }
 
   /**
@@ -701,29 +740,64 @@ export default class GameScene {
 
   // ============================ World =====================================
 
-  /** Procedural grass ground: canvas texture, drawn once and reused. */
+  /** Procedural grass ground: canvas texture, drawn once and reused.
+   * ARTWORK_PLAN phase 3: 1024 tile, irregular mottling (no hard grid),
+   * soft dirt rings near spawn, hedge/bush bounds dressing. */
   buildGround() {
     const rng = makeRng(1337);
-    const size = 512;
+    const size = 1024;
     const c = document.createElement('canvas');
     c.width = c.height = size;
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#3f7d46';
     ctx.fillRect(0, 0, size, size);
-    // darker grid + speckles so motion is readable
-    ctx.strokeStyle = 'rgba(20,60,25,0.35)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i <= 8; i++) {
-      ctx.beginPath(); ctx.moveTo(i * size / 8, 0); ctx.lineTo(i * size / 8, size); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i * size / 8); ctx.lineTo(size, i * size / 8); ctx.stroke();
+    // Irregular mottling — blotchy grass variation instead of a hard grid.
+    for (let i = 0; i < 1600; i++) {
+      const x = rng() * size, y = rng() * size;
+      const r = 7 + rng() * 18;
+      const alpha = 0.07 + rng() * 0.13;
+      ctx.fillStyle = rng() > 0.5 ? `rgba(30,80,35,${alpha})` : `rgba(120,180,90,${alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * (0.55 + rng() * 0.7), rng() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
     }
+    // Fine speckles for micro-detail at close range.
     for (let i = 0; i < 900; i++) {
-      ctx.fillStyle = rng() > 0.5 ? 'rgba(30,80,35,0.5)' : 'rgba(120,180,90,0.4)';
-      ctx.fillRect(rng() * size, rng() * size, 3, 3);
+      ctx.fillStyle = rng() > 0.5 ? 'rgba(30,80,35,0.4)' : 'rgba(120,180,90,0.32)';
+      const r = 1.5 + rng() * 2.5;
+      ctx.fillRect(rng() * size, rng() * size, r, r);
+    }
+    // Soft dirt path rings near spawn (canvas center = world 0,0). Three
+    // concentric radial gradients + scattered brown mottles inside the radius
+    // so the center reads as trampled dirt and the edge stays pure grass.
+    const cx = size / 2, cy = size / 2;
+    const dirtStops = [
+      { rad: 135, inner: 'rgba(110,78,48,0.22)', outer: 'rgba(110,78,48,0)' },
+      { rad: 85, inner: 'rgba(95,68,42,0.16)', outer: 'rgba(95,68,42,0)' },
+      { rad: 42, inner: 'rgba(105,72,44,0.13)', outer: 'rgba(105,72,44,0)' }
+    ];
+    for (const { rad, inner, outer } of dirtStops) {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      g.addColorStop(0, inner);
+      g.addColorStop(1, outer);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
+    }
+    for (let i = 0; i < 220; i++) {
+      const ang = rng() * Math.PI * 2;
+      const rad = Math.pow(rng(), 1.15) * 115;
+      const x = cx + Math.cos(ang) * rad;
+      const y = cy + Math.sin(ang) * rad;
+      const r = 4 + rng() * 9;
+      ctx.fillStyle = `rgba(110,78,48,${0.09 + rng() * 0.11})`;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * (0.55 + rng() * 0.6), rng() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
     }
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(6, 6);
+    tex.needsUpdate = true;
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(CONFIG.world.size, CONFIG.world.size),
       new THREE.MeshStandardMaterial({ map: tex })
@@ -732,9 +806,10 @@ export default class GameScene {
     ground.receiveShadow = true;
     this.arenaGroup.add(ground);
 
-    // Arena walls: faint translucent boxes so the bounds are visible.
+    // Arena walls: faint translucent boxes so the bounds stay readable even
+    // after the hedge dressing (ARTWORK_PLAN phase 3 fallback).
     const h = CONFIG.world.size / 2;
-    const wallMat = new THREE.MeshBasicMaterial({ color: 0x224466, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
+    const wallMat = new THREE.MeshBasicMaterial({ color: 0x224466, transparent: true, opacity: 0.18, side: THREE.DoubleSide });
     const mk = (w, d, x, z) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(w, 3, d), wallMat);
       wall.position.set(x, 1.5, z);
@@ -742,6 +817,46 @@ export default class GameScene {
     };
     mk(CONFIG.world.size, 0.5, 0, h);  mk(CONFIG.world.size, 0.5, 0, -h);
     mk(0.5, CONFIG.world.size, h, 0);  mk(0.5, CONFIG.world.size, -h, 0);
+
+    // Hedge / bush bounds: low InstancedMesh ring just inside the walls,
+    // one draw call, slight jitter so the hedge feels natural. Walls remain
+    // underneath as a readable fallback.
+    const bushGeo = makeBushGeometry();
+    bushGeo.userData.shared = true;
+    const bushMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
+    bushMat.userData.shared = true;
+    const hedgeCount = 56; // 14 per side
+    const hedge = new THREE.InstancedMesh(bushGeo, bushMat, hedgeCount);
+    hedge.name = 'hedge';
+    hedge.castShadow = true;
+    hedge.receiveShadow = true;
+    const dummy = new THREE.Object3D();
+    let idx = 0;
+    const inset = 1.2; // distance inside the wall
+    const jitterRng = makeRng(4243); // separate stream
+    const placeHedge = (x, z) => {
+      dummy.position.set(x + (jitterRng() - 0.5) * 0.7, 0, z + (jitterRng() - 0.5) * 0.7);
+      dummy.rotation.y = jitterRng() * Math.PI * 2;
+      dummy.scale.setScalar(0.85 + jitterRng() * 0.4);
+      dummy.updateMatrix();
+      hedge.setMatrixAt(idx++, dummy.matrix);
+    };
+    // Precompute positions: 14 per side, avoiding double-counted corners.
+    const seg = (CONFIG.world.size - 2 * inset) / 13; // 13 gaps -> 14 points per side
+    // North + South
+    for (let i = 0; i < 14; i++) {
+      const x = -h + inset + i * seg;
+      placeHedge(x, h - inset);
+      placeHedge(x, -h + inset);
+    }
+    // West + East (skip corners already placed)
+    for (let i = 1; i < 13; i++) {
+      const z = -h + inset + i * seg;
+      placeHedge(-h + inset, z);
+      placeHedge(h - inset, z);
+    }
+    hedge.instanceMatrix.needsUpdate = true;
+    this.arenaGroup.add(hedge);
   }
 
   /** Scatter trees/rocks outside the central spawn zone, deterministically. */
@@ -921,25 +1036,40 @@ export default class GameScene {
     const w = window.innerWidth;
     const h = window.innerHeight;
     for (const e of this.enemies.values()) e.update(dt, this.camera, w, h);
+    const now = performance.now();
     for (const view of this.orbViews) {
       view.mesh.position.x = view.state.x;
       view.mesh.position.z = view.state.z;
-      // Slow spin + bob sells the "collectible" look (purely cosmetic).
+      // Crystal spin + emissive pulse + bob (Phase 5).
       view.mesh.rotation.y += dt * 2;
-      view.mesh.position.y = CONFIG.orb.y + Math.sin(performance.now() / 400) * 0.15;
+      view.mesh.rotation.x += dt * 0.85;
+      const pulse = 1 + Math.sin(now / 280) * 0.13;
+      view.mesh.scale.setScalar(pulse);
+      view.mesh.position.y = CONFIG.orb.y + Math.sin(now / 400 + view.state.x * 0.3) * 0.18;
+      if (view.mesh.material) view.mesh.material.emissiveIntensity = 0.62 + Math.sin(now / 260) * 0.20;
     }
 
-    // Power-ups: pulsing scale while active; hidden while respawning.
-    const now = performance.now();
+    // Power-ups: per-type silhouette + pulsing (Phase 5). Distinct rotation per type
+    // keeps the three instantly identifiable across the arena.
     for (const view of this.powerUpViews) {
       view.mesh.visible = view.state.active;
       if (!view.state.active) continue;
       view.mesh.position.x = view.state.x;
       view.mesh.position.z = view.state.z;
-      const pulse = 1 + Math.sin(now / 180) * 0.18;
+      const pulse = 1 + Math.sin(now / 180) * 0.16;
       view.mesh.scale.setScalar(pulse);
-      view.mesh.position.y = CONFIG.powerUps.y + Math.sin(now / 350) * 0.15;
-      view.mesh.rotation.y += dt * 1.5;
+      view.mesh.position.y = CONFIG.powerUps.y + Math.sin(now / 350 + view.state.x * 0.2) * 0.15;
+      const t = view.type ?? view.mesh.userData.pickupType;
+      if (t === 'speed') {
+        view.mesh.rotation.y += dt * 2.4; // chevron spins faster
+        view.mesh.rotation.z = Math.sin(now / 500) * 0.15;
+      } else if (t === 'shield') {
+        view.mesh.rotation.y += dt * 0.9; // bubble drifts slowly
+        // subtle opacity pulse for shield bubble already handled via scale
+      } else {
+        view.mesh.rotation.y += dt * 1.6; // coin stack
+        view.mesh.rotation.x = Math.sin(now / 600) * 0.08;
+      }
     }
 
     // Projectiles: create missing views (LocalRoom has no serializer so
@@ -982,7 +1112,8 @@ export default class GameScene {
     this.updateNametags();
     this.updateLeaderboard();
 
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   /** Countdown, game-over overlay, red flash, HUD + cooldown bar. */

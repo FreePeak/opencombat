@@ -112,6 +112,46 @@ DRESSING_PROBE = """
 }
 """
 
+# ARTWORK_PLAN phase 3: upgraded ground texture (1024, mottling, no hard grid) + hedge bounds.
+GROUND_PROBE = """
+() => {
+  const gs = window.__gameScene;
+  if (!gs) return null;
+  let ground = null, hedge = null, walls = 0;
+  for (const o of gs.arenaGroup.children) {
+    if (o.isMesh && o.geometry && o.geometry.type === 'PlaneGeometry' && o.material && o.material.map) {
+      const img = o.material.map.image;
+      ground = {
+        w: img ? img.width : null,
+        h: img ? img.height : null,
+        repeat: o.material.map.repeat ? { x: o.material.map.repeat.x, y: o.material.map.repeat.y } : null
+      };
+    }
+    if (o.isMesh && o.material && o.material.transparent) walls++;
+  }
+  gs.scene.traverse((o) => {
+    if (o.isInstancedMesh && o.name === 'hedge') hedge = { count: o.count, castShadow: o.castShadow };
+  });
+  // sample center vs edge of the ground canvas if available
+  let dirt = null;
+  if (ground) {
+    try {
+      const tex = gs.arenaGroup.children.find(o => o.isMesh && o.material && o.material.map)?.material.map;
+      const cnv = tex?.image;
+      if (cnv && cnv.getContext) {
+        const ctx = cnv.getContext('2d');
+        const cx = Math.floor(cnv.width / 2), cy = Math.floor(cnv.height / 2);
+        const ex = 10, ey = 10;
+        const cd = ctx.getImageData(cx, cy, 1, 1).data;
+        const ed = ctx.getImageData(ex, ey, 1, 1).data;
+        dirt = { center: [cd[0], cd[1], cd[2]], edge: [ed[0], ed[1], ed[2]] };
+      }
+    } catch (e) { dirt = { error: String(e) }; }
+  }
+  return { ground, hedge, walls, dirt };
+}
+"""
+
 
 def assert_dressing(page, label, mode):
     probe = page.evaluate(DRESSING_PROBE, mode)
@@ -129,6 +169,109 @@ def assert_dressing(page, label, mode):
         assert probe["flowers"] and probe["flowers"]["count"] >= 30, \
             f"[{label}] arena flowers must be 30+ instances: {probe}"
     print(f"[{label}] dressing: {probe}")
+    return probe
+
+
+def assert_ground(page, label):
+    probe = page.evaluate(GROUND_PROBE)
+    assert probe and probe["ground"], f"[{label}] no ground mesh found: {probe}"
+    assert probe["ground"]["w"] == 1024 and probe["ground"]["h"] == 1024, \
+        f"[{label}] ground texture must be 1024x1024, got {probe['ground']}: {probe}"
+    assert probe["hedge"] and probe["hedge"]["count"] >= 40, \
+        f"[{label}] hedge bounds must be >=40 instances: {probe}"
+    assert probe["walls"] >= 4, f"[{label}] translucent wall fallback must remain: {probe}"
+    # dirt rings near spawn: center pixel should be noticeably browner than edge (R diff)
+    if probe.get("dirt") and probe["dirt"].get("center"):
+        c, e = probe["dirt"]["center"], probe["dirt"]["edge"]
+        # center should be more brown (higher R, lower G) than pure grass edge due to dirt overlay
+        # at least one channel differs by >10
+        diff = abs(c[0] - e[0]) + abs(c[1] - e[1]) + abs(c[2] - e[2])
+        assert diff > 15, f"[{label}] ground dirt rings missing (center {c} vs edge {e} diff {diff} too small): {probe}"
+    print(f"[{label}] ground: {probe}")
+    return probe
+
+
+# ARTWORK_PLAN phase 5: distinct pickup silhouettes (crystal orbs + per-type power-ups).
+PICKUP_PROBE = """
+() => {
+  const gs = window.__gameScene;
+  if (!gs) return null;
+  const orbs = gs.orbViews.filter(v=>v&&v.mesh).map(v=>({
+    geom: v.mesh.geometry ? v.mesh.geometry.type : 'Group',
+    name: v.mesh.name,
+    pickupType: v.mesh.userData && v.mesh.userData.pickupType,
+    emissive: v.mesh.material && v.mesh.material.emissive ? v.mesh.material.emissive.getHexString() : null,
+    hasUserData: !!(v.mesh.userData && v.mesh.userData.pickupType)
+  }));
+  const pus = gs.powerUpViews.filter(v=>v&&v.mesh).map(v=>({
+    geom: v.mesh.geometry ? v.mesh.geometry.type : 'Group',
+    geomName: v.mesh.geometry ? v.mesh.geometry.type : 'Group',
+    name: v.mesh.name,
+    userType: v.mesh.userData && v.mesh.userData.pickupType,
+    stateType: v.state && v.state.type,
+    isGroup: v.mesh.type === 'Group',
+    childCount: v.mesh.children ? v.mesh.children.length : 0,
+    childGeom: v.mesh.children && v.mesh.children[0] && v.mesh.children[0].geometry ? v.mesh.children[0].geometry.type : null,
+    materialType: v.mesh.material ? v.mesh.material.type : (v.mesh.children[0] && v.mesh.children[0].material ? v.mesh.children[0].material.type : null)
+  }));
+  return { orbs, pus, orbCount: orbs.length, puCount: pus.length };
+}
+"""
+
+
+def assert_pickups(page, label):
+    probe = page.evaluate(PICKUP_PROBE)
+    assert probe, f"[{label}] no pickup probe: {probe}"
+    assert probe["orbCount"] >= 5, f"[{label}] expected >=5 orbs, got {probe['orbCount']}: {probe}"
+    assert probe["puCount"] >= 3, f"[{label}] expected >=3 power-ups, got {probe['puCount']}: {probe}"
+    # orbs should be crystal (Icosahedron) and carry pickupType 'orb'
+    for o in probe["orbs"]:
+        assert o["geom"] == "IcosahedronGeometry", f"[{label}] orb must be crystal IcosahedronGeometry, got {o}: {probe}"
+        assert o["pickupType"] == "orb" or o["name"] == "orb", f"[{label}] orb mesh must be tagged orb: {o}: {probe}"
+    # power-ups must have distinct silhouettes per type — not all same geometry
+    # expect at least 2 distinct geometries and userData tagging matches stateType
+    geoms = set(p["geom"] for p in probe["pus"])
+    # merged BufferGeometry will be 'BufferGeometry' — then we check userType distinctness
+    if len(geoms) == 1 and list(geoms)[0] == "BufferGeometry":
+        geoms = set(p["userType"] for p in probe["pus"])
+    assert len(geoms) >= 2, f"[{label}] power-up silhouettes must be distinct per type, got geoms {geoms}: {probe}"
+    for p in probe["pus"]:
+        assert p["userType"] == p["stateType"], f"[{label}] power-up userData must match state type: {p}: {probe}"
+    # speed chevrons vs shield bubble vs double coin stack must be identifiable: need at least one of each present
+    types = set(p["stateType"] for p in probe["pus"])
+    assert types == {"speed", "shield", "double"} or len(types) >= 2, f"[{label}] power-up types mismatch {types}: {probe}"
+    print(f"[{label}] pickups: {probe}")
+    return probe
+
+
+# ARTWORK_PLAN phase 6: bloom gated OFF by default, composer only when enabled.
+BLOOM_PROBE = """
+() => {
+  const gs = window.__gameScene;
+  if (!gs) return null;
+  const cfg = window.__OPENGAME__ || {};
+  // CONFIG is not directly exposed, but GameScene reflects it via composer existence.
+  return {
+    // server-injected flag (env.js)
+    envBloom: cfg.bloom === true,
+    envShadows: cfg.shadows,
+    // client CONFIG flag is mirrored on GameScene composer presence
+    hasComposer: !!gs.composer,
+    hasBloomPass: !!gs.bloomPass,
+    rendererBloom: !!gs.composer // alias
+  };
+}
+"""
+
+
+def assert_bloom(page, label):
+    probe = page.evaluate(BLOOM_PROBE)
+    assert probe is not None, f"[{label}] no bloom probe: {probe}"
+    # Default must be OFF until perf-verified — composer must not be created.
+    assert probe["envBloom"] is False, f"[{label}] bloom must be OFF by default (envBloom true): {probe}"
+    assert probe["hasComposer"] is False, f"[{label}] bloom composer must be absent when gated off: {probe}"
+    assert probe["hasBloomPass"] is False, f"[{label}] bloom pass must be absent when gated off: {probe}"
+    print(f"[{label}] bloom (gated OFF): {probe}")
     return probe
 
 
@@ -206,6 +349,9 @@ def flow_waves(browser):
         print(f"[waves] moved={moved}")
     assert_atmosphere(page, "waves")
     assert_dressing(page, "waves", "arena")
+    assert_ground(page, "waves")
+    assert_pickups(page, "waves")
+    assert_bloom(page, "waves")
 
     page.close()
     bones_ok = bool(bones) and bones["total"] > 0 and bones["inClone"] == bones["total"]

@@ -78,3 +78,43 @@ export function makeRockGeometry() {
   geo.scale(1, 0.75, 1);
   return colorize(geo, 0x7a7a7a);
 }
+
+/** Low hedge/bush: rounded clump for arena bounds (ARTWORK_PLAN phase 3). */
+export function makeBushGeometry() {
+  const geo = new THREE.IcosahedronGeometry(0.65, 0);
+  geo.scale(1, 0.7, 1);
+  geo.translate(0, 0.45, 0);
+  return colorize(geo, 0x2d6a32);
+}
+
+// --- Pickup visuals (ARTWORK_PLAN phase 5) ---------------------------------
+/** Crystal orb: Icosahedron, vertex-colored via emissive material (not vertex color). */
+export function makeOrbGeometry() {
+  return new THREE.IcosahedronGeometry(0.45, 1);
+}
+
+/** Speed chevrons: triangular cone (arrow) pointing up, flat-shaded. */
+export function makeSpeedGeometry() {
+  const geo = new THREE.ConeGeometry(0.42, 0.7, 3);
+  // Cone points +Y by default; keep upright (arrow shape) — spin shows chevron silhouette.
+  return geo;
+}
+
+/** Shield bubble: smooth sphere with transparent material. */
+export function makeShieldGeometry() {
+  return new THREE.SphereGeometry(0.52, 14, 10);
+}
+
+/** Double coin stack: two thin cylinders stacked vertically (as Group). */
+export function makeDoubleGroup(colorHex) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: colorHex, emissive: colorHex, emissiveIntensity: 0.75, roughness: 0.4, metalness: 0.2 });
+  const cylGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.14, 16);
+  for (const y of [0.10, 0.30]) {
+    const m = new THREE.Mesh(cylGeo, mat);
+    m.position.y = y;
+    group.add(m);
+  }
+  // Slight gap, centered around y=0.2 so bob anchor is consistent.
+  return group;
+}

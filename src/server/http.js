@@ -124,7 +124,8 @@ export function buildHttpApp(app) {
       .set('Cache-Control', 'no-cache')
       .send(`window.__OPENGAME__ = ${JSON.stringify({
         wsUrl: SERVER.publicWsUrl,
-        shadows: !SERVER.disableShadows
+        shadows: !SERVER.disableShadows,
+        bloom: !!SERVER.bloomEnabled
       })};`);
   });
 

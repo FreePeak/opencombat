@@ -9,4 +9,4 @@
 // null = fall back to the ?server= share link / same-origin / localhost
 // chain in src/config.js (and, when nothing is reachable, the browser-local
 // single-player mode).
-window.__OPENGAME__ = { wsUrl: null };
+window.__OPENGAME__ = { wsUrl: null, bloom: false };

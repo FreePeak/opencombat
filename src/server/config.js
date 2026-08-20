@@ -17,6 +17,9 @@ export const SERVER = {
   publicUrl,            // e.g. https://game.example.com ('' = same-origin)
   publicWsUrl,          // ws(s)://... (null = client falls back to its own host)
   disableShadows: ['1', 'true'].includes((env.DISABLE_SHADOWS || '').toLowerCase()),
+  // Bloom (ARTWORK_PLAN phase 6): off by default, enable with ENABLE_BLOOM=1/true.
+  // Gated on the client via CONFIG.renderer.bloom (default false until perf-verified).
+  bloomEnabled: ['1', 'true'].includes((env.ENABLE_BLOOM || '').toLowerCase()),
   redis: { url: env.REDIS_URL || '' },  // '' = LocalPresence (single process)
   // Dev-only live reload (see liveReload.js): off in production / LIVE_RELOAD=0.
   liveReload: env.NODE_ENV !== 'production' && env.LIVE_RELOAD !== '0',
