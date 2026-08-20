@@ -15,11 +15,23 @@ import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
-import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, joinErrorMessage, serverAvailable } from '../network.js';
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, joinErrorMessage, serverAvailable,
+  joinWorld, joinLobby, sendQueue, consumeReservation } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { getUpgrade } from '../shared/progression.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
 import TouchControls from '../ui/TouchControls.js';
+import { ChunkManager } from '../client/ChunkManager.js';
+import { Minimap } from '../ui/Minimap.js';
+
+/** Login-screen game modes. `offline` = can fall back to the browser-local
+ * solo simulation when no server is reachable (PvP needs opponents and the
+ * open world needs the hosted chunked room — neither exists offline). */
+const MODES = [
+  { key: 'waves', label: 'Waves', offline: true },
+  { key: 'pvp', label: 'PvP Arena', offline: false },
+  { key: 'world', label: 'Open World', offline: false }
+];
 
 // Deterministic LCG: scatters props identically on every client so the
 // arena looks the same for all players, without a network round trip.
@@ -77,8 +89,16 @@ export default class GameScene {
     this.keys = {};
     this.buildKeyboard();
     this.touchControls = new TouchControls(this);
+    this.arenaGroup = new THREE.Group(); // bounded-arena visuals (removed in world mode)
+    this.scene.add(this.arenaGroup);
     this.buildGround();
     this.props = [];
+
+    // Login-screen mode: 'waves' (default) | 'pvp' | 'world' — see MODES.
+    this.mode = 'waves';
+    this.worldMode = false;       // open-world visuals active (chunks + minimap)
+    this.chunkManager = null;
+    this.minimap = null;
 
     this.local = null;             // Player (ours)
     this.remotePlayers = new Map();// sessionId -> RemotePlayer
@@ -169,6 +189,10 @@ export default class GameScene {
     this.character = Number.isFinite(saved)
       ? Math.max(0, Math.min(CONFIG.characters.length - 1, saved)) : 0;
     this.buildCharacterPicker();
+    // Mode choice persists like the name/character; waves is the default.
+    const savedMode = localStorage.getItem('opengame.mode');
+    this.mode = MODES.some((m) => m.key === savedMode) ? savedMode : 'waves';
+    this.buildModePicker();
     // Server field: prefilled with the last used ?server=/typed value — the
     // host's quick-tunnel URL changes every session, so friends paste the
     // fresh one here. Empty = the default chain (env.js/same-origin).
@@ -182,6 +206,26 @@ export default class GameScene {
     this.loginBtn.addEventListener('click', () => this.onJoinClick());
     this.loginName.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
     this.loginServer.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
+  }
+
+  /** Game-mode cards on the login screen (MODES drives it). */
+  buildModePicker() {
+    const picker = document.getElementById('mode-picker');
+    picker.innerHTML = '';
+    MODES.forEach((m) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'char-card' + (m.key === this.mode ? ' selected' : '');
+      btn.dataset.mode = m.key;
+      btn.textContent = m.label;
+      btn.addEventListener('click', () => {
+        this.mode = m.key;
+        localStorage.setItem('opengame.mode', m.key);
+        for (const el of picker.children) el.classList.remove('selected');
+        btn.classList.add('selected');
+      });
+      picker.appendChild(btn);
+    });
   }
 
   /** Character cards on the login screen (CONFIG.characters drives it). */
@@ -226,23 +270,88 @@ export default class GameScene {
         this.serverOnline = serverAvailable();
       }
       const online = await this.serverOnline;
-      if (online) {
-        this.room = await joinGame(this.name, this.character);
+      if (!online && this.mode !== 'waves') {
+        // PvP needs opponents + matchmaking; the open world needs the hosted
+        // chunked room. Neither exists in the browser-local solo simulation.
+        throw new Error('this mode needs the game server online — start it (npm run serve) or pick Waves, which also works offline');
+      }
+      if (this.mode === 'pvp') {
+        await this.joinPvpLobby(); // resolves once the arena room is adopted
+      } else if (this.mode === 'world') {
+        this.enterWorldVisuals();
+        this.adoptRoom(await joinWorld(this.name, this.character));
+      } else if (online) {
+        this.adoptRoom(await joinGame(this.name, this.character));
       } else {
         // No server (static hosting, host offline): same wire-up, but the
         // room is a browser-local simulation — single-player only.
         this.room = new LocalRoom();
         await this.room.join(this.name, this.character);
+        this.setNetBadge(false);
+        this.wireRoom();
+        this.touchControls?.show();
       }
-      this.setNetBadge(online);
-      this.wireRoom();
-      this.touchControls?.show();
     } catch (err) {
       console.error(err);
       this.loginError.textContent = joinErrorMessage(err);
       this.loginError.style.display = 'block';
+      // Re-show the form: the error div lives inside the login card, which
+      // was hidden for the join — an invisible error helps nobody.
+      this.loginEl.classList.add('visible');
     }
     this.joining = false;
+  }
+
+  /** Shared tail of every hosted join path: room adopted, wire it up. */
+  adoptRoom(room) {
+    this.room = room;
+    this.setNetBadge(true);
+    this.wireRoom();
+    this.touchControls?.show();
+  }
+
+  /** PvP (Phase 5): join the lobby, queue for an FFA match, follow the seat
+   * reservation redirect into the fresh ArenaRoom. Resolves only when the
+   * arena room has been adopted — the caller's error path stays in charge
+   * until then. */
+  async joinPvpLobby() {
+    const lobby = await joinLobby(this.name, this.character);
+    this.hudText.textContent = 'queued for PvP — waiting for players...';
+    lobby.onStateChange((state) => {
+      if (state && state.queueCount > 0) {
+        this.hudText.textContent = `queued for PvP — ${state.queueCount} in queue`;
+      }
+    });
+    const reservation = await new Promise((resolve, reject) => {
+      lobby.onMessage('redirect', resolve);
+      lobby.onError((code, message) => reject(new Error(`lobby error: ${message ?? code}`)));
+      // FFA, PvP on, first to 2 round wins — the queue message is what
+      // actually enters the matchmaking pool (joining alone is not enough).
+      sendQueue(lobby, 'ffa', false, 2);
+    });
+    // Deliberate leave (CONSENTED): the reserved arena seat replaces it.
+    lobby.leave(4000);
+    this.adoptRoom(await consumeReservation(reservation));
+  }
+
+  /** Swap the bounded-arena visuals for the open world (Phase 6): the
+   * ChunkManager streams deterministic ground + props, the Minimap rides on
+   * top. Both use the default world seed (1337), matching WorldRoom. */
+  enterWorldVisuals() {
+    if (this.worldMode) return;
+    this.worldMode = true;
+    // Drop the arena floor/walls/props — the world streams its own ground.
+    this.scene.remove(this.arenaGroup);
+    this.arenaGroup.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
+      }
+    });
+    this.props.length = 0;
+    this.chunkManager = new ChunkManager(this.scene, 1337);
+    this.minimap = new Minimap({ worldSeed: 1337 });
+    this.minimap.attachChunkManager(this.chunkManager);
   }
 
   /** Show/hide the OFFLINE badge (top-center) so players know they are in
@@ -324,6 +433,15 @@ export default class GameScene {
       this.sound.powerUp();
       const lvl = d?.level ?? '?';
       this.floatTexts.spawn(this.local?.root.position.x ?? 0, 2.8, this.local?.root.position.z ?? 0, `LEVEL ${lvl}!`, '#ffd54f');
+    });
+    // Phase 6: the world room broadcasts chunk activations. The client
+    // generates identical chunks deterministically, so this only needs to
+    // make sure the chunk is present (idempotent).
+    this.room.onMessage('chunksLoad', (msg) => {
+      if (!this.worldMode || !this.chunkManager) return;
+      for (const c of msg?.chunks ?? []) {
+        this.chunkManager.loadChunk(`${c.cx},${c.cz}`);
+      }
     });
     this.room.onMessage('upgradeResult', (d) => {
       const name = getUpgrade(d?.picked)?.name ?? d?.picked ?? '';
@@ -607,7 +725,7 @@ export default class GameScene {
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
-    this.scene.add(ground);
+    this.arenaGroup.add(ground);
 
     // Arena walls: faint translucent boxes so the bounds are visible.
     const h = CONFIG.world.size / 2;
@@ -615,7 +733,7 @@ export default class GameScene {
     const mk = (w, d, x, z) => {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(w, 3, d), wallMat);
       wall.position.set(x, 1.5, z);
-      this.scene.add(wall);
+      this.arenaGroup.add(wall);
     };
     mk(CONFIG.world.size, 0.5, 0, h);  mk(CONFIG.world.size, 0.5, 0, -h);
     mk(0.5, CONFIG.world.size, h, 0);  mk(0.5, CONFIG.world.size, -h, 0);
@@ -635,7 +753,7 @@ export default class GameScene {
         prop.scale.setScalar(scale);
         prop.position.set(x, 0, z);
         prop.rotation.y = rng() * Math.PI * 2;
-        this.scene.add(prop);
+        this.arenaGroup.add(prop);
         this.props.push(prop);
         return;
       }
@@ -680,6 +798,21 @@ export default class GameScene {
 
     if (this.local) {
       this.local.update(dt, this.camera);
+
+      // Open world: stream chunks + minimap around the local player. The
+      // chunk set is deterministic (same seed as WorldRoom), so this is a
+      // pure function of position — no server round trip.
+      if (this.worldMode && this.chunkManager) {
+        const px = this.local.root.position.x;
+        const pz = this.local.root.position.z;
+        this.chunkManager.updateForPos(px, pz);
+        if (this.minimap) {
+          if (this.room?.state?.players) {
+            this.minimap.setPlayers(this.room.state.players, this.room.sessionId);
+          }
+          this.minimap.update(px, pz);
+        }
+      }
 
       // --- Camera rig: lerp behind the player, look at them -------------
       const target = this.local.root.position;

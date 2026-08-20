@@ -40,6 +40,7 @@
     /* long trycloudflare/tunnel hosts need more room than the name field */
     #login-server { width: 260px; margin-top: 8px; font-size: 13px; }
     #char-picker { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+    #mode-picker { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
     /* #login .char-card must outrank the generic "#login button" rule below. */
     #login .char-card { font: 13px monospace; padding: 8px 10px; border-radius: 6px; border: 1px solid #333;
       background: #161b22; color: #bbb; cursor: pointer; }
@@ -141,6 +142,7 @@
       <input id="login-name" type="text" maxlength="16" placeholder="your name" autocomplete="off" />
       <input id="login-server" type="text" placeholder="game server (e.g. word-word-word.trycloudflare.com)" autocomplete="off" spellcheck="false" />
       <div id="char-picker"></div>
+      <div id="mode-picker"></div>
       <br/>
       <button id="login-btn">JOIN</button>
       <div id="login-error"></div>

@@ -114,3 +114,9 @@ export function sendQueue(room, mode, pve = false, roundsToWin = 2) {
 export async function joinArena(name, character, mode = 'ffa', pve = false, roundsToWin = 2) {
   return currentClient().joinOrCreate('arena', { name, character, mode, pve, roundsToWin }, WorldState);
 }
+
+/** Consume a lobby seat reservation (the 'redirect' message payload) and
+ * join the freshly minted arena room it points at. */
+export async function consumeReservation(reservation) {
+  return currentClient().consumeSeatReservation(reservation, WorldState);
+}

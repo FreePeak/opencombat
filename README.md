@@ -119,6 +119,18 @@ All optional; the defaults run a single-process game on :2567.
 - **Observability**: everything logs as JSON lines; `GET /metrics` exposes
   Prometheus-style gauges (rooms, players, tick duration, inputs/sec).
 
+## Game modes
+
+The login screen has a mode picker next to the character roster:
+
+| Mode | Room | What it is |
+|------|------|------------|
+| Waves | `game` (GameRoom) | Default PvE arena survival — endless waves, orbs, power-ups; falls back to the browser-local solo sim when no server is reachable |
+| PvP Arena | `lobby` → `arena` | Queue in the lobby; matchmaking batches FFA players (2+) into a fresh ArenaRoom via seat reservation — rounds, first to 2 wins |
+| Open World | `world` (WorldRoom) | Infinite chunked world (seed 1337), level-scaled spawns, per-name JSON persistence; client streams deterministic chunks (radius 2) + minimap |
+
+PvP and Open World require the game server online (no offline fallback).
+
 ## Controls
 
 | Key | Action |
