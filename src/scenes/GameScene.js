@@ -23,6 +23,7 @@ import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/
 import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
+import { makeTuftGeometry, makeFlowerGeometry } from '../client/Grass.js';
 
 /** Login-screen game modes. `offline` = can fall back to the browser-local
  * solo simulation when no server is reachable (PvP needs opponents and the
@@ -345,12 +346,12 @@ export default class GameScene {
     if (this.worldMode) return;
     this.worldMode = true;
     // Drop the arena floor/walls/props — the world streams its own ground.
+    // Shared resources (dressing geometries, GLB clone sources) are skipped.
     this.scene.remove(this.arenaGroup);
     this.arenaGroup.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) {
-        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
-      }
+      if (o.geometry && !o.geometry.userData?.shared) o.geometry.dispose();
+      const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+      for (const m of mats) if (!m.userData?.shared) m.dispose();
     });
     this.props.length = 0;
     this.chunkManager = new ChunkManager(this.scene, 1337);
@@ -765,6 +766,54 @@ export default class GameScene {
     // Scales tuned from the GLB world AABBs (tree 7.6 tall, rock 0.2).
     for (let i = 0; i < 9; i++) place(this.models.tree, 0.8 + rng() * 0.5);
     for (let i = 0; i < 10; i++) place(this.models.rock, 3.5 + rng() * 2.5);
+
+    // Ground cover (ARTWORK_PLAN phase 1): instanced grass + flowers drawn
+    // from the SAME seeded stream AFTER the tree/rock draws, so their
+    // positions never shift. One draw call each; neither casts shadows
+    // (fill-rate budget). Marked shared so world-mode teardown skips them.
+    const open = (x, z) => Math.abs(x) >= 7 || Math.abs(z) >= 7; // outside spawn square
+    const dummy = new THREE.Object3D();
+    const tuftGeo = makeTuftGeometry(0x4e9a4e);
+    const tuftMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1 });
+    tuftGeo.userData.shared = true; tuftMat.userData.shared = true;
+    const grass = new THREE.InstancedMesh(tuftGeo, tuftMat, 300);
+    grass.name = 'grass';
+    grass.castShadow = false;
+    for (let i = 0; i < 300; i++) {
+      const x = -h + rng() * h * 2;
+      const z = -h + rng() * h * 2;
+      if (!open(x, z)) { i--; continue; }
+      dummy.position.set(x, 0, z);
+      dummy.rotation.y = rng() * Math.PI * 2;
+      dummy.scale.setScalar(0.8 + rng() * 0.7);
+      dummy.updateMatrix();
+      grass.setMatrixAt(i, dummy.matrix);
+    }
+    grass.instanceMatrix.needsUpdate = true;
+    this.arenaGroup.add(grass);
+
+    const flowerGeo = makeFlowerGeometry();
+    const flowerMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+    flowerGeo.userData.shared = true; flowerMat.userData.shared = true;
+    const flowers = new THREE.InstancedMesh(flowerGeo, flowerMat, 30);
+    flowers.name = 'flowers';
+    flowers.castShadow = false;
+    const palette = [0xff6b6b, 0xffd700, 0xe1bee7, 0xffffff];
+    const tint = new THREE.Color();
+    for (let i = 0; i < 30; i++) {
+      const x = -h + rng() * h * 2;
+      const z = -h + rng() * h * 2;
+      if (!open(x, z)) { i--; continue; }
+      dummy.position.set(x, 0, z);
+      dummy.rotation.y = rng() * Math.PI * 2;
+      dummy.scale.setScalar(0.9 + rng() * 0.4);
+      dummy.updateMatrix();
+      flowers.setMatrixAt(i, dummy.matrix);
+      flowers.setColorAt(i, tint.setHex(palette[i % palette.length]));
+    }
+    flowers.instanceMatrix.needsUpdate = true;
+    if (flowers.instanceColor) flowers.instanceColor.needsUpdate = true;
+    this.arenaGroup.add(flowers);
   }
 
   /** Keyboard state shared with Player: { isDown, justPressed } per key. */

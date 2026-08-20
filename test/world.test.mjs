@@ -48,6 +48,44 @@ SERVER.rateLimit.capacity = 10000;
   console.log('ok — worldgen deterministic, chunk size, biomes, active chunks, level scaling');
 }
 
+// --- grass ground cover (ARTWORK_PLAN phase 1, world side) ---
+{
+  // Every chunk must carry per-tuft grass data, deterministic per seed, and
+  // density must follow the biome (meadow lush, dead forest sparse, ashland
+  // near-bare). Appended AFTER the existing rng draws so props/spawnPoints
+  // stay byte-identical to pre-grass chunks.
+  const before = generateChunk(1, -2, 777);
+  const { grass } = before;
+  assert.ok(Array.isArray(grass) && grass.length > 0, 'chunk carries grass tufts');
+  for (const g of grass) {
+    assert.ok(typeof g.x === 'number' && typeof g.z === 'number', 'tuft has x/z');
+    assert.ok(g.x >= before.x && g.x < before.x + CHUNK_SIZE, 'tuft x inside chunk');
+    assert.ok(g.z >= before.z && g.z < before.z + CHUNK_SIZE, 'tuft z inside chunk');
+  }
+  const again = generateChunk(1, -2, 777);
+  assert.deepEqual(grass, again.grass, 'grass deterministic for seed+coords');
+  // Biome density ordering across a sweep of chunks: meadow > dead forest > ashland.
+  const byBiome = { meadow: [], dead_forest: [], ashland: [] };
+  for (let cx = -20; cx <= 20; cx++) {
+    for (let cz = -20; cz <= 20; cz++) {
+      const c = generateChunk(cx, cz, 55);
+      byBiome[c.biome].push(c.grass.length);
+    }
+  }
+  const avg = (a) => a.reduce((s, n) => s + n, 0) / a.length;
+  assert.ok(byBiome.meadow.length > 0 && byBiome.dead_forest.length > 0 && byBiome.ashland.length > 0,
+    'sweep covers all three biomes');
+  assert.ok(avg(byBiome.meadow) > avg(byBiome.dead_forest), 'meadow grassier than dead forest');
+  assert.ok(avg(byBiome.dead_forest) > avg(byBiome.ashland), 'dead forest grassier than ashland');
+  // Regression: props/spawnPoints unchanged by the grass addition.
+  const legacySeed = generateChunk(3, 4, 123);
+  assert.ok(legacySeed.props.every((p) => ['tree', 'dead_tree', 'rock'].includes(p.type)),
+    'props types unchanged');
+  assert.equal(legacySeed.spawnPoints.length, generateChunk(3, 4, 123).spawnPoints.length,
+    'spawn point count stable');
+  console.log(`ok — grass ground cover: ${grass.length} tufts @777, biome density meadow>${avg(byBiome.dead_forest).toFixed(0)}>${avg(byBiome.ashland).toFixed(0)}`);
+}
+
 // --- WorldRoom + persistence integration ---
 const httpServer = http.createServer();
 attachHttpLogging(httpServer);

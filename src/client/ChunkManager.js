@@ -3,6 +3,14 @@
 
 import * as THREE from 'three';
 import { generateChunk, activeChunksForPos, diffChunks, CHUNK_SIZE, biomeColor } from '../shared/worldgen.js';
+import { makeTuftGeometry, makeTreeGeometry, makeDeadTreeGeometry, makeRockGeometry } from './Grass.js';
+
+// Per-biome grass tint (meadow lush green, dead forest olive, ashland drab).
+const GRASS_TINT = {
+  meadow: 0x4e9a4e,
+  dead_forest: 0x6b6b45,
+  ashland: 0x8a8a7a
+};
 
 export class ChunkManager {
   constructor(scene, worldSeed = 1337) {
@@ -12,6 +20,25 @@ export class ChunkManager {
     this.loaded = new Map(); // key -> { chunk, group, meshes }
     this.activeKeys = [];
     this.tempo = 0; // throttle updates
+    // Shared prop geometry/material (created once, reused by every chunk's
+    // InstancedMesh — one draw call per prop type per chunk).
+    this.propGeo = {
+      tree: makeTreeGeometry(),
+      dead_tree: makeDeadTreeGeometry(),
+      rock: makeRockGeometry()
+    };
+    this.propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
+    // Grass tufts per biome (shared geometry + material, one draw call per
+    // chunk). Shared resources are marked so unloadChunk never disposes them.
+    this.tuftMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1 });
+    this.tuft = {};
+    for (const [biome, tint] of Object.entries(GRASS_TINT)) {
+      this.tuft[biome] = makeTuftGeometry(tint);
+    }
+    for (const geo of Object.values(this.propGeo)) geo.userData.shared = true;
+    this.propMat.userData.shared = true;
+    this.tuftMat.userData.shared = true;
+    for (const geo of Object.values(this.tuft)) geo.userData.shared = true;
   }
 
   /** Update streaming based on player world pos (x,z). Call each frame or on move. */
@@ -47,25 +74,15 @@ export class ChunkManager {
     }
 
     const meshes = [];
+    const dummy = new THREE.Object3D();
     for (const [type, list] of byType) {
       const count = list.length;
       if (count === 0) continue;
-      // Simple placeholder geometry per type (real assets via GLTF would be InstancedMesh too, but keep zero-build)
-      let geo;
-      if (type === 'tree' || type === 'dead_tree') {
-        geo = new THREE.ConeGeometry(0.6, 2.2, 6);
-      } else { // rock
-        geo = new THREE.DodecahedronGeometry(0.5, 0);
-      }
-      const instMat = new THREE.MeshStandardMaterial({
-        color: type === 'dead_tree' ? 0x5c4a33 : type === 'tree' ? 0x2e7d32 : 0x7a7a7a,
-      });
-      const inst = new THREE.InstancedMesh(geo, instMat, count);
+      const inst = new THREE.InstancedMesh(this.propGeo[type], this.propMat, count);
       inst.castShadow = true;
       inst.receiveShadow = true;
-      const dummy = new THREE.Object3D();
       list.forEach((p, i) => {
-        dummy.position.set(p.x, 0.5, p.z);
+        dummy.position.set(p.x, 0, p.z); // geometries are rooted at y=0
         dummy.rotation.y = p.rot;
         dummy.scale.setScalar(p.scale);
         dummy.updateMatrix();
@@ -76,6 +93,26 @@ export class ChunkManager {
       meshes.push(inst);
     }
 
+    // Ground cover: one grass InstancedMesh per chunk, biome-tinted, never a
+    // shadow caster (ARTWORK_PLAN phase 1 performance budget).
+    if (chunk.grass && chunk.grass.length > 0) {
+      const tuftGeo = this.tuft[chunk.biome] ?? this.tuft.meadow;
+      const grass = new THREE.InstancedMesh(tuftGeo, this.tuftMat, chunk.grass.length);
+      grass.name = 'grass';
+      grass.castShadow = false;
+      grass.receiveShadow = false;
+      chunk.grass.forEach((g, i) => {
+        dummy.position.set(g.x, 0, g.z);
+        dummy.rotation.y = g.rot;
+        dummy.scale.setScalar(g.scale);
+        dummy.updateMatrix();
+        grass.setMatrixAt(i, dummy.matrix);
+      });
+      grass.instanceMatrix.needsUpdate = true;
+      group.add(grass);
+      meshes.push(grass);
+    }
+
     this.scene.add(group);
     this.loaded.set(key, { chunk, group, meshes });
   }
@@ -84,13 +121,12 @@ export class ChunkManager {
     const entry = this.loaded.get(key);
     if (!entry) return;
     this.scene.remove(entry.group);
-    // Dispose geometries/materials for GC (optional)
+    // Dispose per-chunk resources for GC — but never the SHARED prop/grass
+    // geometries + materials other loaded chunks still reference.
     entry.group.traverse((obj) => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
-        else obj.material.dispose();
-      }
+      if (obj.geometry && !obj.geometry.userData?.shared) obj.geometry.dispose();
+      const mats = Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : [];
+      for (const m of mats) if (!m.userData?.shared) m.dispose();
     });
     this.loaded.delete(key);
   }

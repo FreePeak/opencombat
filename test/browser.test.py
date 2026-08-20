@@ -87,6 +87,51 @@ SCENE_PROBE = """
 """
 
 
+# ARTWORK_PLAN phase 1: instanced grass ground cover in both visual contexts.
+DRESSING_PROBE = """
+(mode) => {
+  const gs = window.__gameScene;
+  if (!gs) return null;
+  if (mode === 'world') {
+    if (!gs.chunkManager) return { world: 'no chunkManager' };
+    let chunks = 0, grassy = 0, tufts = 0;
+    for (const [, entry] of gs.chunkManager.loaded) {
+      chunks++;
+      const g = entry.group.children.find((o) => o.isInstancedMesh && o.name === 'grass');
+      if (g) { grassy++; tufts += g.count; }
+    }
+    return { world: true, chunks, grassy, tufts };
+  }
+  let grass = null, flowers = null;
+  gs.scene.traverse((o) => {
+    if (!o.isInstancedMesh) return;
+    if (o.name === 'grass') grass = { count: o.count, castShadow: o.castShadow };
+    if (o.name === 'flowers') flowers = { count: o.count, castShadow: o.castShadow };
+  });
+  return { arena: true, grass, flowers };
+}
+"""
+
+
+def assert_dressing(page, label, mode):
+    probe = page.evaluate(DRESSING_PROBE, mode)
+    if mode == "world":
+        assert probe.get("world") is True, f"[{label}] world dressing probe: {probe}"
+        assert probe["chunks"] > 0 and probe["grassy"] == probe["chunks"], \
+            f"[{label}] every streamed chunk must carry grass: {probe}"
+        assert probe["tufts"] > 0, f"[{label}] no grass tufts rendered: {probe}"
+    else:
+        assert probe.get("arena") is True, f"[{label}] arena dressing probe: {probe}"
+        assert probe["grass"] and probe["grass"]["count"] >= 250, \
+            f"[{label}] arena grass must be 250+ instances: {probe}"
+        assert probe["grass"]["castShadow"] is False, \
+            f"[{label}] grass must never cast shadows: {probe}"
+        assert probe["flowers"] and probe["flowers"]["count"] >= 30, \
+            f"[{label}] arena flowers must be 30+ instances: {probe}"
+    print(f"[{label}] dressing: {probe}")
+    return probe
+
+
 def assert_atmosphere(page, label):
     probe = page.evaluate(SCENE_PROBE)
     assert probe and probe["fog"], f"[{label}] no scene fog: {probe}"
@@ -160,6 +205,7 @@ def flow_waves(browser):
         moved, before, after = hold_w_and_measure(page)
         print(f"[waves] moved={moved}")
     assert_atmosphere(page, "waves")
+    assert_dressing(page, "waves", "arena")
 
     page.close()
     bones_ok = bool(bones) and bones["total"] > 0 and bones["inClone"] == bones["total"]
@@ -189,6 +235,7 @@ def flow_world(browser):
     moved, before, after = hold_w_and_measure(page)
     print(f"[world] moved={moved}")
     assert_atmosphere(page, "world")
+    assert_dressing(page, "world", "world")
 
     page.close()
     ok = moved and not errors

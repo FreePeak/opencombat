@@ -75,7 +75,7 @@ export function biomeColor(biome) {
  * @param {number} cx - chunk x
  * @param {number} cz - chunk z
  * @param {number|string} seed - global world seed (number or string)
- * @returns {{ cx:number, cz:number, x:number, z:number, biome:string, props:Array<{type:string,x:number,z:number,scale:number,rot:number}>, spawnPoints:Array<{x:number,z:number}> }}
+ * @returns {{ cx:number, cz:number, x:number, z:number, biome:string, props:Array<{type:string,x:number,z:number,scale:number,rot:number}>, spawnPoints:Array<{x:number,z:number}>, grass:Array<{x:number,z:number,rot:number,scale:number}> }}
  */
 export function generateChunk(cx, cz, seed = 0) {
   const biome = biomeForChunk(cx, cz, seed);
@@ -126,7 +126,25 @@ export function generateChunk(cx, cz, seed = 0) {
     spawnPoints.push({ x, z });
   }
 
-  return { cx, cz, x: origin.x, z: origin.z, biome, props, spawnPoints };
+  // Ground cover (ARTWORK_PLAN phase 1): per-tuft grass, biome-tuned density
+  // (meadow lush, dead forest sparse, ashland near-bare). Drawn AFTER the
+  // props + spawn-point sequences so those stay byte-identical to pre-grass
+  // chunks — the server ignores this field, only the client renders it.
+  let grassCount;
+  if (biome === BIOME_MEADOW) grassCount = 26 + Math.floor(rng() * 12);
+  else if (biome === BIOME_DEAD_FOREST) grassCount = 8 + Math.floor(rng() * 6);
+  else grassCount = 2 + Math.floor(rng() * 3);
+  const grass = [];
+  for (let i = 0; i < grassCount; i++) {
+    grass.push({
+      x: origin.x + rng() * CHUNK_SIZE,
+      z: origin.z + rng() * CHUNK_SIZE,
+      rot: rng() * Math.PI * 2,
+      scale: 0.7 + rng() * 0.6
+    });
+  }
+
+  return { cx, cz, x: origin.x, z: origin.z, biome, props, spawnPoints, grass };
 }
 
 /**
