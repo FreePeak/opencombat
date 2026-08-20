@@ -5,6 +5,25 @@ placeholder spheres) to a polished low-poly outdoor arena — without touching t
 server-authoritative simulation. All changes here are **client-side visuals
 only**.
 
+## 0. Re-scope for the three-mode game (2026-08-20)
+
+This plan was written against the single bounded arena. The game now has three
+client contexts and the phases below apply as follows:
+
+| Plan phase | Bounded arena (Waves + PvP, GameScene) | Open world (ChunkManager) |
+|------------|----------------------------------------|---------------------------|
+| 1 dressing | instanced grass/flowers via the seeded arena RNG | per-chunk grass tufts + real prop shapes replacing the placeholder cone/dodecahedron props |
+| 2 atmosphere | `scene.fog` in GameScene | same fog covers streamed chunks (biome-tinted haze acceptable) |
+| 3 ground    | upgraded canvas texture + hedge bounds | biome planes are adequate; no bounds to dress (unbounded) |
+| 5 pickups   | crystal orb geometry | same orb views (state-driven) |
+| 6 bloom     | gated CONFIG knob, default OFF | same |
+
+Asset sourcing note: the wishlist below prefers CC0 GLB downloads. Where a
+download is not practical in-session, the procedural option the plan already
+allows (e.g. "a better procedural crystal" for orbs, seeded instancing for
+grass) is used — always deterministic, zero per-frame allocation, and recorded
+here. GLB upgrades can layer on later without protocol changes.
+
 ## 1. Current state (verified)
 
 | Area | Today | Evidence |

@@ -69,6 +69,31 @@ PVP_PROBE = """
 }
 """
 
+# ARTWORK_PLAN phase 2: fog matched to the sky color, present in every mode.
+SCENE_PROBE = """
+() => {
+  const gs = window.__gameScene;
+  if (!gs || !gs.scene) return null;
+  const fog = gs.scene.fog;
+  const bg = gs.scene.background;
+  return {
+    fog: !!fog,
+    fogNear: fog ? fog.near : null,
+    fogFar: fog ? fog.far : null,
+    fogColor: fog ? '#' + fog.color.getHexString() : null,
+    bg: bg && bg.getHexString ? '#' + bg.getHexString() : null
+  };
+}
+"""
+
+
+def assert_atmosphere(page, label):
+    probe = page.evaluate(SCENE_PROBE)
+    assert probe and probe["fog"], f"[{label}] no scene fog: {probe}"
+    assert probe["fogNear"] < probe["fogFar"], f"[{label}] fog near >= far: {probe}"
+    assert probe["fogColor"] == probe["bg"], f"[{label}] fog color must match sky: {probe}"
+    print(f"[{label}] atmosphere: {probe}")
+
 
 def watch(page):
     """Collect page errors + console errors/warnings for red/green verdicts."""
@@ -134,6 +159,7 @@ def flow_waves(browser):
     if "score" in hud:
         moved, before, after = hold_w_and_measure(page)
         print(f"[waves] moved={moved}")
+    assert_atmosphere(page, "waves")
 
     page.close()
     bones_ok = bool(bones) and bones["total"] > 0 and bones["inClone"] == bones["total"]
@@ -162,6 +188,7 @@ def flow_world(browser):
 
     moved, before, after = hold_w_and_measure(page)
     print(f"[world] moved={moved}")
+    assert_atmosphere(page, "world")
 
     page.close()
     ok = moved and not errors

@@ -62,13 +62,17 @@ export default class GameScene {
     });
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb); // sky
+    const atm = CONFIG.atmosphere;
+    this.scene.background = new THREE.Color(atm.sky); // sky
+    // Fog matched to the sky: the arena edge / streamed chunks fade instead
+    // of clipping against the far plane (ARTWORK_PLAN phase 2).
+    this.scene.fog = new THREE.Fog(atm.sky, atm.fogNear, atm.fogFar);
     this.camera = new THREE.PerspectiveCamera(
       60, window.innerWidth / window.innerHeight, 0.1, 200);
 
     // --- Lights ---------------------------------------------------------
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x446622, 0.75);
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x446622, atm.hemiIntensity);
+    const sun = new THREE.DirectionalLight(atm.sunColor, atm.sunIntensity);
     sun.position.set(20, 30, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.set(CONFIG.renderer.shadowMapSize, CONFIG.renderer.shadowMapSize);

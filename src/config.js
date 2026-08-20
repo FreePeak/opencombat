@@ -63,6 +63,19 @@ export const CONFIG = {
 
   world: { size: 60 },          // square arena, matches SERVER.world.size
 
+  // Atmosphere (ARTWORK_PLAN phase 2): fog matched to the sky color so the
+  // arena edge / streamed world chunks fade out instead of clipping against
+  // the camera far plane. Slightly warm sun + dialed-back hemisphere keeps
+  // contrast. Fog covers both the bounded arena and the open world.
+  atmosphere: {
+    sky: 0x87ceeb,
+    fogNear: 45,
+    fogFar: 110,
+    sunColor: 0xfff2cc,
+    sunIntensity: 1.2,
+    hemiIntensity: 0.6
+  },
+
   // Renderer quality knobs: dpr clamp avoids fill-rate blowups on retina
   // screens; shadows can be disabled for low-end clients (DISABLE_SHADOWS
   // env -> /env.js -> window.__OPENGAME__.shadows).
