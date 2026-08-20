@@ -185,7 +185,10 @@ const newRoom = async (name, character = 0) => {
   // pick second
   r.send('chooseUpgrade', { choice: secondPicks[0] });
   await waitFor(() => p().pendingChoices.length === 0, 10000, 'second pick clears');
-  assert.equal(p().upgrades.size, 2, 'two upgrades after two levels');
+  // Two PICKS, not two ids: the same stackable upgrade can roll at both
+  // levels (seed is per-session), so count stacks, not distinct keys.
+  const stacks = [...p().upgrades.entries()].reduce((sum, [, n]) => sum + n, 0);
+  assert.equal(stacks, 2, 'two upgrade picks after two levels');
   r.leave();
   await waitMs(200);
 }
