@@ -90,13 +90,13 @@ Replace the shared skill roster with distinct class identities.
   effective* helpers; GameRoom + LocalRoom parity tested; client upgrade
   overlay (1/2/3 click, auto timer) + HUD level/XP.
 
-## Phase 5 — Story + PvP arena
+## Phase 5 — Story + PvP arena ✅ DONE (ade40c0)
 
 - `STORY.md` lore ("Ashfall").
 - `ArenaRoom`: duel / team / FFA modes, rounds, optional PvE toggle.
 - `LobbyRoom`: queue → redirect matchmaking.
 
-## Phase 6 — Open world
+## Phase 6 — Open world ✅ DONE (16fe010)
 
 - `src/shared/worldgen.js`: deterministic chunked generation (chunk size 32,
   seeded, 3 biomes: Meadow / Dead Forest / Ashland).
