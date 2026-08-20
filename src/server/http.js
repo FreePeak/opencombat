@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { SERVER } from './config.js';
 import GameRoom from './rooms/GameRoom.js';
+import ArenaRoom from './rooms/ArenaRoom.js';
+import LobbyRoom from './rooms/LobbyRoom.js';
 import { log } from './log.js';
 import { createLiveReload } from './liveReload.js';
 
@@ -41,8 +43,13 @@ const headerIp = (req) =>
 
 const liveRooms = () => {
   let players = 0;
-  for (const room of GameRoom.instances) players += room.state.players.size;
-  return { rooms: GameRoom.instances.size, players };
+  let rooms = 0;
+  for (const room of GameRoom.instances) { players += room.state.players.size; rooms++; }
+  for (const room of ArenaRoom.instances) { players += room.state.players.size; rooms++; }
+  for (const room of LobbyRoom.instances) { players += room.state.players?.size ?? room.state.queueCount ?? 0; rooms++; }
+  // Also count any LobbyState queued? lobby players are not in state.players but in queueCount
+  // For metrics, players is total across all room types
+  return { rooms, players };
 };
 
 /**
@@ -86,8 +93,13 @@ export function buildHttpApp(app) {
   app.get('/metrics', (_req, res) => {
     const { rooms, players } = liveRooms();
     const cutoff = Date.now() - 1000;
-    const stats = GameRoom.stats;
-    stats.inputTimes = stats.inputTimes.filter((t) => t >= cutoff); // bound growth
+    // Merge stats from both game and arena rooms
+    const gStats = GameRoom.stats;
+    const aStats = ArenaRoom.stats;
+    gStats.inputTimes = gStats.inputTimes.filter((t) => t >= cutoff);
+    aStats.inputTimes = aStats.inputTimes.filter((t) => t >= cutoff);
+    const allInputs = gStats.inputTimes.length + aStats.inputTimes.length;
+    const lastTick = Math.max(gStats.lastTickMs, aStats.lastTickMs);
     const lines = [
       '# HELP opengame_rooms Number of active game rooms',
       '# TYPE opengame_rooms gauge',
@@ -97,10 +109,10 @@ export function buildHttpApp(app) {
       `opengame_players ${players}`,
       '# HELP opengame_tick_ms Duration of the last fixed-timestep update',
       '# TYPE opengame_tick_ms gauge',
-      `opengame_tick_ms ${stats.lastTickMs.toFixed(3)}`,
+      `opengame_tick_ms ${lastTick.toFixed(3)}`,
       '# HELP opengame_inputs_per_sec Input messages accepted in the last second',
       '# TYPE opengame_inputs_per_sec gauge',
-      `opengame_inputs_per_sec ${stats.inputTimes.length}`
+      `opengame_inputs_per_sec ${allInputs}`
     ];
     res.type('text/plain; version=0.0.4').send(lines.join('\n') + '\n');
   });

@@ -141,6 +141,26 @@ export const SERVER = {
   // in the client config (src/config.js). Join options are clamped to this.
   characters: { count: 4 },
 
+  // Arena PvP modes (Phase 5): duel / team / FFA, rounds, optional PvE toggle.
+  arena: {
+    modes: ['duel', 'team', 'ffa'],
+    defaultMode: 'ffa',
+    roundsToWin: 2,            // best-of-3 by default (first to 2 rounds wins)
+    roundTargetScore: 30,        // score needed to win a single round (PvP kills + orbs)
+    killScore: 10,               // PvP kill awards in arena (vs 5 for PvE)
+    pveDefault: false,           // pure PvP unless the creator enables enemies
+    duel: { minPlayers: 2, maxPlayers: 2 },
+    team: { minPlayers: 2, maxPlayers: 12, teamSize: 2 },
+    ffa:  { minPlayers: 2, maxPlayers: 12 }
+  },
+
+  // Lobby: queue -> redirect matchmaking for arena creation.
+  lobby: {
+    maxClients: 100,
+    queueTickMs: 500,
+    reservationMs: 10000
+  },
+
   // --- Security boundaries ------------------------------------------------
   // These are abuse-hardening limits, not gameplay: hostile clients must not
   // be able to move faster than the server speed, spam input, or flood joins.

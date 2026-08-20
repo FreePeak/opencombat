@@ -32,6 +32,8 @@ export class PlayerState extends Schema {
     this.xp = 0;
     this.pendingChoices = new ArraySchema(); // 3 ids while a level-up is pending (empty otherwise)
     this.upgrades = new MapSchema();        // upgrade id -> stack count
+    // Phase 5: arena team assignment (−1 = unassigned, 0/1 for duel/team, index for FFA)
+    this.team = -1;
   }
 }
 defineTypes(PlayerState, {
@@ -50,7 +52,8 @@ defineTypes(PlayerState, {
   level: 'number',
   xp: 'number',
   pendingChoices: ['string'],
-  upgrades: { map: 'number' }
+  upgrades: { map: 'number' },
+  team: 'number'
 });
 
 // One collectible. Shared pool: first player within radius wins, the orb
@@ -142,6 +145,13 @@ export class WorldState extends Schema {
     this.wave = 1;              // current enemy wave (1-based)
     this.winnerId = '';         // sessionId of the match winner
     this.winnerName = '';       // ...and their name, for the results overlay
+    // Phase 5: arena metadata (defaults keep GameRoom rooms backward compatible)
+    this.arenaMode = '';        // '' = survival (game room), else 'duel'|'team'|'ffa'
+    this.arenaPve = false;      // optional PvE toggle for arena
+    this.arenaRoundsToWin = 0;  // 0 = not arena, else 1..5
+    this.arenaRound = 0;        // current round number (1-based in arena)
+    this.arenaTargetScore = 0;  // per-round score needed to win a round
+    this.arenaRoundWins = new MapSchema(); // key: sid or teamId string -> rounds won
   }
 }
 defineTypes(WorldState, {
@@ -154,5 +164,24 @@ defineTypes(WorldState, {
   countdown: 'number',
   wave: 'number',
   winnerId: 'string',
-  winnerName: 'string'
+  winnerName: 'string',
+  arenaMode: 'string',
+  arenaPve: 'boolean',
+  arenaRoundsToWin: 'number',
+  arenaRound: 'number',
+  arenaTargetScore: 'number',
+  arenaRoundWins: { map: 'number' }
+});
+
+// Lobby staging state: the queue before the arena.
+export class LobbyState extends Schema {
+  constructor() {
+    super();
+    this.queued = new MapSchema(); // sid -> mode string (debug) or placeholder
+    this.queueCount = 0;
+  }
+}
+defineTypes(LobbyState, {
+  queued: { map: 'string' },
+  queueCount: 'number'
 });
