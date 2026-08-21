@@ -47,6 +47,29 @@ Single source of truth for delivery status. **How to use this doc:** update the 
 
 - **UI revamp session (concurrent, separate agent):** tracked in `docs/artwork-ui-rework/TODO.md` (phases A/U) per the research committed in a868e54. It touches client files `index.html`, `src/main.js`, `src/client/NatureDressing.js`. Do not rebuild that artwork/UI work inside roadmap phases, and do not edit those three files from roadmap branches without coordinating — expect mid-air collisions otherwise. Roadmap phases that touch client visuals (3.1, 3.3, 4.5) must rebase onto that session's landed commits first.
 
+## Session summary — Q1 SHIPPED (2026-08-22)
+
+Q1 "Harden & License" is complete and live on origin master. Every phase went
+through the full cycle: plan -> review -> TDD red/green -> local gate
+(check + test + smoke) -> worktree -> merge -> green CI -> this tracker.
+
+| Item | Result |
+|------|--------|
+| CI gate (P1.2) | verify job: npm ci -> check -> test -> smoke (real server boot + WebSocket join). First green run 32516367093 |
+| MIT license (P1.1) | LICENSE + package.json + README section, guard test red-first. 763a0ab / CI 32517647752 |
+| Shared-sim extraction (P1.3) | D2 leveling, D5+D4+D3 combatBook/shopEffects, D6 projectileLoop, D7+D8 matchPhases (+D1 activateWave stretch). GameRoom.js 1330->1141 (-189), LocalRoom.js 892->780 (-112); ~300 duplicated lines now single-source; 2 sanctioned alignments pinned by tests. Slices: ffd1f1f, cd24327, 611f26a, e1d44d8 |
+| Flaky-test elimination (P1.4) | Audit (3 clean runs + 8 findings) -> deterministic red proofs for combat margin + world persistence leak; fixes #1-#6 + 4 extra latent flakes; 12/12 stress green; arena round-waits poll server state. fe15c33 / CI 32530964445 |
+| Browser e2e in CI (P1.5) | e2e job boots production server, drives test/browser.test.py in real Chromium (waves/world/pvp GREEN). d5b08c3 / CI 32534675813 |
+
+Final state at close: master d5b08c3 - check 75 files OK, 106/106 tests,
+smoke 8/8, CI verify+e2e green. Redundant one-off probes removed
+(d185d85); zero cozodb/datadog logic repo-wide (rg + ast-grep verified).
+
+## Next up (Q2 Platform Foundations - see ROADMAP.md)
+1. OIDC/OAuth2 login option (guest stays default)
+2. PlayerStore adapter interface + Postgres implementation (JSON default)
+3. Admin API + GDPR export/delete + audit log
+
 ## Definition of done for every phase
 
 A phase may only move to DONE when every box is satisfied:
