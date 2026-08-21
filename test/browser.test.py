@@ -21,11 +21,12 @@ Phase 5/6 flows (mode picker on the login screen):
   world  - Open World: chunk streaming + minimap + playable character
   pvp    - Lobby queue -> seat reservation redirect -> ArenaRoom match
 """
+import os
 import sys
 import time
 from playwright.sync_api import sync_playwright
 
-URL = "http://localhost:2567/"
+URL = os.environ.get("E2E_URL", "http://localhost:2567/")
 
 BONES = """
 () => {

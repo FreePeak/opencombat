@@ -32,3 +32,51 @@ jobs:
 
       - name: Live smoke (boot real server, join over WebSocket)
         run: npm run smoke
+
+  # P1.5: real-browser pass. The headless verify job cannot catch
+  # client-only breakage (schema API misuse, THREE scene wiring), so a
+  # real Chromium drives the same maintained regression used locally
+  # (test/browser.test.py): join -> countdown -> move, world + pvp flows.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright + Chromium
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Boot server (production entrypoint) and wait for healthz
+        run: |
+          PORT=2567 node src/server/index.js &
+          echo $! > /tmp/server.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:2567/healthz > /dev/null; then
+              echo "server healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become healthy within 30s" >&2
+          exit 1
+
+      - name: Real-browser e2e (test/browser.test.py)
+        run: python3 test/browser.test.py
+
+      - name: Stop server
+        if: always()
+        run: kill "$(cat /tmp/server.pid)" 2>/dev/null || true

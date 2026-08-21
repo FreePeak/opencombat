@@ -39,9 +39,9 @@ both players share one arena, one orb pool, one match, and the same enemies.
 
 Tooling: `npm run check` (node --check on every file) and
 `npm run test` (FSM unit test + headless multiplayer/integration test).
-For browser-only regressions (schema API misuse, scene wiring errors)
-run the Playwright e2e against a running server:
-`python3 test/browser.test.py`.
+The Playwright e2e (`python3 test/browser.test.py`) runs in CI on every
+push to master — a real Chromium joins, plays, and moves in all three
+modes; run it locally against a running server the same way.
 
 ## Environment
 
