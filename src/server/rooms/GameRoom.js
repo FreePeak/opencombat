@@ -22,17 +22,21 @@ import { stepPlayer } from '../movement.js';
 import { skillFor, resolveSkillHits, classStats } from '../../shared/skills.js';
 // Per-class base stats (Phase 3): hp/speed/melee numbers diverge per class.
 const statsOf = (player) => classStats(player.character);
-import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from '../../shared/waves.js';
+// D1 wave activation lives once in shared/waves.js (P1.3 slice 4 stretch):
+// the room injects its square sampler + anim/stun-map clears, keeps the log.
+import { activateWave } from '../../shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/combat.js';
 import { attackFor } from '../../shared/classes.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
 // level-up queue -> card roll -> auto-pick -> manual pick. D5 enemy-hit
 // resolution + D4 burn DoT (combatBook) and D3 shop effects (shopEffects)
-// followed in slice 2; D6 projectile loop in slice 3.
+// followed in slice 2; D6 projectile loop in slice 3; D7 pause wall +
+// D8 match reset complete the set in slice 4.
 import * as leveling from '../../shared/sim/leveling.js';
 import * as combatBook from '../../shared/sim/combatBook.js';
 import * as shopEffects from '../../shared/sim/shopEffects.js';
 import * as projectileLoop from '../../shared/sim/projectileLoop.js';
+import * as matchPhases from '../../shared/sim/matchPhases.js';
 import { aggregateBonuses,
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult } from '../../shared/progression.js';
@@ -94,8 +98,10 @@ export default class GameRoom extends Room {
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
     this.lastActiveAt = Date.now(); // empty-room TTL anchor
-    this.intermissionUntil = 0;  // ms epoch when intermission auto-advances
-    this.pausedUntil = 0;        // ms epoch when global pause cap expires
+    // D7 pause-wall bookkeeping as mutable ref holders the shared gate
+    // mutates (src/shared/sim/matchPhases.js): until=0 means disarmed.
+    this.intermissionBox = { until: 0 };  // ms epoch when intermission auto-advances
+    this.pauseBox = { until: 0 };         // ms epoch when global pause cap expires
     this.intermissionShopChoices = new Map(); // sid -> shop pick applied this intermission
     // D4 burn DoT scratch (src/shared/sim/combatBook.js): firewave payload
     // keyed by projectile id, live burns keyed by enemy.
@@ -139,6 +145,24 @@ export default class GameRoom extends Room {
         this.clients.find((c) => c.sessionId === sid)?.send(type, data),
       log: (event, fields) => this.logEvent(event, fields),
       warn: (event, fields) => this.warnEvent(event, fields),
+    };
+    // Shared-sim context for the D7 pause wall + D8 match reset
+    // (src/shared/sim/matchPhases.js, P1.3 slice 4). The win-while-paused
+    // hook keeps the full checkWinConditions(0) here — LocalRoom wires its
+    // historical score-only block on its side of the seam.
+    this.simPhases = {
+      state: this.state,
+      players: this.state.players,
+      pendingUntil: this.pendingUntil,
+      pendingQueue: this.pendingQueue,
+      pauseBox: this.pauseBox,
+      intermissionBox: this.intermissionBox,
+      now: () => Date.now(),
+      checkAutoPicks: () => leveling.checkAutoPicks(this.simLeveling),
+      checkWinWhilePaused: () => {
+        if (this.state.matchState !== 'gameover') this.checkWinConditions(0);
+      },
+      spawnWave: (n) => this.spawnWave(n),
     };
 
     this.spawnOrbs();
@@ -212,24 +236,16 @@ export default class GameRoom extends Room {
   }
 
   /** Activate wave `n`: the first waveEnemyCount(n) pool slots come alive at
-   *  waveEnemyHp(n), spawned away from players; the rest drop dead. */
+   *  waveEnemyHp(n), spawned away from players; the rest drop dead. Thin
+   *  delegate over shared/waves.activateWave (P1.3 slice 4 stretch): the
+   *  square sampler + anim/stun-map clears are injected, wave_spawn stays. */
   spawnWave(n) {
-    const count = waveEnemyCount(n);
-    const hp = waveEnemyHp(n);
-    const players = [...this.state.players.values()].filter((p) => p.hp > 0);
-    this.state.enemies.forEach((enemy, i) => {
-      this.enemyAnimUntil.delete(enemy);
-      this.enemyStunUntil.delete(enemy);
-      if (i < count) {
-        const p = spawnAwayFromPlayers(players, () => this.randomPos());
-        enemy.x = p.x;
-        enemy.z = p.z;
-        enemy.hp = hp;
-        enemy.anim = 'idle';
-      } else {
-        enemy.hp = 0;
-      }
-    });
+    const { count, hp } = activateWave(
+      this.state.enemies, n, this.state.players, () => this.randomPos(),
+      (enemy) => {
+        this.enemyAnimUntil.delete(enemy);
+        this.enemyStunUntil.delete(enemy);
+      });
     this.state.wave = n;
     this.logEvent('wave_spawn', { wave: n, enemies: count, hp });
   }
@@ -423,53 +439,24 @@ export default class GameRoom extends Room {
     this.logEvent('match_over', { winnerSid: this.state.winnerId, winnerName: this.state.winnerName });
   }
 
-  /** Reset the match in place (play again / auto-restart), keep room + players. */
+  /** Reset the match in place (play again / auto-restart), keep room + players.
+   *  World/scratch reset is shared (src/shared/sim/matchPhases.js, P1.3 slice
+   *  4) — including clearing live projectiles like LocalRoom always did
+   *  (sanctioned alignment #2); this method keeps only its own scratch maps,
+   *  the timed-mode counter, the log and the countdown transition. */
   resetMatch() {
-    const state = this.state;
-    for (const player of state.players.values()) {
-      const p = this.randomPos();
-      player.x = p.x;
-      player.z = p.z;
-      player.hp = statsOf(player).hp; // Phase 3: per-class base HP
-      player.score = 0;
-      player.anim = 'idle';
-      player.blocking = false;
-      player.attackCd = 0;
-      player.skillCd = 0;
-      player.effects.clear(); // buffs never carry into the next match
-      // Phase 4: fresh match = back to level 1, no cards
-      player.level = 1;
-      player.xp = 0;
-      while (player.pendingChoices.length) player.pendingChoices.pop();
-      player.upgrades.clear();
-    }
-    // Scratch state: no stale cooldowns/input intents across matches.
-    for (const sid of state.players.keys()) {
-      this.inputs.set(sid, { dirX: 0, dirZ: 0 });
-      this.attackAt.set(sid, 0);
-      this.skillAt.set(sid, 0);
-      this.invulnUntil.set(sid, 0);
-      this.animUntil.set(sid, 0);
-      this.pendingUntil.delete(sid);
-      this.pendingQueue?.delete(sid);
-    }
-    state.winnerId = '';
-    state.winnerName = '';
-    for (const orb of state.orbs) {
-      const p = this.randomPos();
-      orb.x = p.x;
-      orb.z = p.z;
-    }
-    // Fresh match = wave 1 (spawnWave clears every enemy stun/anim override).
-    this.pendingMelee = [];
-    this.spawnWave(1);
-    for (const pu of state.powerUps) {
-      const p = this.randomPos();
-      pu.x = p.x;
-      pu.z = p.z;
-      pu.active = true;
-    }
-    this.powerUpTimers.clear();
+    matchPhases.resetMatchState(this.simPhases, {
+      samplePos: () => this.randomPos(),
+      onResetPlayerScratch: (sid) => {
+        this.inputs.set(sid, { dirX: 0, dirZ: 0 });
+        this.attackAt.set(sid, 0);
+        this.skillAt.set(sid, 0);
+        this.invulnUntil.set(sid, 0);
+        this.animUntil.set(sid, 0);
+      },
+      onResetTransient: () => { this.pendingMelee = []; },
+      onResetPowerUps: () => this.powerUpTimers.clear(),
+    });
     this.matchElapsed = 0;
     this.logEvent('match_reset');
     this.startCountdown();
@@ -480,14 +467,6 @@ export default class GameRoom extends Room {
     if (this.state.matchState !== 'gameover') return; // only after a match
     this.logEvent('match_play_again', { sid: client.sessionId });
     this.resetMatch();
-  }
-
-  /** True when any living player has pending upgrade cards (needs pause). */
-  hasPendingChoices() {
-    for (const p of this.state.players.values()) {
-      if (p.pendingChoices.length > 0) return true;
-    }
-    return false;
   }
 
   /** Intermission shop: one free breather pick per player per intermission. */
@@ -503,7 +482,7 @@ export default class GameRoom extends Room {
     this.intermissionShopChoices.clear();
     this.state.projectiles.clear();
     this.spawnWave(next);
-    this.intermissionUntil = 0;
+    this.intermissionBox.until = 0;
     this.state.intermissionUntil = 0;
     this.startCountdown();
   }
@@ -887,35 +866,16 @@ export default class GameRoom extends Room {
 
     // Phase 4: auto-pick stalled upgrade cards — must run before pause wall so
     // the 10s deadline actually fires (pausing the sim must NOT stall the pick).
-    this.checkAutoPicks();
-    const paused = this.hasPendingChoices();
-    state.paused = paused;
-    // Global pause while any player is choosing: freeze world clocks but still
-    // run win checks so score-triggered wins aren't deadlocked behind a pending
-    // upgrade card (phase4.test block 8 grants XP->pending then scores to win).
-    // Intermission auto-advance is held while paused by extending its deadline.
-    let dtEff = dt;
-    if (paused) {
-      const now = Date.now();
-      if (this.pausedUntil === 0) this.pausedUntil = now + (SERVER.wave?.maxPauseMs ?? 30000);
-      if (now >= this.pausedUntil) {
-        state.paused = false;
-      } else {
-        if (state.matchState === 'intermission' && this.intermissionUntil) {
-          this.intermissionUntil += dt * 1000;
-          state.intermissionUntil = this.intermissionUntil;
-        }
-        dtEff = 0;
-      }
-    } else {
-      this.pausedUntil = 0;
-    }
+    // D7 pause wall (src/shared/sim/matchPhases.js, P1.3 slice 4): the shared
+    // gate scans pending cards across players, arms/caps the global wall by
+    // maxPauseMs and extends an active intermission deadline while walled.
+    const { dtEff } = matchPhases.pauseGate(this.simPhases, dt);
 
-    // Paused: still evaluate win (gameover) so progression doesn't deadlock.
-    if (dtEff === 0) {
-      if (paused && state.matchState !== 'gameover') this.checkWinConditions(0);
-      return;
-    }
+    // Paused (or a zero-dt tick): skip the world step — the gate already ran
+    // checkWinConditions(0) on walled ticks so score-triggered wins aren't
+    // deadlocked behind a pending upgrade card (phase4.test block 8 grants
+    // XP->pending then scores to win).
+    if (dtEff === 0) return;
     switch (state.matchState) {
       case 'lobby':
         // Free movement so players can warm up; no pickups, no enemies.
@@ -939,7 +899,7 @@ export default class GameRoom extends Room {
         this.updateEffects(dtEff * 1000);
         this.updatePickups(dtEff);
         this.checkWinConditions(dtEff);
-        if (Date.now() >= this.intermissionUntil) this.startNextWave();
+        if (Date.now() >= this.intermissionBox.until) this.startNextWave();
         return;
       case 'gameover':
         return; // frozen; only 'playAgain' moves on
@@ -1070,8 +1030,8 @@ export default class GameRoom extends Room {
     if (state.enemies.length > 0 && alive === 0) {
       state.matchState = 'intermission';
       this.pendingMelee = [];
-      this.intermissionUntil = Date.now() + (SERVER.wave?.intermissionMs ?? 8000);
-      this.state.intermissionUntil = this.intermissionUntil;
+      this.intermissionBox.until = Date.now() + (SERVER.wave?.intermissionMs ?? 8000);
+      this.state.intermissionUntil = this.intermissionBox.until;
       this.intermissionShopChoices.clear();
       this.logEvent('wave_cleared', { wave: state.wave });
       return;

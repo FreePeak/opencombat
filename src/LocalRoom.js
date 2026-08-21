@@ -9,17 +9,21 @@ import { stepPlayer } from './server/movement.js';
 import { skillFor, resolveSkillHits, classStats } from './shared/skills.js';
 // Per-class base stats (Phase 3): hp/speed/melee numbers diverge per class.
 const statsOf = (player) => classStats(player.character);
-import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from './shared/waves.js';
+// D1 wave activation lives once in shared/waves.js (P1.3 slice 4 stretch):
+// the room injects its seeded LCG circle sampler + anim/stun-map clears.
+import { activateWave } from './shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/combat.js';
 import { attackFor } from './shared/classes.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
 // server room uses; clock/emit hooks below keep offline behavior identical.
 // Slice 2 moved D5 enemy-hit + D4 burn DoT (combatBook) and D3 shop effects
-// (shopEffects) into shared modules too; slice 3 moved the D6 projectile loop.
+// (shopEffects) into shared modules too; slice 3 moved the D6 projectile loop;
+// slice 4 completes the set with D7 pause wall + D8 match reset (matchPhases).
 import * as leveling from './shared/sim/leveling.js';
 import * as combatBook from './shared/sim/combatBook.js';
 import * as shopEffects from './shared/sim/shopEffects.js';
 import * as projectileLoop from './shared/sim/projectileLoop.js';
+import * as matchPhases from './shared/sim/matchPhases.js';
 import {
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult,
@@ -111,6 +115,30 @@ export class LocalRoom {
       shopChoices: this._shopPicks,
       emit: (_sid, type, data) => this._emitMessage(type, data), // fans out, sid dropped
     };
+    // D7 pause-wall scratch + shared-sim ctx (src/shared/sim/matchPhases.js,
+    // P1.3 slice 4): boxes are the mutable ref holders the shared gate
+    // mutates. The win-while-paused hook keeps the historical score-only
+    // check — the server's full checkWinConditions(0) timed path stays
+    // per-side by design (plan section 1 D7 difference 2).
+    this.simPhases = {
+      state: this.state,
+      players: this.state.players,
+      pendingUntil: this._deadlines,
+      pendingQueue: this._queues,
+      pauseBox: { until: 0 },
+      intermissionBox: { until: 0 },
+      now: () => performance.now(),
+      checkAutoPicks: () => leveling.checkAutoPicks(this.simLeveling),
+      checkWinWhilePaused: () => {
+        if (SERVER.match.targetScore > 0) {
+          const me2 = this.state.players.get(this.sessionId);
+          if (me2 && me2.hp > 0 && me2.score >= SERVER.match.targetScore) {
+            this._endMatch(me2);
+          }
+        }
+      },
+      spawnWave: (n) => this._spawnWave(n),
+    };
     // Browsers drive the sim with rAF; headless environments (the test suite)
     // get a 16ms timer so the same room class runs in Node.
     this._raf = typeof requestAnimationFrame === 'function';
@@ -131,11 +159,6 @@ export class LocalRoom {
     for (const m of this._callbacks.message) {
       if (m.type === type) m.fn(data);
     }
-  }
-
-  _hasPendingChoices() {
-    const me = this.state.players.get(this.sessionId);
-    return !!(me && me.pendingChoices.length > 0);
   }
 
   /** Intermission shop delegate — gating + formulas live in shared/sim. */
@@ -201,11 +224,12 @@ export class LocalRoom {
       this.state.powerUps.push(p);
     }
 
-    // Pause / intermission bookkeeping (mirrors GameRoom.paused + intermissionUntil)
+    // Pause / intermission bookkeeping (mirrors GameRoom pause + intermission
+    // boxes; the shared D7 gate mutates these holders)
     this.state.paused = false;
     this.state.intermissionUntil = 0;
-    this._intermissionUntil = 0;
-    this._pausedUntil = 0;
+    this.simPhases.intermissionBox.until = 0;
+    this.simPhases.pauseBox.until = 0;
     this._shopPicks.clear();
     // Match state
     this.state.matchState = 'countdown';
@@ -242,25 +266,16 @@ export class LocalRoom {
     this._step(dt);
   }
 
-  /** Activate wave `n` out of the fixed pool (mirror of GameRoom.spawnWave). */
+  /** Activate wave `n` out of the fixed pool — thin delegate over shared
+   *  waves.activateWave (P1.3 slice 4 stretch); LCG circle sampler injected. */
   _spawnWave(n) {
-    const half = SERVER.world.size / 2;
-    const count = waveEnemyCount(n);
-    const hp = waveEnemyHp(n);
-    const players = [...this.state.players.values()].filter((p) => p.hp > 0);
-    this.state.enemies.forEach((enemy, i) => {
-      this._enemyAnimUntil.delete(enemy);
-      this._enemyStunUntil.delete(enemy);
-      if (i < count) {
-        const pos = spawnAwayFromPlayers(players, () => randomInCircle(this._rng, half - 2));
-        enemy.x = pos.x;
-        enemy.z = pos.z;
-        enemy.hp = hp;
-        enemy.anim = 'idle';
-      } else {
-        enemy.hp = 0;
-      }
-    });
+    activateWave(
+      this.state.enemies, n, this.state.players,
+      () => randomInCircle(this._rng, SERVER.world.size / 2 - 2),
+      (enemy) => {
+        this._enemyAnimUntil.delete(enemy);
+        this._enemyStunUntil.delete(enemy);
+      });
     this.state.wave = n;
   }
 
@@ -312,32 +327,13 @@ export class LocalRoom {
     const me = players.get(this.sessionId);
 
     // Phase 4: auto-pick stalled upgrade cards — must run before pause wall.
-    this._checkAutoPicks();
-    const shouldPause = this._hasPendingChoices();
-    this.state.paused = shouldPause;
-    if (shouldPause) {
-      const now = performance.now();
-      if (!this._pausedUntil) this._pausedUntil = now + (SERVER.wave?.maxPauseMs ?? 30000);
-      if (now >= this._pausedUntil) {
-        this.state.paused = false;
-      } else {
-        if (this.state.matchState === 'intermission' && this._intermissionUntil) {
-          this._intermissionUntil += dt * 1000;
-          this.state.intermissionUntil = this._intermissionUntil;
-        }
-        // still allow win condition (score target) to fire while paused
-        if (SERVER.match.targetScore > 0) {
-          const me2 = this.state.players.get(this.sessionId);
-          if (me2 && me2.hp > 0 && me2.score >= SERVER.match.targetScore) {
-            this._endMatch(me2);
-            return;
-          }
-        }
-        return;
-      }
-    } else {
-      this._pausedUntil = 0;
-    }
+    // D7 pause wall (src/shared/sim/matchPhases.js, P1.3 slice 4): the shared
+    // gate auto-picks, scans pending cards, arms/caps the global wall by
+    // maxPauseMs and extends an active intermission deadline while walled.
+    const { dtEff, paused: shouldPause } = matchPhases.pauseGate(this.simPhases, dt);
+    // Walled (or a zero-dt tick): skip the world step — the gate already ran
+    // the score-target win check so a win cannot deadlock behind a card.
+    if (dtEff === 0) return;
 
     // Countdown
     if (this.state.matchState === 'countdown') {
@@ -354,7 +350,7 @@ export class LocalRoom {
     if (this.state.matchState === 'gameover') return;
 
     // Intermission auto-advance
-    if (this.state.matchState === 'intermission' && this._intermissionUntil && performance.now() >= this._intermissionUntil && !shouldPause) {
+    if (this.state.matchState === 'intermission' && this.simPhases.intermissionBox.until && performance.now() >= this.simPhases.intermissionBox.until && !shouldPause) {
       this._requestNextWave();
       return;
     }
@@ -501,8 +497,8 @@ export class LocalRoom {
         this.state.matchState = 'intermission';
         this._pendingStrikes = [];
         this.state.projectiles.clear();
-        this._intermissionUntil = performance.now() + (SERVER.wave?.intermissionMs ?? 8000);
-        this.state.intermissionUntil = this._intermissionUntil;
+        this.simPhases.intermissionBox.until = performance.now() + (SERVER.wave?.intermissionMs ?? 8000);
+        this.state.intermissionUntil = this.simPhases.intermissionBox.until;
         this._shopPicks.clear();
         this._notifyStateChange();
         return;
@@ -740,7 +736,7 @@ export class LocalRoom {
     if (this.state.matchState !== 'intermission') return;
     this._pendingStrikes = [];
     this.state.projectiles.clear();
-    this._intermissionUntil = 0;
+    this.simPhases.intermissionBox.until = 0;
     this.state.intermissionUntil = 0;
     this._shopPicks.clear();
     this._spawnWave(this.state.wave + 1);
@@ -756,49 +752,17 @@ export class LocalRoom {
     this.state.countdown = SERVER.match.countdownSeconds;
     this._countdownTimer = SERVER.match.countdownSeconds * 1000;
     this._matchEnded = false;
-    this.state.winnerId = '';
-    this.state.winnerName = '';
-    this._pendingStrikes = [];
-    this.state.projectiles.clear();
-
-    // Reset local player (Phase 4: back to level 1, no upgrades)
-    const me = this.state.players.get(this.sessionId);
-    if (me) {
-      me.x = 0; me.z = 0; me.rotY = 0;
-      me.hp = statsOf(me).hp; // base; upgrades cleared next line
-      me.score = 0;
-      me.anim = 'idle';
-      me.blocking = false;
-      me.effects.clear();
-      me.attackCd = 0;
-      me.skillCd = 0;
-      me.level = 1;
-      me.xp = 0;
-      while (me.pendingChoices.length) me.pendingChoices.pop();
-      me.upgrades.clear();
-      this._deadlines.delete(this.sessionId);
-      this._queues.delete(this.sessionId);
-    }
-
-    // Reset orbs
-    const half = SERVER.world.size / 2;
-    for (const orb of this.state.orbs) {
-      const pos = randomInCircle(this._rng, half - 2);
-      orb.x = pos.x;
-      orb.z = pos.z;
-    }
-
-    // Fresh match = wave 1 (clears every enemy stun/anim override)
-    this._spawnWave(1);
-
-    // Reset power-ups
-    for (const pu of this.state.powerUps) {
-      const pos = randomInCircle(this._rng, half - 2);
-      pu.x = pos.x;
-      pu.z = pos.z;
-      pu.active = true;
-    }
-
+    // Player/world reset is shared (src/shared/sim/matchPhases.js, P1.3
+    // slice 4): winner + projectiles cleared (the projectile clear was always
+    // here — GameRoom now aligns), local player back to origin/base stats,
+    // orbs/power-ups reseeded, wave 1 reactivated.
+    matchPhases.resetMatchState(this.simPhases, {
+      samplePos: (kind) =>
+        kind === 'player'
+          ? { x: 0, z: 0, rotY: 0 }
+          : randomInCircle(this._rng, SERVER.world.size / 2 - 2),
+      onResetTransient: () => { this._pendingStrikes = []; },
+    });
     this._notifyStateChange();
   }
 

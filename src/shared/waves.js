@@ -41,3 +41,48 @@ export function spawnAwayFromPlayers(players, randomPos, minDist = 12) {
   }
   return best;
 }
+
+/**
+ * Activate wave `n` over a fixed enemy pool (P1.3 Slice 4 stretch, design doc
+ * section 1 D1). Mutates each enemy slot in place: the first
+ * waveEnemyCount(n) slots come alive at waveEnemyHp(n), positioned by
+ * samplePos away from living players (best-of-8 via spawnAwayFromPlayers);
+ * the rest drop to hp 0 so ids stay stable across waves. Caller owns the
+ * per-enemy anim/stun map clears through onSlotReset (invoked once per slot,
+ * before placement) and sets `state.wave = n` itself.
+ *
+ * @param {Array|ArraySchema} enemies - fixed enemy pool, mutated in place
+ * @param {number} n - 1-based wave number
+ * @param {Map|MapSchema|Array} players - room seats; only hp > 0 seats are
+ *   treated as spawn hazards
+ * @param {(players: object[]) => {x:number,z:number}} samplePos - raw
+ *   position sampler (GameRoom: uniform square minus margin; LocalRoom:
+ *   seeded LCG circle)
+ * @param {(enemy: object) => void} [onSlotReset] - called once per slot
+ *   before placement (rooms clear their anim/stun map entries keyed by the
+ *   enemy object here)
+ * @returns {{count:number, hp:number}} the activated count + per-enemy HP
+ *   (callers log wave_spawn with them)
+ */
+export function activateWave(enemies, n, players, samplePos, onSlotReset) {
+  const count = waveEnemyCount(n);
+  const hp = waveEnemyHp(n);
+  // Only living seats are spawn hazards (corpses are ignored by both rooms).
+  const hazards = [];
+  for (const p of typeof players.values === 'function' ? players.values() : players) {
+    if (p.hp > 0) hazards.push(p);
+  }
+  enemies.forEach((enemy, i) => {
+    onSlotReset?.(enemy);
+    if (i < count) {
+      const p = spawnAwayFromPlayers(hazards, samplePos);
+      enemy.x = p.x;
+      enemy.z = p.z;
+      enemy.hp = hp;
+      enemy.anim = 'idle';
+    } else {
+      enemy.hp = 0;
+    }
+  });
+  return { count, hp };
+}
