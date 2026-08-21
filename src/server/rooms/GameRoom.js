@@ -27,10 +27,12 @@ import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/c
 import { attackFor } from '../../shared/classes.js';
 import { stepProjectile, projectileExpired, projectileHitsTarget,
          resolveProjectileEnemyHit, resolveProjectilePlayerHit } from '../../shared/projectiles.js';
-import { xpForLevel, rollUpgrades, getUpgrade, aggregateBonuses,
+// D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
+// level-up queue -> card roll -> auto-pick -> manual pick.
+import * as leveling from '../../shared/sim/leveling.js';
+import { getUpgrade, aggregateBonuses,
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
-         effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectiveXp, effectivePickupMult,
-         AUTO_PICK_MS } from '../../shared/progression.js';
+         effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult } from '../../shared/progression.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -73,6 +75,18 @@ export default class GameRoom extends Room {
     this._projectileId = 0;        // monotonic ID for projectile spawn
     this.pendingUntil = new Map(); // sid -> ms deadline for upgrade auto-pick
     this.pendingQueue = new Map(); // sid -> queued level-ups waiting for card pick
+    // Shared-sim context for the D2 leveling flow (src/shared/sim/leveling.js):
+    // the room owns state + scratch maps + transport; only clock/hooks wire in.
+    this.simLeveling = {
+      players: this.state.players,
+      pendingUntil: this.pendingUntil,
+      pendingQueue: this.pendingQueue,
+      now: () => Date.now(),
+      emit: (sid, type, data) =>
+        this.clients.find((c) => c.sessionId === sid)?.send(type, data),
+      log: (event, fields) => this.logEvent(event, fields),
+      warn: (event, fields) => this.warnEvent(event, fields),
+    };
 
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
@@ -296,148 +310,44 @@ export default class GameRoom extends Room {
   }
 
   // -------------------------------------------------------------------------
-  // Progression (Phase 4): XP, level-up, upgrade cards
+  // Progression (Phase 4): XP, level-up, upgrade cards. The flow itself is
+  // shared with LocalRoom in src/shared/sim/leveling.js — the methods below
+  // are thin delegates kept for callers/tests (sr.grantXp, sr.hashSeed, ...).
   // -------------------------------------------------------------------------
 
   /** Grant `baseXp` to `sid`, respecting the Scholar bonus, then maybe level up. */
   grantXp(sid, baseXp) {
-    const player = this.state.players.get(sid);
-    if (!player) return;
-    const amt = effectiveXp(baseXp, player.upgrades);
-    if (amt <= 0) return;
-    player.xp += amt;
-    this.logEvent('xp_gain', { sid, amount: amt, total: player.xp });
-    this.maybeLevelUp(sid);
+    leveling.grantXp(this.simLeveling, sid, baseXp);
   }
 
   /** While XP suffices for the next level, level up and roll 3 choices (or queue). */
   maybeLevelUp(sid) {
-    const player = this.state.players.get(sid);
-    if (!player) return;
-    // Ensure queue storage exists
-    if (!this.pendingQueue) this.pendingQueue = new Map();
-    let queue = this.pendingQueue.get(sid);
-    if (!queue) { queue = []; this.pendingQueue.set(sid, queue); }
-    while (player.xp >= xpForLevel(player.level + 1)) {
-      const nextLevel = player.level + 1;
-      // If a card is already showing or there is a queue, don't show the new
-      // level's cards immediately — level still increments (so the HUD updates)
-      // but the cards are queued for after the current pick(s).
-      if (player.pendingChoices.length > 0 || queue.length > 0) {
-        player.level = nextLevel;
-        queue.push(nextLevel);
-        this.logEvent('level_queued', { sid, level: player.level, queued: queue.length });
-        continue;
-      }
-      player.level = nextLevel;
-      const seed = this.hashSeed(sid, player.level);
-      const picks = rollUpgrades(seed, player.character, player.upgrades);
-      // ArraySchema: clear then push
-      while (player.pendingChoices.length) player.pendingChoices.pop();
-      for (const id of picks) player.pendingChoices.push(id);
-      const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
-      this.pendingUntil.set(sid, Date.now() + ms);
-      this.logEvent('level_up', { sid, level: player.level, choices: picks });
-      // Tell the client via state patch + direct message for toast.
-      const client = this.clients.find((c) => c.sessionId === sid);
-      client?.send('levelUp', { level: player.level, choices: picks });
-    }
+    leveling.maybeLevelUp(this.simLeveling, sid);
   }
 
   /** Pop the next queued level-up (if any) and show its cards. */
   showNextQueued(sid) {
-    const player = this.state.players.get(sid);
-    if (!player) return;
-    const queue = this.pendingQueue?.get(sid);
-    if (!queue || queue.length === 0) return;
-    const lvl = queue.shift(); // next queued level number
-    // The player's level already reflects this queued level (incremented earlier),
-    // so seed for `lvl` is correct. If queue had multiple, `lvl` is the smallest.
-    const seed = this.hashSeed(sid, lvl);
-    const picks = rollUpgrades(seed, player.character, player.upgrades);
-    while (player.pendingChoices.length) player.pendingChoices.pop();
-    for (const id of picks) player.pendingChoices.push(id);
-    const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
-    this.pendingUntil.set(sid, Date.now() + ms);
-    this.logEvent('level_up_queued_show', { sid, level: lvl, choices: picks });
-    const client = this.clients.find((c) => c.sessionId === sid);
-    client?.send('levelUp', { level: lvl, choices: picks });
+    leveling.showNextQueued(this.simLeveling, sid);
   }
 
   hashSeed(sid, level) {
-    // Deterministic seed from sid + level (so the same level-up for the same
-    // player always rolls the same 3 cards, but different players/levels differ).
-    let h = 0;
-    const s = sid + ':' + level;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return h || 1;
+    return leveling.hashSeed(sid, level);
   }
 
-  /** Apply `upgradeId` to `player` (sid for logging), returns true if applied. */
-  applyUpgrade(player, sid, upgradeId) {
-    const def = getUpgrade(upgradeId);
-    if (!def) return false;
-    const cur = player.upgrades.get(upgradeId) || 0;
-    if (cur >= (def.maxStacks ?? 99)) return false;
-    player.upgrades.set(upgradeId, cur + 1);
-    // Vitality: immediately heal the bonus so the pick feels impactful.
-    if (upgradeId === 'vitality') {
-      const maxHp = effectiveMaxHp(player.character, player.upgrades);
-      player.hp = Math.min(maxHp, player.hp + 30);
-    }
-    this.logEvent('upgrade_pick', { sid, upgradeId, stacks: cur + 1, level: player.level });
-    return true;
+  /** Apply `upgradeId` to the player behind `sid`, returns true if applied. */
+  applyUpgrade(sid, upgradeId) {
+    return leveling.applyUpgrade(this.simLeveling, sid, upgradeId);
   }
 
   /** Auto-pick deadline check: every tick. */
   checkAutoPicks() {
-    const now = Date.now();
-    for (const [sid, deadline] of [...this.pendingUntil.entries()]) {
-      if (now < deadline) continue;
-      const player = this.state.players.get(sid);
-      if (!player || player.pendingChoices.length === 0) {
-        this.pendingUntil.delete(sid);
-        continue;
-      }
-      const auto = player.pendingChoices[0];
-      this.logEvent('upgrade_auto_pick', { sid, upgradeId: auto });
-      while (player.pendingChoices.length) player.pendingChoices.pop();
-      this.pendingUntil.delete(sid);
-      this.applyUpgrade(player, sid, auto);
-      const client = this.clients.find((c) => c.sessionId === sid);
-      client?.send('upgradeResult', { picked: auto, auto: true });
-      // If there are queued level-ups, show the next one; otherwise check for new XP-based levels.
-      const queue = this.pendingQueue?.get(sid);
-      if (queue && queue.length > 0) this.showNextQueued(sid);
-      else this.maybeLevelUp(sid);
-    }
+    leveling.checkAutoPicks(this.simLeveling);
   }
 
   /** Player picks one of their 3 pending upgrade cards. */
   onChooseUpgrade(client, msg = {}) {
-    const sid = client.sessionId;
-    const player = this.state.players.get(sid);
-    if (!player) return;
-    if (player.pendingChoices.length === 0) {
-      this.warnEvent('upgrade_rejected', { sid, reason: 'no_pending' });
-      return;
-    }
-    const choice = String(msg.choice ?? msg.id ?? '');
-    if (!player.pendingChoices.includes(choice)) {
-      this.warnEvent('upgrade_rejected', { sid, reason: 'not_offered', choice });
-      return;
-    }
-    while (player.pendingChoices.length) player.pendingChoices.pop();
-    this.pendingUntil.delete(sid);
-    const ok = this.applyUpgrade(player, sid, choice);
-    if (!ok) {
-      this.warnEvent('upgrade_rejected', { sid, reason: 'apply_failed', choice });
-      return;
-    }
-    client.send('upgradeResult', { picked: choice, auto: false });
-    const queue = this.pendingQueue?.get(sid);
-    if (queue && queue.length > 0) this.showNextQueued(sid);
-    else this.maybeLevelUp(sid);
+    leveling.chooseUpgrade(this.simLeveling, client.sessionId,
+      msg.choice ?? msg.id ?? '');
   }
 
   /** LOBBY -> COUNTDOWN. Scores/world were reset by the caller if needed. */

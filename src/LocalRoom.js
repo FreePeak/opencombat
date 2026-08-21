@@ -14,10 +14,13 @@ import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/comba
 import { attackFor } from './shared/classes.js';
 import { stepProjectile, projectileExpired, projectileHitsTarget,
          resolveProjectileEnemyHit, resolveProjectilePlayerHit } from './shared/projectiles.js';
-import { xpForLevel, rollUpgrades, getUpgrade,
+// D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
+// server room uses; clock/emit hooks below keep offline behavior identical.
+import * as leveling from './shared/sim/leveling.js';
+import { getUpgrade,
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
-         effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectiveXp, effectivePickupMult,
-         aggregateBonuses, AUTO_PICK_MS } from './shared/progression.js';
+         effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult,
+         aggregateBonuses } from './shared/progression.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -52,8 +55,18 @@ export class LocalRoom {
     this._enemyStunUntil = new Map();  // enemy -> ms of HIT-STUN (no actions)
     this._pendingStrikes = [];         // {sid, at} — melee impacts land mid-swing
     this._projectileId = 0;           // monotonic ID for projectile spawn
-    this._pendingUntil = null;        // ms deadline for upgrade auto-pick (local player)
-    this._pendingQueue = [];          // queued level numbers waiting for card pick
+    // Phase 4 leveling scratch, migrated to the shared sid-keyed Map shape
+    // (P1.3 slice 1) so both rooms feed src/shared/sim/leveling.js the same
+    // structure. Single local player — one key each in practice.
+    this._deadlines = new Map();      // sid -> ms deadline for upgrade auto-pick
+    this._queues = new Map();         // sid -> queued level numbers waiting to show
+    this.simLeveling = {              // shared-sim ctx: clock + transport hooks
+      players: this.state.players,
+      pendingUntil: this._deadlines,
+      pendingQueue: this._queues,
+      now: () => performance.now(),
+      emit: (_sid, type, data) => this._emitMessage(type, data), // fans out, sid dropped
+    };
     // Browsers drive the sim with rAF; headless environments (the test suite)
     // get a 16ms timer so the same room class runs in Node.
     this._raf = typeof requestAnimationFrame === 'function';
@@ -138,8 +151,8 @@ export class LocalRoom {
     me.xp = 0;
     while (me.pendingChoices.length) me.pendingChoices.pop();
     me.upgrades.clear();
-    this._pendingUntil = null;
-    this._pendingQueue = [];
+    this._deadlines.clear();
+    this._queues.clear();
     this.state.players.set(this.sessionId, me);
     this._myPlayerId = this.sessionId;
 
@@ -228,98 +241,45 @@ export class LocalRoom {
   }
 
   // -------------------------------------------------------------------------
-  // Progression (Phase 4) — mirror of GameRoom progression logic
+  // Progression (Phase 4) — the flow is shared with GameRoom in
+  // src/shared/sim/leveling.js; methods below are thin delegates kept for
+  // callers/tests (local._grantXp, local._hashSeed, local._pendingUntil...).
   // -------------------------------------------------------------------------
+
+  // Scalar deadline API kept for tests/back-compat; the source of truth is
+  // the sid-keyed _deadlines map the shared sim consumes.
+  get _pendingUntil() { return this._deadlines.get(this.sessionId) ?? null; }
+  set _pendingUntil(v) {
+    if (v == null) this._deadlines.delete(this.sessionId);
+    else this._deadlines.set(this.sessionId, v);
+  }
+
   _hashSeed(sid, level) {
-    let h = 0;
-    const s = sid + ':' + level;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return h || 1;
+    return leveling.hashSeed(sid, level);
   }
 
   _grantXp(baseXp) {
-    const me = this.state.players.get(this.sessionId);
-    if (!me) return;
-    const amt = effectiveXp(baseXp, me.upgrades);
-    if (amt <= 0) return;
-    me.xp += amt;
-    this._maybeLevelUp();
+    leveling.grantXp(this.simLeveling, this.sessionId, baseXp);
   }
 
   _maybeLevelUp() {
-    const me = this.state.players.get(this.sessionId);
-    if (!me) return;
-    while (me.xp >= xpForLevel(me.level + 1)) {
-      const nextLevel = me.level + 1;
-      if (me.pendingChoices.length > 0 || this._pendingQueue.length > 0) {
-        me.level = nextLevel;
-        this._pendingQueue.push(nextLevel);
-        continue;
-      }
-      me.level = nextLevel;
-      const seed = this._hashSeed(this.sessionId, me.level);
-      const picks = rollUpgrades(seed, me.character, me.upgrades);
-      while (me.pendingChoices.length) me.pendingChoices.pop();
-      for (const id of picks) me.pendingChoices.push(id);
-      const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
-      this._pendingUntil = performance.now() + ms;
-      this._emitMessage('levelUp', { level: me.level, choices: picks });
-    }
+    leveling.maybeLevelUp(this.simLeveling, this.sessionId);
   }
 
   _showNextQueued() {
-    const me = this.state.players.get(this.sessionId);
-    if (!me || this._pendingQueue.length === 0) return;
-    const lvl = this._pendingQueue.shift();
-    const seed = this._hashSeed(this.sessionId, lvl);
-    const picks = rollUpgrades(seed, me.character, me.upgrades);
-    while (me.pendingChoices.length) me.pendingChoices.pop();
-    for (const id of picks) me.pendingChoices.push(id);
-    const ms = SERVER.progression?.autoPickMs ?? AUTO_PICK_MS;
-    this._pendingUntil = performance.now() + ms;
-    this._emitMessage('levelUp', { level: lvl, choices: picks });
+    leveling.showNextQueued(this.simLeveling, this.sessionId);
   }
 
   _applyUpgrade(id) {
-    const me = this.state.players.get(this.sessionId);
-    if (!me) return false;
-    const def = getUpgrade(id);
-    if (!def) return false;
-    const cur = me.upgrades.get(id) || 0;
-    if (cur >= (def.maxStacks ?? 99)) return false;
-    me.upgrades.set(id, cur + 1);
-    if (id === 'vitality') {
-      const maxHp = effectiveMaxHp(me.character, me.upgrades);
-      me.hp = Math.min(maxHp, me.hp + 30);
-    }
-    return true;
+    return leveling.applyUpgrade(this.simLeveling, this.sessionId, id);
   }
 
   _checkAutoPicks() {
-    const me = this.state.players.get(this.sessionId);
-    if (!me || me.pendingChoices.length === 0 || this._pendingUntil == null) return;
-    if (performance.now() < this._pendingUntil) return;
-    const auto = me.pendingChoices[0];
-    while (me.pendingChoices.length) me.pendingChoices.pop();
-    this._pendingUntil = null;
-    this._applyUpgrade(auto);
-    this._emitMessage('upgradeResult', { picked: auto, auto: true });
-    if (this._pendingQueue.length > 0) this._showNextQueued();
-    else this._maybeLevelUp();
+    leveling.checkAutoPicks(this.simLeveling);
   }
 
   _chooseUpgrade(choice) {
-    const me = this.state.players.get(this.sessionId);
-    if (!me || me.pendingChoices.length === 0) return;
-    const c = String(choice || '');
-    if (!me.pendingChoices.includes(c)) return;
-    while (me.pendingChoices.length) me.pendingChoices.pop();
-    this._pendingUntil = null;
-    const ok = this._applyUpgrade(c);
-    if (!ok) return;
-    this._emitMessage('upgradeResult', { picked: c, auto: false });
-    if (this._pendingQueue.length > 0) this._showNextQueued();
-    else this._maybeLevelUp();
+    return leveling.chooseUpgrade(this.simLeveling, this.sessionId, choice);
   }
 
   _step(dt) {
@@ -852,8 +812,8 @@ export class LocalRoom {
       me.xp = 0;
       while (me.pendingChoices.length) me.pendingChoices.pop();
       me.upgrades.clear();
-      this._pendingUntil = null;
-      this._pendingQueue = [];
+      this._deadlines.delete(this.sessionId);
+      this._queues.delete(this.sessionId);
     }
 
     // Reset orbs
