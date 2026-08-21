@@ -12,7 +12,7 @@ import { SERVER } from '../src/server/config.js';
 import { buildHttpApp, attachHttpLogging } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
 import { generateChunk, biomeForChunk, CHUNK_SIZE, BIOMES, activeChunksForPos, diffChunks, enemiesForLevel } from '../src/shared/worldgen.js';
-import { loadPlayer, savePlayerDebounced, flushAll, _dirForTests } from '../src/server/persistence.js';
+import { loadPlayer, savePlayerDebounced, flushAll, _dirForTests, _resetForTests } from '../src/server/persistence.js';
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (cond, timeoutMs = 10000, label = 'condition') => {
@@ -141,8 +141,7 @@ const roomOf = (r) => [...WorldRoom.instances].find((x) => x.roomId === r.roomId
   savePlayerDebounced(testName, { level: 5, xp: 700, upgrades: { vitality: 2 }, pendingChoices: [] });
   // File should NOT exist immediately (debounced 2s)
   assert.ok(!fs.existsSync(file), 'file not yet written before debounce');
-  await waitMs(2100);
-  assert.ok(fs.existsSync(file), 'file written after debounce 2s');
+  await waitFor(() => fs.existsSync(file), 5000, 'debounce flush');
   const data = loadPlayer(testName);
   assert.equal(data.level, 5, 'level persisted');
   assert.equal(data.xp, 700, 'xp persisted');
@@ -157,6 +156,12 @@ const roomOf = (r) => [...WorldRoom.instances].find((x) => x.roomId === r.roomId
   assert.equal(p.upgrades.get('vitality'), 2, 'restored upgrades');
   // Level up and check debounced save updates file
   const sr = roomOf(room);
+  // Read-side isolation: drop any still-pending debounced save so a
+  // background write cannot land between the grantXp save and the
+  // "file still old" read below (event-loop stalls can let earlier timers
+  // come due mid-check). No behavior change — pending timers/snapshots are
+  // cancelled only; grantXp re-arms the one writer this section observes.
+  _resetForTests();
   sr.grantXp(room.sessionId, 1000); // should level up further
   await waitMs(100);
   // File still old until debounce
@@ -168,9 +173,13 @@ const roomOf = (r) => [...WorldRoom.instances].find((x) => x.roomId === r.roomId
   assert.ok(newData.xp > 700, 'xp increased');
   room.leave();
   await waitMs(300);
-  // Cleanup
-  try { fs.unlinkSync(file); } catch {}
+  // Cleanup: flush pending saves FIRST — flushing after unlink would let
+  // the debounced leave-persist rewrite the file we just deleted.
   flushAll();
+  try { fs.unlinkSync(file); } catch {}
+  // The WorldRoom block above also persists on leave (WorldTester).
+  try { fs.unlinkSync(path.join(_dirForTests(), 'WorldTester.json')); } catch {}
+  assert.ok(!fs.existsSync(file), 'cleanup removed the player file');
   console.log('ok — persistence debounced 2s per-player file, restore on join');
 }
 

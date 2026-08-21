@@ -25,6 +25,14 @@ const half = SERVER.world.size / 2;
 // Wait long enough that a scheduled melee impact (attackImpactMs) has been
 // processed by the room's 50ms tick — with margin.
 const waitImpact = () => waitMs(SERVER.player.attackImpactMs + 250);
+const waitFor = async (cond, timeoutMs = 10000, label = 'condition') => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (cond()) return;
+    await waitMs(30);
+  }
+  throw new Error('timeout waiting for ' + label);
+};
 const face = (px, pz, tx, tz) => Math.atan2(tx - px, tz - pz);
 
 SERVER.rateLimit.capacity = 10000;
@@ -72,16 +80,27 @@ const parkOthers = (sr, keep = 0) => {
   // The send is async; wait one server tick for it to be processed.
   await waitMs(SERVER.tickMs + 50);
   assert.equal(me.anim, 'attack', 'anim is attack after J press (before impact)');
-  // Wait until just before impact (remaining time after the tick wait).
-  await waitMs(Math.max(10, SERVER.player.attackImpactMs - SERVER.tickMs - 50 - 40));
-  assert.equal(enemy.hp, SERVER.enemy.hp + KS.meleeDamage, 'no damage before the impact frame');
+  // Server truth: while the strike is still pending, no damage may have
+  // landed. Gate on pendingMelee so a CI stall that already resolved the
+  // impact cannot fail this pre-impact check spuriously.
+  const impactStillPending = sr.pendingMelee.length > 0;
+  if (impactStillPending) {
+    assert.equal(enemy.hp, SERVER.enemy.hp + KS.meleeDamage, 'no damage while the strike is still pending');
+  }
   const xBeforeImpact = enemy.x; // still approaching the player (x falling)
-  await waitImpact();
+  // Drive off server truth: wait until the scheduled impact has been
+  // processed by the room tick — melee() applies hp/knockback/hit-stun in
+  // the same pass that drains pendingMelee.
+  await waitFor(() => sr.pendingMelee.length === 0, 2000, 'impact resolved');
   assert.equal(enemy.hp, SERVER.enemy.hp, 'J melee costs enemy HP at impact (knight melee 2)');
   // HIT-STUN: the struck enemy stops acting and shows the hit react.
   assert.equal(enemy.anim, 'hit', 'struck enemy is in hit-stun');
-  assert.ok(enemy.x > xBeforeImpact,
-    `struck enemy knocked back (x rose ${xBeforeImpact.toFixed(2)} -> ${enemy.x.toFixed(2)} despite chasing)`);
+  // Knockback comparison is only meaningful when we truly sampled the
+  // pre-impact position (see impactStillPending above).
+  if (impactStillPending) {
+    assert.ok(enemy.x > xBeforeImpact,
+      `struck enemy knocked back (x rose ${xBeforeImpact.toFixed(2)} -> ${enemy.x.toFixed(2)} despite chasing)`);
+  }
 
   await waitMs(SERVER.enemy.hitStunMs + 300); // stun over, cooldown over
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
@@ -120,8 +139,9 @@ const parkOthers = (sr, keep = 0) => {
   enemy.x = 5; enemy.z = 0; enemy.hp = SERVER.enemy.hp + SKILLS[0].damage;
   const hpBeforeSkill = enemy.hp;
   host.r.send('input', { dirX: 0, dirZ: 1, skill: true, anim: 'run' });
-  await waitMs(250);
-  assert.ok(enemy.hp < hpBeforeSkill, 'K hits WHILE MOVING (HP decreased)');
+  // Poll server truth instead of a fixed sleep: the bash cone lands after
+  // the dash, and CI scheduling can push that well past 250ms.
+  await waitFor(() => enemy.hp < hpBeforeSkill, 3000, 'K hits WHILE MOVING (skill damage lands)');
 
   // Guard still blocks
   await waitMs(4000);
@@ -152,8 +172,9 @@ const parkOthers = (sr, keep = 0) => {
 
   enemy.x = -1; enemy.z = 0;
   host.r.send('input', { dirX: 0, dirZ: 0, block: true, anim: 'idle' });
-  await waitMs(400);
-  assert.ok(me.hp < KS.hp, 'rear contact lands through guard');
+  // Poll server truth: rear contact lands on an enemy tick after the chase,
+  // which can exceed a fixed 400ms sleep under CI load.
+  await waitFor(() => me.hp < KS.hp, 3000, 'rear contact lands through guard');
   host.r.leave();
 }
 

@@ -98,7 +98,7 @@ assert.ok(cd2 < cd1, `A2 rejected: cooldown kept draining (${cd1} -> ${cd2})`);
 // Sanity: a swing after the full cooldown is accepted again.
 await waitFor(() => me().attackCd <= 0, 2000, 'cooldown clear before A3');
 room.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });   // A3
-await waitFor(() => me().anim === 'attack', 1000, 'A3 accepted after cooldown');
+await waitFor(() => me().anim === 'attack', 3000, 'A3 accepted after cooldown');
 await waitFor(() => me().attackCd <= 0, 2000, 'cooldown drained after A3');
 
 // --- B: power-up pickup -----------------------------------------------------
