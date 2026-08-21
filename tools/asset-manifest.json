@@ -1,0 +1,81 @@
+{
+  "$comment": "Fetched asset manifest for tools/fetch-assets.mjs. Entries marked source=direct are pinned keyless CDN URLs (static.poly.pizza serves GLBs with brotli content-encoding; browsers/undici decode transparently). polyhaven entries are optional hi-fi dressing NOT loaded by the game (1k PBR bundles exceed the load budget); kept for future LOD work. Style rule: Quaternius-style flat low-poly only.",
+  "budgetBytes": 2097152,
+  "assets": [
+    {
+      "id": "grass-tuft-a",
+      "source": "direct",
+      "url": "https://static.poly.pizza/99357ca2-6364-4990-8d4c-9bc5a1a5e859.glb.br",
+      "page": "https://poly.pizza/m/UGTOzcO3P2",
+      "out": "assets/props/grass_tuft_a.glb",
+      "license": "CC0 1.0",
+      "author": "Quaternius",
+      "role": "arena dressing: grass clump variant A (instanced)"
+    },
+    {
+      "id": "grass-tuft-b",
+      "source": "direct",
+      "url": "https://static.poly.pizza/0a84d74b-eb09-4794-ad58-dd10eed6b11e.glb.br",
+      "page": "https://poly.pizza/m/vUJjrRsFp4",
+      "out": "assets/props/grass_tuft_b.glb",
+      "license": "CC0 1.0",
+      "author": "Quaternius",
+      "role": "arena dressing: grass clump variant B (instanced)"
+    },
+    {
+      "id": "grass-tall",
+      "source": "direct",
+      "url": "https://static.poly.pizza/83f8e6d6-fa7e-4cd8-a0ef-8c51d0ff4e88.glb.br",
+      "page": "https://poly.pizza/m/JSIYtscPmP",
+      "out": "assets/props/grass_tall.glb",
+      "license": "CC0 1.0",
+      "author": "Quaternius",
+      "role": "arena dressing: tall grass accents"
+    },
+    {
+      "id": "flowers-patch",
+      "source": "direct",
+      "url": "https://static.poly.pizza/c25cb5dc-3cd3-470c-a08c-045af0c0fe3d.glb.br",
+      "page": "https://poly.pizza/m/NBUxHir6FJ",
+      "out": "assets/props/flowers_patch.glb",
+      "license": "CC0 1.0",
+      "author": "Quaternius",
+      "role": "arena dressing: flower patches alongside instanced flowers"
+    },
+    {
+      "id": "bush-a",
+      "source": "direct",
+      "url": "https://static.poly.pizza/76eb9fa0-e20e-4802-9e11-18c348464e40.glb.br",
+      "page": "https://poly.pizza/m/d6STyhH76Qe",
+      "out": "assets/props/bush_a.glb",
+      "license": "CC-BY 3.0 (attribution in credits)",
+      "author": "Jarlan Perez",
+      "role": "arena prop: low bush variant"
+    },
+    {
+      "id": "bushes-patch",
+      "source": "direct",
+      "url": "https://static.poly.pizza/11bcb3a1-5901-402c-9863-75988b9e21d8.glb.br",
+      "page": "https://poly.pizza/m/J2h3HrO356",
+      "out": "assets/props/bushes_patch.glb",
+      "license": "CC0 1.0",
+      "author": "Quaternius",
+      "role": "arena prop: bush cluster"
+    },
+    {
+      "id": "small-plant",
+      "source": "direct",
+      "url": "https://static.poly.pizza/ab53ddde-9e04-42ec-ae37-08ec9425af9f.glb.br",
+      "page": "https://poly.pizza/m/MZdeiQApSb",
+      "out": "assets/props/small_plant.glb",
+      "license": "CC0 1.0",
+      "author": "Quaternius",
+      "role": "arena dressing: small plants near rocks"
+    }
+  ],
+  "rejected": [
+    { "page": "https://poly.pizza/m/esFOngb0uwl", "reason": "Poly by Google photogrammetry scan - realistic style clashes (ARTWORK_PLAN section 7)" },
+    { "page": "https://poly.pizza/m/1baaAXcdzZ", "reason": "Zsky style does not match Quaternius flat look" },
+    { "havenId": "pine_tree_01", "reason": "Poly Haven bundle ~900 MB at 1k - far over any budget" }
+  ]
+}
