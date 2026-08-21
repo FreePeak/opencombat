@@ -12,15 +12,14 @@ const statsOf = (player) => classStats(player.character);
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from './shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from './shared/combat.js';
 import { attackFor } from './shared/classes.js';
-import { stepProjectile, projectileExpired, projectileHitsTarget,
-         resolveProjectileEnemyHit, resolveProjectilePlayerHit } from './shared/projectiles.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
 // server room uses; clock/emit hooks below keep offline behavior identical.
 // Slice 2 moved D5 enemy-hit + D4 burn DoT (combatBook) and D3 shop effects
-// (shopEffects) into shared modules too.
+// (shopEffects) into shared modules too; slice 3 moved the D6 projectile loop.
 import * as leveling from './shared/sim/leveling.js';
 import * as combatBook from './shared/sim/combatBook.js';
 import * as shopEffects from './shared/sim/shopEffects.js';
+import * as projectileLoop from './shared/sim/projectileLoop.js';
 import {
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult,
@@ -85,6 +84,22 @@ export class LocalRoom {
       now: () => performance.now(),
       grantXp: (_sid, amount) =>
         leveling.grantXp(this.simLeveling, this.sessionId, amount), // single local player
+    };
+    // Shared-sim ctx for the D6 projectile loop (src/shared/sim/projectileLoop.js,
+    // P1.3 slice 3): the loop owns stepping/expiry/collision; the room keeps only
+    // WHAT a hit does. Burn maps + clock ride along so fireball hits hand off to
+    // the D4 register exactly like the old inline call. Player branch unified onto
+    // the server rule (owner projectiles can hit OTHER players); the old inverted
+    // `!ownerIsPlayer` branch was unreachable dead code offline.
+    this.simProjectiles = {
+      state: this.state,
+      half: SERVER.world.size / 2,
+      burnByProjId: this._burnByProjId,
+      activeBurns: this._activeBurns,
+      now: () => performance.now(),
+      onHitEnemy: (proj, enemy) =>
+        this._hitEnemy(enemy, proj.damage, proj.x, proj.z, proj.ownerSid),
+      onHitPlayer: (proj, _osid, victim) => this._damagePlayer(victim, proj.damage, proj),
     };
     // D3 intermission shop scratch + ctx (src/shared/sim/shopEffects.js).
     // The old boolean _shopPicked migrated to the sid-keyed Map shape the
@@ -660,46 +675,12 @@ export class LocalRoom {
 
   /**
    * Tick every live projectile: step forward, check collision with enemies
-   * and the local player (PvP), remove on hit or TTL/bounds expiry. Mirror
-   * of GameRoom.updateProjectiles().
+   * and the local player (PvP), remove on hit or TTL/bounds expiry. Delegates
+   * to the shared D6 loop (src/shared/sim/projectileLoop.js, P1.3 slice 3);
+   * hit resolution stays room-side via the simProjectiles hooks.
    */
   _updateProjectiles(dt) {
-    const half = SERVER.world.size / 2;
-    const hitRadius = SERVER.projectile.hitRadius;
-    for (let i = this.state.projectiles.length - 1; i >= 0; i--) {
-      const proj = this.state.projectiles[i];
-      stepProjectile(proj, dt);
-      if (projectileExpired(proj, half)) {
-        this.state.projectiles.splice(i, 1);
-        continue;
-      }
-      let removed = false;
-      // Hit enemies
-      if (proj.ownerIsPlayer) {
-        for (const enemy of this.state.enemies) {
-          if (enemy.hp <= 0) continue;
-          if (projectileHitsTarget(proj, enemy, hitRadius)) {
-            this._hitEnemy(enemy, proj.damage, proj.x, proj.z, proj.ownerSid);
-            // Firewave burn DoT: apply burn when a fireball hits
-            combatBook.startBurnFromProjectile(this.simCombat, proj, enemy);
-            this.state.projectiles.splice(i, 1);
-            removed = true;
-            break;
-          }
-        }
-      }
-      // PvP: projectile can hit the local player if fired by someone else
-      // (in the offline sim there's only one player, so this is a no-op for
-      // now — but the code is here for future multiplayer offline tests).
-      if (!removed && !proj.ownerIsPlayer) {
-        const me = this.state.players.get(this._myPlayerId);
-        if (me && me.hp > 0 && projectileHitsTarget(proj, me, hitRadius)) {
-          this._damagePlayer(me, proj.damage, proj);
-          this.state.projectiles.splice(i, 1);
-          removed = true;
-        }
-      }
-    }
+    projectileLoop.stepProjectiles(this.simProjectiles, dt);
   }
 
   /** One hit against the local player: outside 'playing' (intermission!)

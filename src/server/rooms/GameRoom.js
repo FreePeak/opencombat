@@ -25,15 +25,14 @@ const statsOf = (player) => classStats(player.character);
 import { waveEnemyCount, waveEnemyHp, spawnAwayFromPlayers } from '../../shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/combat.js';
 import { attackFor } from '../../shared/classes.js';
-import { stepProjectile, projectileExpired, projectileHitsTarget,
-         resolveProjectileEnemyHit, resolveProjectilePlayerHit } from '../../shared/projectiles.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
 // level-up queue -> card roll -> auto-pick -> manual pick. D5 enemy-hit
 // resolution + D4 burn DoT (combatBook) and D3 shop effects (shopEffects)
-// followed in slice 2.
+// followed in slice 2; D6 projectile loop in slice 3.
 import * as leveling from '../../shared/sim/leveling.js';
 import * as combatBook from '../../shared/sim/combatBook.js';
 import * as shopEffects from '../../shared/sim/shopEffects.js';
+import * as projectileLoop from '../../shared/sim/projectileLoop.js';
 import { aggregateBonuses,
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult } from '../../shared/progression.js';
@@ -115,6 +114,21 @@ export default class GameRoom extends Room {
       now: () => Date.now(),
       grantXp: (sid, amount) => leveling.grantXp(this.simLeveling, sid, amount),
       log: (event, fields) => this.logEvent(event, fields),
+    };
+    // Shared-sim context for the D6 projectile loop: the loop owns stepping,
+    // expiry and collision; the room keeps only WHAT a hit does. The burn
+    // maps + clock ride along so fireball hits hand off to the D4 register
+    // (combatBook.startBurnFromProjectile) exactly like the old inline call.
+    this.simProjectiles = {
+      state: this.state,
+      half: this.half,
+      burnByProjId: this._burnByProjId,
+      activeBurns: this._activeBurns,
+      now: () => Date.now(),
+      onHitEnemy: (proj, enemy) =>
+        this.hitEnemy(enemy, proj.damage, proj.x, proj.z, proj.ownerSid),
+      onHitPlayer: (proj, osid, victim) =>
+        this.damagePlayer(osid, victim, proj.damage, proj.x, proj.z),
     };
     // Shared-sim context for the D3 intermission shop.
     this.simShop = {
@@ -846,51 +860,12 @@ export default class GameRoom extends Room {
   /**
    * Tick every live projectile: step forward, check collision with enemies and
    * other players (PvP), remove on hit or TTL/bounds expiry. Called from
-   * updatePlaying() each fixed timestep.
+   * updatePlaying() each fixed timestep. Delegates to the shared D6 loop
+   * (src/shared/sim/projectileLoop.js, P1.3 slice 3); hit resolution stays
+   * room-side via the simProjectiles hooks.
    */
   updateProjectiles(dt) {
-    const state = this.state;
-    const hitRadius = SERVER.projectile.hitRadius;
-    for (let i = state.projectiles.length - 1; i >= 0; i--) {
-      const proj = state.projectiles[i];
-      stepProjectile(proj, dt);
-
-      // Expired (TTL or out of arena)?
-      if (projectileExpired(proj, this.half)) {
-        state.projectiles.splice(i, 1);
-        continue;
-      }
-
-      let removed = false;
-
-      // Hit enemies?
-      if (proj.ownerIsPlayer) {
-        for (const enemy of state.enemies) {
-          if (enemy.hp <= 0) continue;
-          if (projectileHitsTarget(proj, enemy, hitRadius)) {
-            this.hitEnemy(enemy, proj.damage, proj.x, proj.z, proj.ownerSid);
-            // Firewave burn DoT: apply burn when a fireball hits
-            combatBook.startBurnFromProjectile(this.simCombat, proj, enemy);
-            state.projectiles.splice(i, 1);
-            removed = true;
-            break;
-          }
-        }
-      }
-
-      // PvP: hit other players?
-      if (!removed && proj.ownerIsPlayer) {
-        for (const [osid, victim] of state.players) {
-          if (osid === proj.ownerSid || victim.hp <= 0) continue;
-          if (projectileHitsTarget(proj, victim, hitRadius)) {
-            this.damagePlayer(osid, victim, proj.damage, proj.x, proj.z);
-            state.projectiles.splice(i, 1);
-            removed = true;
-            break;
-          }
-        }
-      }
-    }
+    projectileLoop.stepProjectiles(this.simProjectiles, dt);
   }
 
   /** One fixed timestep of the simulation, dispatched by match phase. */
