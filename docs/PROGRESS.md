@@ -1,0 +1,60 @@
+# Ashfall — Progress Tracker
+
+Single source of truth for delivery status. **How to use this doc:** update the Status column every merge, fill the Commit + Verification evidence columns at the moment a phase lands, and link PRs/commits here — if it is not reflected in this table, it did not ship. Do not track phase detail here; ROADMAP.md owns scope, this file owns state.
+
+## Status legend
+
+| Status | Meaning |
+|--------|---------|
+| TODO | Not started; no branch exists |
+| IN PROGRESS | Active branch/worktree with commits |
+| REVIEW | Code complete, awaiting review |
+| TESTING | In verification (tests + live smoke) |
+| DONE | Merged to origin master, CI green, evidence recorded below |
+| BLOCKED | Cannot proceed; blocker noted in the row |
+
+## Master table
+
+| Phase | Quarter | Scope summary | FR refs | Status | Worktree/branch | Commit | Verification evidence (test cmd + result) | Date |
+|-------|---------|---------------|---------|--------|-----------------|--------|-------------------------------------------|------|
+| Architecture doc | pre-roadmap | Module map, data flows, D1-D15 duplication inventory, extension points, test strategy (docs/ARCHITECTURE.md) | n/a (docs) | DONE | master | 92349e1 | `npm run check && npm test` green (docs-only change); facts verified against code per doc header | 2026-08-22 |
+| Competitor research | pre-roadmap | 19 OSS projects surveyed, B2B white-space analysis, positioning recommendations (docs/COMPETITORS.md) | n/a (docs) | DONE | master | b77acfd | `npm run check && npm test` green (docs-only change); licenses verified via web search Aug 2026 per doc header | 2026-08-22 |
+| Docs tracker setup | pre-roadmap | artwork-ui-rework research + TODO tracker, fetch-assets CLI docs, session notes (docs/artwork-ui-rework/) | n/a (docs) | DONE | master | a868e54 | `npm run check && npm test` green | 2026-08-22 |
+| Asset pipeline (WIP baseline) | pre-roadmap | Manifest-driven fetch logic, zip extraction, scatter math, TDD (tools/fetch-assets.mjs, src/tools/assetPipeline.js, src/tools/scatter.js, src/tools/zipExtract.js) | FR-CONTENT-01 | DONE | master | bff7fff | `npm run check && npm test` green — asset-pipeline.test.mjs, asset-pipeline-direct.test.mjs, scatter.test.mjs added (17 files / 39 tests total) | 2026-08-22 |
+| Baseline flaky-test fix | pre-roadmap | Fix flaky phase4 assertion — count upgrade stacks, not distinct ids | FR-FAIR-03 | DONE | master | de77d54 | `npm run check && npm test` green x consecutive runs post-fix | 2026-08-22 |
+| 1.1 LICENSE + NOTICE | Q1 | MIT LICENSE file, NOTICE attributions from assets/credits/, README license section | FR-CONTENT-02, FR-BIZ-01 | TODO | TBD | - | - | - |
+| 1.2 CI gate | Q1 | Syntax + test gate on every push (`npm run check && npm test`) — local gate established and enforced as merge habit | FR-OPS-02, FR-FAIR-03 | DONE | master | (pre-existing habit; hosted wiring tracked in 1.5) | `npm run check && npm test` green on master — 17 test files / 39 tests verified (ARCHITECTURE.md section 7) | 2026-08-22 |
+| 1.3 Extract shared-sim duplication D2-D8 | Q1 | Pull SAFE-TO-EXTRACT mirrored blocks (progression bookkeeping, shop effects, burn DoT, enemy-hit resolution, projectile loop, pause wall, match reset) into shared modules used by GameRoom + LocalRoom | FR-FAIR-03, FR-CORE-05 | TODO | TBD | - | Gate: parity tests unchanged-or-strengthened; red-first unit tests per extracted module | - |
+| 1.4 Flaky-test elimination | Q1 | Fix timing-dependent assertions; delete probe scripts flagged in ARCHITECTURE.md section 5.4 | FR-FAIR-03 | TODO | TBD | - | Gate: `npm test` x20 zero failures; 3 consecutive CI pushes green | - |
+| 1.5 Playwright e2e in hosted CI | Q1 | browser.test.py promoted into pipeline; documented /metrics labels | FR-OPS-02 | TODO | TBD | - | Gate: deliberately broken client-wiring change fails CI once (revert experiment); e2e < 10 min | - |
+| 2.1 OIDC/OAuth2 login option | Q2 | Server-side OIDC flow via env config, identity -> profile mapping, guest path untouched | FR-ID-02, FR-ID-01 | TODO | TBD | - | Gate: stub-provider integration test; existing guest tests pass unmodified | - |
+| 2.2 Persistence adapter + Postgres driver | Q2 | PlayerStore interface, JsonFileStore default preserved, PostgresStore behind env, import/export tooling | FR-PERSIST-02, FR-PERSIST-01 | TODO | TBD | - | Gate: WorldRoom round-trip on both drivers; 100-way concurrent-save stress passes on Postgres | - |
+| 2.3 Admin API + GDPR rights + audit log | Q2 | Authenticated export/delete/list endpoints, JSON-lines audit log, data-inventory documentation | FR-PERSIST-03, FR-PERSIST-04, FR-OPS-04 | TODO | TBD | - | Gate: export byte-complete vs load; deletion audited with actor+timestamp; no-token requests rejected | - |
+| 2.4 Air-gapped asset vendoring | Q2 | Vendored three/importmap selectable via env, offline deploy recipe | FR-OPS-08 | TODO | TBD | - | Gate: blocked-outbound container serves playable Waves session; smoke covers vendored mode | - |
+| 3.1 Theme token system | Q3 | Token file + tenant resolution driving login/HUD/overlays | FR-WL-01, FR-WL-04 | TODO | TBD | - | Gate: two tenants one process show different branding; fallback theme on unknown tenant | - |
+| 3.2 Embed mode + postMessage | Q3 | iframe/script snippets, ?embed=1 chrome-less mode, origin-checked score messages | FR-WL-02 | TODO | TBD | - | Gate: Playwright parent-page e2e receives gameover score; non-whitelisted origins dropped | - |
+| 3.3 Branded lobby & sponsor slots | Q3 | Sponsor/logo slots on login/countdown/results driven by tokens | FR-WL-03 | TODO | TBD | - | Gate: renders clean with zero sponsors; e2e screenshots with sponsor set on all three surfaces | - |
+| 3.4 Custom game config API | Q3 | Create-time room options with validation clamps (mode, rounds, difficulty, seed, caps) | FR-MP-05 | TODO | TBD | - | Gate: invalid configs rejected; two differently-configured rooms coexist; defaults unchanged when omitted | - |
+| 3.5 Scale-out pilot under load | Q3 | Redis presence across N processes + load balancer; measured report committed | FR-MP-04 | TODO | TBD | - | Gate: >= 500 concurrent / >= 4 processes, cross-process lobby redirect proven, p99 tick < 25ms | - |
+| 4.1 SSO story + SCIM-lite | Q4 | Azure AD/Okta recipes; provision/deactivate -> profile flag enforced at join/auth | FR-ID-03, FR-ID-02 | TODO | TBD | - | Gate: deactivated identity cannot join or resume; guest path unaffected | - |
+| 4.2 License tiers + billing hooks | Q4 | MIT core vs enterprise packaging matrix; license-key boot hook (no phone-home in OSS build) | FR-BIZ-01, FR-BIZ-02, FR-BIZ-03 | TODO | TBD | - | Gate: OSS build asserts absence of license checks; enterprise build rejects invalid key | - |
+| 4.3 On-prem Helm chart | Q4 | Chart for server + optional Redis, healthcheck wired, backup/restore runbook executed | FR-OPS-05, FR-PERSIST-05 | TODO | TBD | - | Gate: kind-cluster deploy passes /healthz readiness; two replicas pass cross-process matchmaking check | - |
+| 4.4 SOC2-lite controls checklist | Q4 | Controls doc mapped to security questionnaires with artifact links | FR-OPS-06, FR-OPS-04 | TODO | TBD | - | Gate: >= 80% questionnaire coverage without "not applicable"; each control links enforcing artifact | - |
+| 4.5 Template gallery v1 | Q4 | Curated tenant starter packs (theme + room config + license-clean notes) with loader | FR-CONTENT-03, FR-WL-01, FR-MP-05 | TODO | TBD | - | Gate: each template plays via one config change; NOTICE generator passes; >= 5 templates listed | - |
+| 4.6 1.0 release | Q4 | Tag 1.0.0, release notes mapping FR ids to evidence, migration guide, Docker image | FR-BIZ-01, FR-BIZ-02 (stretch: FR-FAIR-04) | TODO | TBD | - | Gate: full suite green on release commit; image smoke-tested; every PRD FR row accounted for | - |
+
+## Currently in flight
+
+- **UI revamp session (concurrent, separate agent):** tracked in `docs/artwork-ui-rework/TODO.md` (phases A/U) per the research committed in a868e54. It touches client files `index.html`, `src/main.js`, `src/client/NatureDressing.js`. Do not rebuild that artwork/UI work inside roadmap phases, and do not edit those three files from roadmap branches without coordinating — expect mid-air collisions otherwise. Roadmap phases that touch client visuals (3.1, 3.3, 4.5) must rebase onto that session's landed commits first.
+
+## Definition of done for every phase
+
+A phase may only move to DONE when every box is satisfied:
+
+- [ ] TDD followed: failing test written first (red), then implementation (green)
+- [ ] `npm run check && npm test` green on the final commit of the branch
+- [ ] Live local smoke passed: `npm run serve` up + `curl /healthz` ok + tools/smoke.mjs run
+- [ ] Real-browser check performed when any client file was touched (per EXPANSION_PLAN.md checklist)
+- [ ] This file updated: Status, Commit hash, Verification evidence, Date
+- [ ] Merged to origin master
+- [ ] CI green on GitHub for the merge commit
