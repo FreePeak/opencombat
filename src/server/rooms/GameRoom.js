@@ -28,9 +28,13 @@ import { attackFor } from '../../shared/classes.js';
 import { stepProjectile, projectileExpired, projectileHitsTarget,
          resolveProjectileEnemyHit, resolveProjectilePlayerHit } from '../../shared/projectiles.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
-// level-up queue -> card roll -> auto-pick -> manual pick.
+// level-up queue -> card roll -> auto-pick -> manual pick. D5 enemy-hit
+// resolution + D4 burn DoT (combatBook) and D3 shop effects (shopEffects)
+// followed in slice 2.
 import * as leveling from '../../shared/sim/leveling.js';
-import { getUpgrade, aggregateBonuses,
+import * as combatBook from '../../shared/sim/combatBook.js';
+import * as shopEffects from '../../shared/sim/shopEffects.js';
+import { aggregateBonuses,
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult } from '../../shared/progression.js';
 
@@ -94,6 +98,34 @@ export default class GameRoom extends Room {
     this.intermissionUntil = 0;  // ms epoch when intermission auto-advances
     this.pausedUntil = 0;        // ms epoch when global pause cap expires
     this.intermissionShopChoices = new Map(); // sid -> shop pick applied this intermission
+    // D4 burn DoT scratch (src/shared/sim/combatBook.js): firewave payload
+    // keyed by projectile id, live burns keyed by enemy.
+    this._burnByProjId = new Map();
+    this._activeBurns = new Map();
+    // Shared-sim context for D5/D4 combat bookkeeping: the room owns the
+    // schema state + scratch maps + transport; only clock/hooks wire in.
+    this.simCombat = {
+      state: this.state,
+      half: this.half,
+      players: this.state.players,
+      enemyAnimUntil: this.enemyAnimUntil,
+      enemyStunUntil: this.enemyStunUntil,
+      burnByProjId: this._burnByProjId,
+      activeBurns: this._activeBurns,
+      now: () => Date.now(),
+      grantXp: (sid, amount) => leveling.grantXp(this.simLeveling, sid, amount),
+      log: (event, fields) => this.logEvent(event, fields),
+    };
+    // Shared-sim context for the D3 intermission shop.
+    this.simShop = {
+      players: this.state.players,
+      state: this.state,
+      shopChoices: this.intermissionShopChoices,
+      emit: (sid, type, data) =>
+        this.clients.find((c) => c.sessionId === sid)?.send(type, data),
+      log: (event, fields) => this.logEvent(event, fields),
+      warn: (event, fields) => this.warnEvent(event, fields),
+    };
 
     this.spawnOrbs();
     this.spawnEnemies();
@@ -446,42 +478,8 @@ export default class GameRoom extends Room {
 
   /** Intermission shop: one free breather pick per player per intermission. */
   onChooseShop(client, msg = {}) {
-    const sid = client.sessionId;
-    const player = this.state.players.get(sid);
-    if (!player) return;
-    if (this.state.matchState !== 'intermission') {
-      this.warnEvent('shop_rejected', { sid, reason: 'not_intermission' });
-      return;
-    }
-    if (this.intermissionShopChoices.has(sid)) {
-      this.warnEvent('shop_rejected', { sid, reason: 'already_picked' });
-      return;
-    }
-    const choice = String(msg.choice ?? msg.id ?? '');
-    const valid = ['heal', 'speed', 'vitality'];
-    if (!valid.includes(choice)) {
-      this.warnEvent('shop_rejected', { sid, reason: 'invalid_choice', choice });
-      return;
-    }
-    this.intermissionShopChoices.set(sid, choice);
-    if (choice === 'heal') {
-      const maxHp = effectiveMaxHp(player.character, player.upgrades);
-      player.hp = Math.min(maxHp, Math.max(player.hp, Math.floor(maxHp * 0.5) + 20));
-    } else if (choice === 'speed') {
-      // buff for next wave's early seconds
-      player.effects.set('speed', SERVER.powerUps.speed.durationMs);
-    } else if (choice === 'vitality') {
-      // one-shot vitality-lite: +10 max HP via bonus (stored as upgrade for parity)
-      const cur = player.upgrades.get('vitality') || 0;
-      const def = getUpgrade('vitality');
-      if (cur < (def.maxStacks ?? 99)) {
-        player.upgrades.set('vitality', cur + 1);
-        const maxHp = effectiveMaxHp(player.character, player.upgrades);
-        player.hp = Math.min(maxHp, player.hp + 15);
-      }
-    }
-    client.send('shopResult', { picked: choice });
-    this.logEvent('shop_pick', { sid, choice, wave: this.state.wave });
+    shopEffects.applyShopChoice(this.simShop, client.sessionId,
+      msg.choice ?? msg.id ?? '');
   }
 
   startNextWave() {
@@ -669,33 +667,24 @@ export default class GameRoom extends Room {
   }
 
   /**
-   * Apply one hit of `damage` to a LIVING enemy from (srcX, srcZ):
-   * HIT-STUN (the enemy stops chasing/attacking for hitStunMs and plays the
-   * hit react), a small knockback away from the attacker, and — on kill —
-   * the enemy STAYS DEAD (no respawn) and the killer scores. Returns true
-   * when the hit killed the enemy.
+   * Apply one hit of `damage` to a LIVING enemy from (srcX, srcZ): HIT-STUN
+   * (the enemy stops chasing/attacking for hitStunMs and plays the hit
+   * react), a small knockback away from the attacker, and — on kill —
+   * the enemy STAYS DEAD (no respawn) and the killer scores. Thin delegate
+   * over shared/sim/combatBook.resolveEnemyHit (P1.3 slice 2), which is
+   * SID-BASED: live call paths pass the killer's session id so no reverse
+   * object lookup ever runs. The PlayerState fallback exists only for legacy
+   * test callers that hand us the player object directly.
+   * @returns true when the hit killed the enemy.
    */
   hitEnemy(enemy, damage, srcX, srcZ, killer) {
-    // Shared strike math: HP drop + knockback, dead-stays-dead guard.
-    const { hit, killed } = strikeEnemy(enemy, damage, srcX, srcZ, SERVER.enemy.hitKnockback, this.half);
-    if (!hit) return false;
-    if (killed) {
-      if (killer) {
-        killer.score += SERVER.enemy.killScore;
-        // Phase 4: XP on kill
-        const sid = [...this.state.players.entries()].find(([, p]) => p === killer)?.[0];
-        if (sid) this.grantXp(sid, SERVER.progression?.xpPerKill ?? 30);
-      }
-      this.logEvent('enemy_killed', { wave: this.state.wave, by: killer?.name });
-      return true;
-    }
-    // Survived the hit: stagger — no chase, no contact damage until the
-    // stun expires (this is what makes hits read as impactful).
-    const now = Date.now();
-    enemy.anim = 'hit';
-    this.enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
-    this.enemyStunUntil.set(enemy, now + SERVER.enemy.hitStunMs);
-    return false;
+    const killerSid = typeof killer === 'string'
+      ? killer
+      : (killer
+        ? [...this.state.players.entries()].find(([, p]) => p === killer)?.[0]
+        : null);
+    return combatBook.resolveEnemyHit(
+      this.simCombat, enemy, damage, srcX, srcZ, killerSid ?? null).killed;
   }
 
   /**
@@ -716,7 +705,7 @@ export default class GameRoom extends Room {
     // Shared arc math: which enemies (and players) this swing covers.
     for (const i of meleeHits(player, [...this.state.enemies], cfg)) {
       const enemy = this.state.enemies[i];
-      this.hitEnemy(enemy, dmg, player.x, player.z, player);
+      this.hitEnemy(enemy, dmg, player.x, player.z, sid);
     }
     // PvP: same swing also hurts other living players in the arc.
     for (const [osid, victim] of this.state.players) {
@@ -795,7 +784,7 @@ export default class GameRoom extends Room {
             }
           }
         } else {
-          this.hitEnemy(enemy, dmg, player.x, player.z, player);
+          this.hitEnemy(enemy, dmg, player.x, player.z, sid);
         }
       }
     }
@@ -814,8 +803,7 @@ export default class GameRoom extends Room {
         this.state.projectiles.push(proj);
         // Firewave burn DoT: track per-projectile so the hit handler can apply it
         if (pDef.effects && pDef.effects.burn) {
-          this._burnByProjId = this._burnByProjId || new Map();
-          this._burnByProjId.set(proj.id, pDef.effects.burn);
+          combatBook.registerProjBurn(this.simCombat, proj.id, pDef.effects.burn);
         }
       }
     }
@@ -880,20 +868,9 @@ export default class GameRoom extends Room {
         for (const enemy of state.enemies) {
           if (enemy.hp <= 0) continue;
           if (projectileHitsTarget(proj, enemy, hitRadius)) {
-            this.hitEnemy(enemy, proj.damage, proj.x, proj.z,
-              state.players.get(proj.ownerSid));
+            this.hitEnemy(enemy, proj.damage, proj.x, proj.z, proj.ownerSid);
             // Firewave burn DoT: apply burn when a fireball hits
-            if (this._burnByProjId && this._burnByProjId.has(proj.id)) {
-              const burn = this._burnByProjId.get(proj.id);
-              this._burnByProjId.delete(proj.id);
-              this._activeBurns = this._activeBurns || new Map();
-              this._activeBurns.set(enemy, {
-                damage: burn.damage,
-                remainingMs: burn.durationMs,
-                tickMs: burn.tickMs,
-                lastTickMs: Date.now(),
-              });
-            }
+            combatBook.startBurnFromProjectile(this.simCombat, proj, enemy);
             state.projectiles.splice(i, 1);
             removed = true;
             break;
@@ -1222,19 +1199,8 @@ export default class GameRoom extends Room {
       }
       for (const name of expired) player.effects.delete(name);
     }
-    // Burn DoT: tick damage on burning enemies
-    if (this._activeBurns) {
-      const now = Date.now();
-      for (const [enemy, burn] of this._activeBurns) {
-        if (enemy.hp <= 0) { this._activeBurns.delete(enemy); continue; }
-        const elapsed = now - burn.lastTickMs;
-        if (elapsed >= burn.tickMs) {
-          enemy.hp = Math.max(0, enemy.hp - burn.damage);
-          burn.lastTickMs = now;
-          burn.remainingMs -= elapsed;
-        }
-        if (burn.remainingMs <= 0) this._activeBurns.delete(enemy);
-      }
-    }
+    // Burn DoT: tick damage on burning enemies (shared/sim/combatBook.js —
+    // runs for the whole room regardless of any player's HP, as before).
+    combatBook.tickBurns(this.simCombat, Date.now());
   }
 }
