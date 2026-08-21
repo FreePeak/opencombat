@@ -77,6 +77,9 @@ export default class GameRoom extends Room {
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
     this.lastActiveAt = Date.now(); // empty-room TTL anchor
+    this.intermissionUntil = 0;  // ms epoch when intermission auto-advances
+    this.pausedUntil = 0;        // ms epoch when global pause cap expires
+    this.intermissionShopChoices = new Map(); // sid -> shop pick applied this intermission
 
     this.spawnOrbs();
     this.spawnEnemies();
@@ -86,12 +89,11 @@ export default class GameRoom extends Room {
     this.onMessage('input', (client, msg) => this.onInput(client, msg));
     this.onMessage('respawn', (client) => this.onRespawn(client));
     this.onMessage('playAgain', (client) => this.onPlayAgain(client));
-    // Wave gate: while the wave-cleared popup is up (matchState
-    // 'intermission'), a click from ANY player starts the next wave for the
-    // whole room — the popup on the other clients closes when the shared
-    // matchState moves to 'countdown'.
+    // Wave gate: intermission auto-advances after wave.intermissionMs; a
+    // 'nextWave' click from ANY player skips the wait for the whole room.
     this.onMessage('nextWave', (client) => this.onNextWave(client));
     this.onMessage('chooseUpgrade', (client, msg) => this.onChooseUpgrade(client, msg));
+    this.onMessage('chooseShop', (client, msg) => this.onChooseShop(client, msg));
 
     // --- Fixed-timestep loop, dt from REAL elapsed time ------------------
     // this.clock.setInterval drifts under load (GC, event-loop stalls); the
@@ -524,14 +526,71 @@ export default class GameRoom extends Room {
     this.resetMatch();
   }
 
+  /** True when any living player has pending upgrade cards (needs pause). */
+  hasPendingChoices() {
+    for (const p of this.state.players.values()) {
+      if (p.pendingChoices.length > 0) return true;
+    }
+    return false;
+  }
+
+  /** Intermission shop: one free breather pick per player per intermission. */
+  onChooseShop(client, msg = {}) {
+    const sid = client.sessionId;
+    const player = this.state.players.get(sid);
+    if (!player) return;
+    if (this.state.matchState !== 'intermission') {
+      this.warnEvent('shop_rejected', { sid, reason: 'not_intermission' });
+      return;
+    }
+    if (this.intermissionShopChoices.has(sid)) {
+      this.warnEvent('shop_rejected', { sid, reason: 'already_picked' });
+      return;
+    }
+    const choice = String(msg.choice ?? msg.id ?? '');
+    const valid = ['heal', 'speed', 'vitality'];
+    if (!valid.includes(choice)) {
+      this.warnEvent('shop_rejected', { sid, reason: 'invalid_choice', choice });
+      return;
+    }
+    this.intermissionShopChoices.set(sid, choice);
+    if (choice === 'heal') {
+      const maxHp = effectiveMaxHp(player.character, player.upgrades);
+      player.hp = Math.min(maxHp, Math.max(player.hp, Math.floor(maxHp * 0.5) + 20));
+    } else if (choice === 'speed') {
+      // buff for next wave's early seconds
+      player.effects.set('speed', SERVER.powerUps.speed.durationMs);
+    } else if (choice === 'vitality') {
+      // one-shot vitality-lite: +10 max HP via bonus (stored as upgrade for parity)
+      const cur = player.upgrades.get('vitality') || 0;
+      const def = getUpgrade('vitality');
+      if (cur < (def.maxStacks ?? 99)) {
+        player.upgrades.set('vitality', cur + 1);
+        const maxHp = effectiveMaxHp(player.character, player.upgrades);
+        player.hp = Math.min(maxHp, player.hp + 15);
+      }
+    }
+    client.send('shopResult', { picked: choice });
+    this.logEvent('shop_pick', { sid, choice, wave: this.state.wave });
+  }
+
+  startNextWave() {
+    if (this.state.matchState !== 'intermission') return;
+    const next = this.state.wave + 1;
+    this.pendingMelee = [];
+    this.intermissionShopChoices.clear();
+    this.state.projectiles.clear();
+    this.spawnWave(next);
+    this.intermissionUntil = 0;
+    this.state.intermissionUntil = 0;
+    this.startCountdown();
+  }
+
   /** Click on the wave-cleared popup: spawn the next wave + countdown. */
   onNextWave(client) {
     if (this.state.matchState !== 'intermission') return; // popup-gated
-    const next = this.state.wave + 1;
-    this.logEvent('wave_next', { sid: client.sessionId, wave: next });
-    this.pendingMelee = []; // no stale impacts bleeding into the new wave
-    this.spawnWave(next);
-    this.startCountdown();
+    this.logEvent('wave_next', { sid: client.sessionId, wave: this.state.wave + 1 });
+    this.startNextWave();
   }
 
   /**
@@ -964,31 +1023,61 @@ export default class GameRoom extends Room {
       this.lastActiveAt = Date.now();
     }
 
-    // Phase 4: auto-pick stalled upgrade cards (PvP must never block)
+    // Phase 4: auto-pick stalled upgrade cards — must run before pause wall so
+    // the 10s deadline actually fires (pausing the sim must NOT stall the pick).
     this.checkAutoPicks();
+    const paused = this.hasPendingChoices();
+    state.paused = paused;
+    // Global pause while any player is choosing: freeze world clocks but still
+    // run win checks so score-triggered wins aren't deadlocked behind a pending
+    // upgrade card (phase4.test block 8 grants XP->pending then scores to win).
+    // Intermission auto-advance is held while paused by extending its deadline.
+    let dtEff = dt;
+    if (paused) {
+      const now = Date.now();
+      if (this.pausedUntil === 0) this.pausedUntil = now + (SERVER.wave?.maxPauseMs ?? 30000);
+      if (now >= this.pausedUntil) {
+        state.paused = false;
+      } else {
+        if (state.matchState === 'intermission' && this.intermissionUntil) {
+          this.intermissionUntil += dt * 1000;
+          state.intermissionUntil = this.intermissionUntil;
+        }
+        dtEff = 0;
+      }
+    } else {
+      this.pausedUntil = 0;
+    }
 
+    // Paused: still evaluate win (gameover) so progression doesn't deadlock.
+    if (dtEff === 0) {
+      if (paused && state.matchState !== 'gameover') this.checkWinConditions(0);
+      return;
+    }
     switch (state.matchState) {
       case 'lobby':
         // Free movement so players can warm up; no pickups, no enemies.
-        this.movePlayers(dt);
+        this.movePlayers(dtEff);
         this.setEnemiesIdle();
         return;
       case 'countdown':
         // Frozen world; tick the 3-2-1-GO display down to zero.
-        state.countdown = Math.max(0, state.countdown - dt);
+        state.countdown = Math.max(0, state.countdown - dtEff);
         if (state.countdown <= 0) this.startPlaying();
         return;
       case 'playing':
-        this.updatePlaying(dt);
+        this.updatePlaying(dtEff);
         return;
       case 'intermission':
         // Wave cleared: free movement + pickups, NO enemies (all dead), and
-        // everyone is invulnerable (damagePlayer gates on 'playing'). The
-        // only way forward is a 'nextWave' click.
-        this.movePlayers(dt);
-        this.updateEffects(dt * 1000);
-        this.updatePickups(dt);
-        this.checkWinConditions(dt);
+        // everyone is invulnerable (damagePlayer gates on 'playing').
+        // Auto-advances after intermissionMs (shop/choices pause the clock
+        // above); 'nextWave' click still skips the wait.
+        this.movePlayers(dtEff);
+        this.updateEffects(dtEff * 1000);
+        this.updatePickups(dtEff);
+        this.checkWinConditions(dtEff);
+        if (Date.now() >= this.intermissionUntil) this.startNextWave();
         return;
       case 'gameover':
         return; // frozen; only 'playAgain' moves on
@@ -1115,11 +1204,13 @@ export default class GameRoom extends Room {
     }
 
     // --- Wave cleared: every enemy dead -> intermission ------------------
-    // The popup waits for a player click; players are invulnerable until
-    // the next wave starts.
+    // Intermission shows wave clear + shop (PVE pause), then auto-advances.
     if (state.enemies.length > 0 && alive === 0) {
       state.matchState = 'intermission';
       this.pendingMelee = [];
+      this.intermissionUntil = Date.now() + (SERVER.wave?.intermissionMs ?? 8000);
+      this.state.intermissionUntil = this.intermissionUntil;
+      this.intermissionShopChoices.clear();
       this.logEvent('wave_cleared', { wave: state.wave });
       return;
     }

@@ -94,6 +94,11 @@ export function sendChooseUpgrade(room, choice) {
   room.send('chooseUpgrade', { choice });
 }
 
+/** Intermission shop pick (PVE): heal / speed / vitality. */
+export function sendChooseShop(room, choice) {
+  room.send('chooseShop', { choice });
+}
+
 /** Join the open world (Phase 6) — infinite chunked world with persistence. */
 export async function joinWorld(name, character) {
   return currentClient().joinOrCreate('world', { name, character }, WorldState);

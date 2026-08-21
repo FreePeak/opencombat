@@ -76,12 +76,43 @@ export class LocalRoom {
     }
   }
 
+  _hasPendingChoices() {
+    const me = this.state.players.get(this.sessionId);
+    return !!(me && me.pendingChoices.length > 0);
+  }
+
+  _applyShop(choice) {
+    const me = this.state.players.get(this.sessionId);
+    if (!me || this.state.matchState !== 'intermission') return false;
+    if (this._shopPicked) return false;
+    const valid = ['heal', 'speed', 'vitality'];
+    if (!valid.includes(String(choice))) return false;
+    this._shopPicked = true;
+    if (choice === 'heal') {
+      const maxHp = effectiveMaxHp(me.character, me.upgrades);
+      me.hp = Math.min(maxHp, Math.max(me.hp, Math.floor(maxHp * 0.5) + 20));
+    } else if (choice === 'speed') {
+      me.effects.set('speed', SERVER.powerUps.speed.durationMs);
+    } else if (choice === 'vitality') {
+      const cur = me.upgrades.get('vitality') || 0;
+      const def = getUpgrade('vitality');
+      if (cur < (def.maxStacks ?? 99)) {
+        me.upgrades.set('vitality', cur + 1);
+        const maxHp = effectiveMaxHp(me.character, me.upgrades);
+        me.hp = Math.min(maxHp, me.hp + 15);
+      }
+    }
+    this._emitMessage('shopResult', { picked: choice });
+    return true;
+  }
+
   send(type, data) {
     if (type === 'input') this._playerInput = data;
     else if (type === 'respawn') this._requestRespawn();
     else if (type === 'playAgain') this._resetMatch();
     else if (type === 'nextWave') this._requestNextWave();
     else if (type === 'chooseUpgrade') this._chooseUpgrade(data?.choice ?? data?.id);
+    else if (type === 'chooseShop') this._applyShop(data?.choice ?? data?.id);
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -133,6 +164,12 @@ export class LocalRoom {
       this.state.powerUps.push(p);
     }
 
+    // Pause / intermission bookkeeping (mirrors GameRoom.paused + intermissionUntil)
+    this.state.paused = false;
+    this.state.intermissionUntil = 0;
+    this._intermissionUntil = 0;
+    this._pausedUntil = 0;
+    this._shopPicked = false;
     // Match state
     this.state.matchState = 'countdown';
     this.state.countdown = SERVER.match.countdownSeconds;
@@ -290,8 +327,33 @@ export class LocalRoom {
     const players = this.state.players;
     const me = players.get(this.sessionId);
 
-    // Phase 4: auto-pick stalled upgrade cards
+    // Phase 4: auto-pick stalled upgrade cards — must run before pause wall.
     this._checkAutoPicks();
+    const shouldPause = this._hasPendingChoices();
+    this.state.paused = shouldPause;
+    if (shouldPause) {
+      const now = performance.now();
+      if (!this._pausedUntil) this._pausedUntil = now + (SERVER.wave?.maxPauseMs ?? 30000);
+      if (now >= this._pausedUntil) {
+        this.state.paused = false;
+      } else {
+        if (this.state.matchState === 'intermission' && this._intermissionUntil) {
+          this._intermissionUntil += dt * 1000;
+          this.state.intermissionUntil = this._intermissionUntil;
+        }
+        // still allow win condition (score target) to fire while paused
+        if (SERVER.match.targetScore > 0) {
+          const me2 = this.state.players.get(this.sessionId);
+          if (me2 && me2.hp > 0 && me2.score >= SERVER.match.targetScore) {
+            this._endMatch(me2);
+            return;
+          }
+        }
+        return;
+      }
+    } else {
+      this._pausedUntil = 0;
+    }
 
     // Countdown
     if (this.state.matchState === 'countdown') {
@@ -306,6 +368,12 @@ export class LocalRoom {
     }
 
     if (this.state.matchState === 'gameover') return;
+
+    // Intermission auto-advance
+    if (this.state.matchState === 'intermission' && this._intermissionUntil && performance.now() >= this._intermissionUntil && !shouldPause) {
+      this._requestNextWave();
+      return;
+    }
 
     const playing = this.state.matchState === 'playing';
     const intermission = this.state.matchState === 'intermission';
@@ -452,11 +520,14 @@ export class LocalRoom {
         }
       }
 
-      // Wave cleared -> intermission (click-gated next wave, players safe)
+      // Wave cleared -> intermission (auto-advances after intermissionMs)
       if (this.state.enemies.length > 0 && alive === 0) {
         this.state.matchState = 'intermission';
         this._pendingStrikes = [];
         this.state.projectiles.clear();
+        this._intermissionUntil = performance.now() + (SERVER.wave?.intermissionMs ?? 8000);
+        this.state.intermissionUntil = this._intermissionUntil;
+        this._shopPicked = false;
         this._notifyStateChange();
         return;
       }
@@ -740,11 +811,14 @@ export class LocalRoom {
     }
   }
 
-  /** Click on the wave-cleared popup: next wave + countdown (popup-gated). */
+  /** Click on the wave-cleared popup: next wave + countdown (also auto-advance). */
   _requestNextWave() {
     if (this.state.matchState !== 'intermission') return;
     this._pendingStrikes = [];
     this.state.projectiles.clear();
+    this._intermissionUntil = 0;
+    this.state.intermissionUntil = 0;
+    this._shopPicked = false;
     this._spawnWave(this.state.wave + 1);
     this.state.matchState = 'countdown';
     this.state.countdown = SERVER.match.countdownSeconds;

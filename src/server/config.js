@@ -90,12 +90,16 @@ export const SERVER = {
     radius: 0.9
   },
 
-  // WAVES: enemies spawn in waves out of a fixed pool. Clearing every enemy
-  // freezes combat in 'intermission' (players invulnerable, free movement)
-  // until someone clicks the wave-cleared popup -> next wave spawns (more
-  // enemies, slightly tankier) after the standard countdown. Killed enemies
-  // STAY DEAD for the rest of the wave — the old instant-respawn elsewhere
-  // is gone.
+  // PvE waves run forever: clearing every enemy enters 'intermission' (players
+  // invulnerable, free movement + intermission shop) then AUTO-ADVANCES after
+  // wave.intermissionMs (clicking 'nextWave' still skips the wait). Killed
+  // enemies STAY DEAD until the next wave, which activates more/tankier ones
+  // out of the fixed pool (see src/shared/waves.js).
+  wave: {
+    intermissionMs: 8000,         // wave-clear breather before next countdown
+    maxPauseMs: 30000,            // global pause cap while upgrade/shop open
+  },
+
   enemy: {
     pool: 10,                 // fixed pool size (client hides the dead slots)
     waveBase: 3,              // wave 1 activates this many

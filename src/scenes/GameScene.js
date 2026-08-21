@@ -15,7 +15,7 @@ import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
-import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, joinErrorMessage, serverAvailable,
+import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
   joinWorld, joinLobby, sendQueue, consumeReservation } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { getUpgrade } from '../shared/progression.js';
@@ -174,6 +174,13 @@ export default class GameScene {
     this.upgradeTitle = document.getElementById('upgrade-title');
     this._pendingChoicesStr = '';
     this._upgradeDeadline = 0;
+    // Intermission shop overlay
+    this.shopOverlay = document.getElementById('shop-overlay');
+    this.shopGrid = document.getElementById('shop-grid');
+    this.shopTimer = document.getElementById('shop-timer');
+    this.shopTitle = document.getElementById('shop-title');
+    this._shopPicked = false;
+    this.pausedBadge = document.getElementById('paused-badge');
 
     // One overlay serves three ends: death (respawn), wave cleared (next
     // wave) and match end (again). Priority in that order on click.
@@ -474,6 +481,10 @@ export default class GameScene {
       const name = getUpgrade(d?.picked)?.name ?? d?.picked ?? '';
       const suffix = d?.auto ? ' (auto)' : '';
       if (name) this.floatTexts.spawn(this.local?.root.position.x ?? 0, 2.6, this.local?.root.position.z ?? 0, name + suffix, '#a5d6a7');
+    });
+    this.room.onMessage('shopResult', (d) => {
+      const n = d?.picked ?? '';
+      if (n) this.floatTexts.spawn(this.local?.root.position.x ?? 0, 2.6, this.local?.root.position.z ?? 0, `SHOP: ${n}`, '#4fc3f7');
     });
 
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
@@ -964,8 +975,13 @@ export default class GameScene {
       this.sound.toggleMute();
     }
 
+    // World render dt is throttled when globally paused (PVE choosing / shop).
+    // UI + overlays still tick at real dt via updateMatchUi below.
+    const paused = !!(this.room && this.room.state && this.room.state.paused);
+    const dtWorld = paused ? 0 : dt;
+
     if (this.local) {
-      this.local.update(dt, this.camera);
+      this.local.update(dtWorld, this.camera);
 
       // Open world: stream chunks + minimap around the local player. The
       // chunk set is deterministic (same seed as WorldRoom), so this is a
@@ -1015,7 +1031,7 @@ export default class GameScene {
       this.updateMatchUi(dt);
     }
     for (const rp of this.remotePlayers.values()) {
-      rp.update(dt);
+      rp.update(dtWorld);
       // Phase 3 remote cast visuals: fire the knight slash / bash ring on the
       // anim EDGE (idle|run -> attack|skill), same feedback the local caster
       // sees on their own character.
@@ -1035,7 +1051,7 @@ export default class GameScene {
     }
     const w = window.innerWidth;
     const h = window.innerHeight;
-    for (const e of this.enemies.values()) e.update(dt, this.camera, w, h);
+    for (const e of this.enemies.values()) e.update(dtWorld, this.camera, w, h);
     const now = performance.now();
     for (const view of this.orbViews) {
       view.mesh.position.x = view.state.x;
@@ -1106,9 +1122,9 @@ export default class GameScene {
     }
 
     this.touchControls?.update();
-    this.particles.update(dt);
-    this.skillFx.update(dt);
-    this.floatTexts.update(dt, this.camera, window.innerWidth, window.innerHeight);
+    this.particles.update(dtWorld);
+    this.skillFx.update(dtWorld);
+    this.floatTexts.update(dtWorld, this.camera, window.innerWidth, window.innerHeight);
     this.updateNametags();
     this.updateLeaderboard();
 
@@ -1134,14 +1150,15 @@ export default class GameScene {
       }
       if (state.matchState === 'playing') { this.sound.go(); this.countdownEl.textContent = ''; }
       if (state.matchState === 'intermission') {
-        // WAVE CLEARED popup: blocks the game until a player clicks (the
-        // click sends 'nextWave' — see the overlay click handler). While it
-        // is up every player is invulnerable (damagePlayer gates on
-        // 'playing'), and movement stays free.
+        // WAVE CLEARED popup: now AUTO-ADVANCES after intermissionMs (click
+        // still skips the wait). While up every player is invulnerable and
+        // the intermission shop is available. Game is paused while choosing.
         this.sound.waveClear();
+        this._shopPicked = false;
         this.overlayTitle.textContent = `WAVE ${state.wave} CLEARED!`;
+        const remain = state.intermissionUntil ? Math.max(0, Math.ceil((state.intermissionUntil - Date.now()) / 1000)) : 0;
         this.overlaySub.textContent =
-          `click anywhere to start wave ${state.wave + 1} — everyone is invulnerable until then`;
+          `next wave in ${remain}s — click to skip • shop below — everyone is invulnerable`;
         this.overlay.classList.add('visible');
         this.deadShown = true; // suppress the death overlay underneath
       }
@@ -1265,10 +1282,49 @@ export default class GameScene {
       if (this._upgradeKeyHandler) { window.removeEventListener('keydown', this._upgradeKeyHandler); this._upgradeKeyHandler = null; }
     }
 
+    // Intermission shop (PVE breather: heal / speed / vitality, one pick per player per intermission)
+    if (state.matchState === 'intermission') {
+      if (!this._shopPicked && this.shopOverlay && !this.shopOverlay.classList.contains('visible')) {
+        this._shopIntermWave = state.wave;
+        this.shopGrid.innerHTML = '';
+        const opts = [
+          { id: 'heal', title: 'Heal', desc: 'Restore HP (50% + 20)' },
+          { id: 'speed', title: 'Haste', desc: `Speed boost ${Math.round((this.constructor.SPEED_MS ?? 5000)/1000)}s` },
+          { id: 'vitality', title: 'Vitality', desc: '+1 Vitality (+30 Max HP, +15 heal)' }
+        ];
+        opts.forEach((o) => {
+          const card = document.createElement('div');
+          card.className = 'shop-card';
+          card.innerHTML = `<div class="shop-title">${o.title}</div><div class="shop-desc">${o.desc}</div>`;
+          card.addEventListener('click', () => {
+            sendChooseShop(this.room, o.id);
+            this._shopPicked = true;
+            this.shopOverlay.classList.remove('visible');
+          });
+          this.shopGrid.appendChild(card);
+        });
+        this.shopOverlay.classList.add('visible');
+      }
+      const shopRemain = state.intermissionUntil ? Math.max(0, Math.ceil((state.intermissionUntil - Date.now()) / 1000)) : 0;
+      if (this.shopTimer) this.shopTimer.textContent = this._shopPicked ? 'picked — next wave incoming' : `next wave in ${shopRemain}s`;
+      // keep overlay subtitle in sync with countdown too
+      if (!this._shopPicked && state.intermissionUntil) {
+        this.overlaySub.textContent = `next wave in ${shopRemain}s — click to skip • shop below — everyone is invulnerable`;
+      }
+    } else {
+      if (this.shopOverlay) this.shopOverlay.classList.remove('visible');
+      this._shopPicked = false;
+      this._shopIntermWave = null;
+    }
+
+    // Paused badge (global PVE pause while choosing upgrade)
+    if (this.pausedBadge) this.pausedBadge.style.display = state.paused ? 'block' : 'none';
+
     // HUD: show level + XP alongside score
     this.hudText.textContent =
       `Lv ${me.level} (${me.xp} XP)  wave ${state.wave}  score ${me.score}  players ${state.players.size}  target ${CONFIG.match.targetScore}` +
       (state.matchState === 'intermission' ? '  ★ INVULNERABLE — wave cleared' : '') +
+      (state.paused ? '  ⏸ PAUSED' : '') +
       (me.blocking ? '  🛡 BLOCKING' : '') +
       (pending.length ? '  ★ CHOOSE UPGRADE!' : '') +
       (this.touchControls?.active

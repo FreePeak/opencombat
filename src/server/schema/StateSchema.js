@@ -145,6 +145,8 @@ export class WorldState extends Schema {
     this.wave = 1;              // current enemy wave (1-based)
     this.winnerId = '';         // sessionId of the match winner
     this.winnerName = '';       // ...and their name, for the results overlay
+    this.paused = false;        // true while choosing upgrade/shop (PVE pause)
+    this.intermissionUntil = 0; // ms epoch when intermission auto-advances
     // Phase 5: arena metadata (defaults keep GameRoom rooms backward compatible)
     this.arenaMode = '';        // '' = survival (game room), else 'duel'|'team'|'ffa'
     this.arenaPve = false;      // optional PvE toggle for arena
@@ -165,6 +167,8 @@ defineTypes(WorldState, {
   wave: 'number',
   winnerId: 'string',
   winnerName: 'string',
+  paused: 'boolean',
+  intermissionUntil: 'number',
   arenaMode: 'string',
   arenaPve: 'boolean',
   arenaRoundsToWin: 'number',

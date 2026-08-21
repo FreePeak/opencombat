@@ -100,6 +100,11 @@ export const CONFIG = {
     targetScore: 100            // mirror, shown in the HUD
   },
 
+  wave: {
+    intermissionMs: 8000,       // mirror of SERVER.wave.intermissionMs
+    maxPauseMs: 30000           // mirror of SERVER.wave.maxPauseMs
+  },
+
   player: {
     speed: 9,                   // mirror of SERVER.player.speed (server wins)
     maxHp: 100,

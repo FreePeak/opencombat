@@ -96,6 +96,16 @@
     #upgrade-overlay .up-title { font-size: 14px; font-weight: bold; color: #ffd54f; margin-bottom: 6px; }
     #upgrade-overlay .up-desc { font-size: 12px; color: #ccc; }
     #upgrade-overlay .up-timer { margin-top: 10px; font-size: 12px; color: #aaa; }
+    #shop-overlay { position: fixed; inset: 0; display: none; place-items: center; z-index: 21; background: #0007; }
+    #shop-overlay.visible { display: grid; }
+    #shop-overlay .shop-grid { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    #shop-overlay .shop-card { width: 180px; min-height: 110px; background: #1b2332; border: 1px solid #4fc3f7; border-radius: 10px;
+      padding: 12px; color: #fff; text-align: center; cursor: pointer; transition: transform .12s, border-color .12s; }
+    #shop-overlay .shop-card:hover { transform: translateY(-4px); border-color: #ffd54f; }
+    #shop-overlay .shop-title { font-size: 14px; font-weight: bold; color: #4fc3f7; margin-bottom: 6px; }
+    #shop-overlay .shop-desc { font-size: 12px; color: #ccc; }
+    #shop-overlay .shop-timer { margin-top: 10px; font-size: 12px; color: #aaa; }
+    #paused-badge { position: fixed; top: 64px; left: 12px; z-index: 13; display: none; color: #ffd54f; background: #000a; border: 1px solid #ffd54f66; border-radius: 6px; padding: 4px 10px; font-size: 12px; }
     #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #ccc; font-size: 15px; z-index: 5; }
     #nametag-layer { position: fixed; inset: 0; z-index: 8; pointer-events: none; }
     .nametag { position: absolute; top: 0; left: 0; transform: translate(-50%, -100%);
@@ -135,6 +145,14 @@
       <div id="upgrade-timer" class="up-timer"></div>
     </div>
   </div>
+  <div id="shop-overlay">
+    <div style="text-align:center;">
+      <div id="shop-title" style="color:#fff;font-size:20px;margin-bottom:12px;">INTERMISSION SHOP — pick one</div>
+      <div id="shop-grid" class="shop-grid"></div>
+      <div id="shop-timer" class="shop-timer"></div>
+    </div>
+  </div>
+  <div id="paused-badge">PAUSED — choosing upgrade</div>
   <div id="login">
     <div class="card">
       <h1>opengame</h1>
