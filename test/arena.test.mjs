@@ -180,8 +180,8 @@ const roomOfLobby = (r) => [...LobbyRoom.instances].find((x) => x.roomId === r.r
   p1.score = 10; // reaches target
   // Need at least one living player on winning side (p1 alive)
   p1.hp = 100;
-  // Wait for round win processing (next tick)
-  await waitMs(600);
+  // Wait for round win processing (next tick) — poll server truth, not wall clock
+  await waitFor(() => r1.state.arenaRound === 2, 5000, 'round incremented to 2');
   console.log('after round win 1', r1.state.matchState, 'round', r1.state.arenaRound, 'roundWins', [...r1.state.arenaRoundWins.entries()]);
   assert.equal(r1.state.arenaRound, 2, 'round incremented to 2');
   assert.equal(r1.state.arenaRoundWins.get(r1.sessionId), 1, 'p1 has 1 round win');
@@ -190,7 +190,7 @@ const roomOfLobby = (r) => [...LobbyRoom.instances].find((x) => x.roomId === r.r
   // Win second round
   const p1b = sr.state.players.get(r1.sessionId);
   p1b.score = 10;
-  await waitMs(600);
+  await waitFor(() => r1.state.matchState === 'gameover', 5000, 'gameover after 2 rounds');
   console.log('after round win 2', r1.state.matchState, r1.state.winnerId, r1.state.winnerName);
   assert.equal(r1.state.matchState, 'gameover', 'gameover after 2 rounds');
   assert.equal(r1.state.winnerId, r1.sessionId, 'winner is p1');
