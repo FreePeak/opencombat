@@ -73,6 +73,10 @@ const parkOthers = (sr, keep = 0) => {
   // SURVIVE the first swing so the hit-stun assertions below have a survivor.
   enemy.hp = SERVER.enemy.hp + KS.meleeDamage;
 
+  // Orbs award score on passive proximity pickup and respawn at a random
+  // spot — park them away so the kill-score assertion below measures only
+  // the kill's contribution.
+  sr.state.orbs.forEach((o) => { o.x = 25; o.z = 25; });
   const scoreBefore = me.score;
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
   // ANIM: the swing anim starts at press time — remote clients must see
@@ -132,15 +136,32 @@ const parkOthers = (sr, keep = 0) => {
   await waitImpact();
   assert.equal(enemy.hp, SERVER.enemy.hp - KS.meleeDamage, 'J hits WHILE MOVING (impact-aligned)');
 
+  // Park the movement intent BEFORE arming the skill scenario: stepPlayer
+  // snaps rotY to atan2(intent) on EVERY tick while any intent is active,
+  // so the stale flee intent would rotate the caster back to -PI/2 within
+  // one tick of us writing PI/2 — a laggy cast then dashes backwards.
+  // With a zero intent, stepPlayer leaves rotY exactly where we set it.
+  host.r.send('input', { dirX: 0, dirZ: 0, attack: false, anim: 'idle' });
   await waitMs(4000);
   me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
   // Phase 3: SKILLS[0] is now 'bash' (4-unit dash + cone at landing).
-  // Place the enemy AHEAD of the landing position so the cone catches it.
-  enemy.x = 5; enemy.z = 0; enemy.hp = SERVER.enemy.hp + SKILLS[0].damage;
+  // Place the enemy well INSIDE the forward cone but far enough past the
+  // landing point that its own chase (toward the player) cannot carry it
+  // behind the landing before the cast resolves.
+  enemy.x = SKILLS[0].dashDistance + 3; enemy.z = 0;
+  enemy.hp = SERVER.enemy.hp + SKILLS[0].damage;
   const hpBeforeSkill = enemy.hp;
-  host.r.send('input', { dirX: 0, dirZ: 1, skill: true, anim: 'run' });
+  // Cast WHILE MOVING (+X, matching the frozen facing): the cast message
+  // itself carries the movement, and until it lands the zeroed intent
+  // guarantees rotY is still PI/2 when castSkill samples it.
+  host.r.send('input', { dirX: 1, dirZ: 0, skill: true, anim: 'run' });
   // Poll server truth instead of a fixed sleep: the bash cone lands after
   // the dash, and CI scheduling can push that well past 250ms.
+  // NOTE: the intent MUST match the facing (+X, toward the enemy) — the
+  // bash dash follows the caster's LIVE rotY at cast-processing time, and
+  // movePlayers steers rotY toward the active move intent every tick. A
+  // perpendicular/stale intent let late-delivered casts rotate the dash
+  // off-target (observed once as a cone miss under suite load).
   await waitFor(() => enemy.hp < hpBeforeSkill, 3000, 'K hits WHILE MOVING (skill damage lands)');
 
   // Guard still blocks
@@ -193,8 +214,9 @@ const parkOthers = (sr, keep = 0) => {
   B.x = 1.5; B.z = 0; B.rotY = -Math.PI / 2;
 
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
-  await waitImpact();
-  assert.equal(B.hp, KS.hp - KS.meleePvpDamage, 'PvP melee connects (per-class damage)');
+  // Poll server truth: socket delivery + impact scheduling can exceed the
+  // fixed 430ms waitImpact budget under concurrent-suite load.
+  await waitFor(() => B.hp === KS.hp - KS.meleePvpDamage, 3000, 'PvP melee connects (per-class damage)');
 
   let bBlocked = 0;
   r2.onMessage('blocked', () => { bBlocked++; });

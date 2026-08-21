@@ -89,7 +89,10 @@ await waitFor(() => me().attackCd <= 0, 2000, 'cooldown clear before A1');
 room.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });   // A1
 await waitFor(() => me().anim === 'attack', 1000, 'A1 accepted');
 const cd1 = me().attackCd;
-assert.ok(cd1 > 200 && cd1 < 800, `A1 set a cooldown (${cd1}ms)`);
+// attackCd is re-broadcast each tick as (nextAttackAt - now); the first
+// observation after accept can legitimately still read the full cooldown
+// before the next tick decrements it.
+assert.ok(cd1 > 200 && cd1 <= 800, `A1 set a cooldown (${cd1}ms)`);
 await waitMs(150);
 room.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });   // A2: too fast
 await waitMs(50);
