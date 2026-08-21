@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Multiplayer 3D arena survival: Three.js client + Colyseus server. Server-authoritative movement, shared orbs, chasing enemies.",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "serve": "node src/server/index.js",

@@ -352,3 +352,10 @@ same melee combat rules.
    static assets (JS modules, GLBs) are served, `package.json`/`node_modules`
    return 404, `/healthz` and `/metrics` answer, and SIGTERM shuts the
    server down cleanly (no "Error: disposing" noise).
+
+## License
+
+The code in this repository is released under the [MIT License](LICENSE).
+Game assets (models under `assets/`) are third-party content licensed CC0 or
+CC-BY with attribution — see `assets/credits/` for per-file licenses and
+credits.
