@@ -64,3 +64,11 @@ Spectator mode (PRD-arena-spectate.md) verified compose-clean with career
 stats: spectators exist ONLY in ArenaRoom as presence rows (no PlayerState
 seat), while endMatch career recording lives exclusively in GameRoom where
 every join is a real player. No contamination path exists; no guard needed.
+
+## Post-ship audit note #2 (CYCLE-AQ, 2026-08-22)
+
+OIDC login (PRD-oidc-login.md) verified compose-clean with career stats:
+identity binding persists an `oidcSub` FIELD on the existing per-name blob
+(no namespace split), so career/daily/weekly records keep their keyed-by-
+display-name semantics; same-name collision scenarios are pinned in
+oidc.test.mjs. Gate on the combined tree: 115 files ok, 204/204 tests.
