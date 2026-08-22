@@ -33,6 +33,7 @@ import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/
 import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
+import { CombatRadar } from '../ui/CombatRadar.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -140,6 +141,7 @@ export default class GameScene {
     this.worldMode = false;       // open-world visuals active (chunks + minimap)
     this.chunkManager = null;
     this.minimap = null;
+    this.combatRadar = null;      // match-mode HUD radar (PRD-combat-radar.md)
 
     this.local = null;             // Player (ours)
     this.remotePlayers = new Map();// sessionId -> RemotePlayer
@@ -1623,6 +1625,32 @@ export default class GameScene {
             this.minimap.setPlayers(this.room.state.players, this.room.sessionId);
           }
           this.minimap.update(px, pz);
+        }
+      }
+
+      // Combat radar (PRD-combat-radar.md): match modes only — world keeps its
+      // chunk minimap. Single lazily-created instance; hidden outside live
+      // matches so menu/gameover states never show stale blips.
+      if (!this.worldMode && !this.spectating) {
+        const ms = this.room?.state?.matchState;
+        const live = !!this.local && ms !== 'lobby' && ms !== 'gameover';
+        if (live) {
+          if (!this.combatRadar) this.combatRadar = new CombatRadar({ half: 30 });
+          const ents = [];
+          for (const e of this.enemies.values()) {
+            if ((e.state?.hp ?? 0) > 0) ents.push({ x: e.state.x, z: e.state.z });
+          }
+          for (const [sid, p] of this.room?.state?.players ?? []) {
+            if (sid === this.room.sessionId || (p.hp ?? 1) <= 0) continue;
+            ents.push({ x: p.x, z: p.z, color: p.color });
+          }
+          this.combatRadar.canvas.style.display = '';
+          this.combatRadar.render(ents, {
+            x: this.local.root.position.x,
+            z: this.local.root.position.z,
+          });
+        } else if (this.combatRadar) {
+          this.combatRadar.canvas.style.display = 'none';
         }
       }
 
