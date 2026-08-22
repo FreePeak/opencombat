@@ -2020,8 +2020,13 @@ export default class GameScene {
   showDailyResults(payload) {
     const el = this.dailyResultsEl;
     if (!el || !payload) return;
+    // Weekly runs carry NO streak (forgiveness is the mechanic) — render
+    // the segment only when the row actually has one.
     const rows = (payload.results ?? [])
-      .map((r) => `${esc(r.name)} — score <b>${r.score}</b> · streak x${r.streak ?? 1} · <b>+${r.rewardXp ?? 0}</b> XP`)
+      .map((r) => {
+        const streak = r.streak != null ? ` · streak x${r.streak}` : '';
+        return `${esc(r.name)} — score <b>${r.score}</b>${streak} · <b>+${r.rewardXp ?? 0}</b> XP`;
+      })
       .join('<br>');
     const title = payload.kind === 'weekly' ? 'WEEKLY GAUNTLET COMPLETE' : 'DAILY GAUNTLET COMPLETE';
     el.innerHTML =
