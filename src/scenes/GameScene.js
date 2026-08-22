@@ -20,6 +20,7 @@ import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
 import { MILESTONES } from '../shared/sim/streaks.js';
+import { achievementById } from '../shared/sim/achievements.js';
 import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
   joinWorld, joinLobby, sendQueue, consumeReservation } from '../network.js';
@@ -200,6 +201,9 @@ export default class GameScene {
     // Elite spawn toast (server 'eliteSpawn' broadcast / LocalRoom emit hook).
     this.eliteToastEl = document.getElementById('elite-toast');
     this.eliteToastEl?.addEventListener('click', () => this.hideEliteToast());
+    // Achievement toast (server 'achievementsUnlocked' broadcast).
+    this.achievementToastEl = document.getElementById('achievement-toast');
+    this.achievementToastEl?.addEventListener('click', () => this.hideAchievementToast());
     // Kill-streak milestone toast ('killStreak' broadcast / LocalRoom emit).
     this.streakToastEl = document.getElementById('streak-toast');
     this.streakToastEl?.addEventListener('click', () => this.hideStreakToast());
@@ -798,6 +802,9 @@ export default class GameScene {
     // client toasts + pitch-blips; the streaking player also gets extra
     // trauma and a gold 1.5x number (see showStreakToast).
     this.room.onMessage('killStreak', (d) => this.showStreakToast(d));
+    // Achievements (PRD-achievements.md): rooms broadcast 'achievementsUnlocked'
+    // {ids} at finalize paths; names resolve via the shared ACHIEVEMENTS table.
+    this.room.onMessage('achievementsUnlocked', (d) => this.showAchievementToast(d));
 
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
     // reconnection API). We just surface it to the player and keep a manual
@@ -1882,6 +1889,51 @@ export default class GameScene {
   hideStreakToast() {
     clearTimeout(this._streakToastTimer);
     this.streakToastEl?.classList.remove('visible');
+  }
+
+  /** Achievement unlock toast (top-center, gold): "ACHIEVEMENT UNLOCKED —
+   *  <names>". Fired by the 'achievementsUnlocked' broadcast; ids resolve to
+   *  human names via the shared ACHIEVEMENTS table (fallback: raw id). Batches
+   *  arriving while one is visible are queued and shown 3.5s each; clicking
+   *  dismisses everything pending. Mirrors #streak-toast styling (see
+   *  #achievement-toast in index.html). */
+  showAchievementToast(d) {
+    const el = this.achievementToastEl;
+    if (!el || !d || !Array.isArray(d.ids)) return;
+    const text = d.ids.map((id) => achievementById(id)?.name ?? id).join(', ');
+    if (!text) return;
+    if (el.classList.contains('visible')) {
+      (this._achievementQueue = this._achievementQueue || []).push(text);
+      return;
+    }
+    this._renderAchievementToast(text);
+    clearTimeout(this._achievementToastTimer);
+    this._achievementToastTimer = setTimeout(() => this._nextAchievementToast(), 3500);
+  }
+
+  _renderAchievementToast(text) {
+    const el = this.achievementToastEl;
+    el.innerHTML =
+      `<span class="achievement-title">ACHIEVEMENT UNLOCKED</span> — ${esc(text)}`;
+    el.classList.add('visible');
+    const p = this.local?.root.position;
+    if (p && typeof this.spawnBigFloat === 'function') {
+      this.spawnBigFloat(p.x, 3.4, p.z, '★ ACHIEVEMENT ★', '#ffd54a');
+    }
+  }
+
+  _nextAchievementToast() {
+    const next = (this._achievementQueue || []).shift();
+    if (!next) return this.hideAchievementToast();
+    this._renderAchievementToast(next);
+    clearTimeout(this._achievementToastTimer);
+    this._achievementToastTimer = setTimeout(() => this._nextAchievementToast(), 3500);
+  }
+
+  hideAchievementToast() {
+    clearTimeout(this._achievementToastTimer);
+    this._achievementQueue = [];
+    this.achievementToastEl?.classList.remove('visible');
   }
 
   /** FloatingTextPool.spawn with a 1.5x font-size bump on the div just

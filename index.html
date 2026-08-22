@@ -209,6 +209,15 @@
     #streak-toast.visible { display: block; }
     #streak-toast .streak-title { color: var(--gold); letter-spacing: .1em; font-weight: 600; }
 
+    /* ============ achievement toast ============ */
+    #achievement-toast { position: fixed; top: 190px; left: 50%; transform: translateX(-50%); z-index: 16; /* stacked below streak-toast(118) */
+      display: none; background: var(--panel); border: 1px solid rgba(255, 215, 74, 0.7);
+      border-radius: var(--radius-l); padding: 8px 18px; box-shadow: var(--shadow-1);
+      backdrop-filter: blur(8px); font: 12px var(--mono); letter-spacing: .08em;
+      color: var(--text); text-align: center; cursor: pointer; }
+    #achievement-toast.visible { display: block; }
+    #achievement-toast .achievement-title { color: var(--gold); letter-spacing: .1em; font-weight: 600; }
+
     /* ============ touch controls ============ */
     #touch-controls { display: none; position: fixed; inset: 0; z-index: 14;
       pointer-events: none; -webkit-touch-callout: none;
@@ -280,6 +289,7 @@
   <div id="daily-results"></div>
   <div id="elite-toast"></div>
   <div id="streak-toast"></div>
+  <div id="achievement-toast"></div>
   <div id="countdown"></div>
   <div id="flash"></div>
 
