@@ -59,7 +59,11 @@ function randomInCircle(rng, radius) {
 }
 
 export class LocalRoom {
-  constructor() {
+  constructor(options = {}) {
+    // ENDLESS WAR (user request): offline play opts into unlimited waves —
+    // no targetScore win, no finale victory arc. Death/respawn still applies.
+    // Tests construct without the flag and keep legacy semantics.
+    this.endless = options?.endless ?? false;
     this.state = new WorldState();
     this.sessionId = 'local-' + Math.random().toString(36).slice(2);
     this._callbacks = { stateChange: [], message: [], leave: [] };
@@ -156,6 +160,7 @@ export class LocalRoom {
       now: () => performance.now(),
       checkAutoPicks: () => leveling.checkAutoPicks(this.simLeveling),
       checkWinWhilePaused: () => {
+        if (this.endless) return; // endless war: score never ends offline runs
         if (SERVER.match.targetScore > 0) {
           const me2 = this.state.players.get(this.sessionId);
           if (me2 && me2.hp > 0 && me2.score >= SERVER.match.targetScore) {
@@ -685,7 +690,7 @@ export class LocalRoom {
     }
 
     // --- Win check (targetScore) ------------------------------------------
-    if (SERVER.match.targetScore > 0 && !this._matchEnded) {
+    if (!this.endless && SERVER.match.targetScore > 0 && !this._matchEnded) {
       for (const p of players.values()) {
         if (p.score >= SERVER.match.targetScore) {
           this._endMatch(p);
@@ -892,7 +897,7 @@ export class LocalRoom {
    _requestNextWave() {
     if (this.state.matchState !== 'intermission') return;
     // WAVE FINALE mirror of GameRoom.startNextWave (PRD-wave-finale.md).
-    if (SERVER.wave.finaleWave > 0 &&
+    if (!this.endless && SERVER.wave.finaleWave > 0 &&
         this.state.wave + 1 > SERVER.wave.finaleWave) {
       this.state.victory = true;
       this.state.matchState = 'gameover';

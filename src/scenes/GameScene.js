@@ -596,7 +596,8 @@ export default class GameScene {
         // No server (static hosting, host offline): same wire-up, but the
         // room is a browser-local simulation — single-player only. Daily
         // degrades to plain local waves (no streak recorded — accepted).
-        this.room = new LocalRoom();
+        // ENDLESS WAR: offline runs never end on score or finale arc.
+        this.room = new LocalRoom({ endless: true });
         await this.room.join(this.name, this.character);
         this.setNetBadge(false);
         this.wireRoom();
