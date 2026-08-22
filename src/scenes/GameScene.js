@@ -21,7 +21,7 @@ import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
 import { MILESTONES } from '../shared/sim/streaks.js';
-import { achievementById } from '../shared/sim/achievements.js';
+import { achievementById, evaluateAchievements } from '../shared/sim/achievements.js';
 import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
   joinWorld, joinLobby, sendQueue, consumeReservation } from '../network.js';
@@ -1595,6 +1595,14 @@ export default class GameScene {
             try {
               localStorage.setItem('ashfall-lasttier', JSON.stringify(this.lastTierSeen));
             } catch {}
+            // OFFLINE ACHIEVEMENTS: the same pure engine the server runs —
+            // daily/weekly predicates fail harmlessly without their blobs.
+            const evaluated = evaluateAchievements({ ...saved, career });
+            if (evaluated.newIds.length > 0) {
+              const names = evaluated.newIds
+                .map((id) => achievementById(id)?.name ?? id).join(', ');
+              this.showEliteToast({ name: `ACHIEVEMENT — ${names}`, boss: false });
+            }
             this.careerBySid[this.room.sessionId] = career;
           } catch { /* storage unavailable — gameplay continues */ }
         }
