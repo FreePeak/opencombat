@@ -72,6 +72,65 @@ const liveRooms = () => {
   return { rooms, players };
 };
 
+// Live Match Browser (PRD-live-matches.md): one detailed entry per live room,
+// busiest first, for the client's LIVE MATCHES panel. Every per-room read is
+// guarded — rooms dispose concurrently with the listing and a torn-down room
+// must be skipped, never fail the API.
+const listRooms = () => {
+  const entries = [];
+  const push = (read) => {
+    try {
+      const entry = read();
+      if (entry) entries.push(entry);
+    } catch {} // disposed mid-read -> drop this room
+  };
+  for (const room of GameRoom.instances) {
+    push(() => {
+      const ms = room.state.matchState;
+      const players = room.state.players.size;
+      return {
+        roomId: room.roomId,
+        mode: room.mode === 'daily' ? 'daily' : 'waves',
+        players,
+        phase: ['countdown', 'playing', 'intermission', 'gameover'].includes(ms) ? ms : 'lobby',
+        canJoin: (ms === 'playing' || ms === 'intermission') && players < 8,
+      };
+    });
+  }
+  for (const room of ArenaRoom.instances) {
+    push(() => {
+      const players = room.state.players.size;
+      return {
+        roomId: room.roomId,
+        mode: 'arena',
+        ...(room.state.arenaMode ? { subMode: room.state.arenaMode } : {}),
+        players,
+        phase: players > 0 ? 'live' : 'lobby',
+        canJoin: false,
+      };
+    });
+  }
+  for (const room of WorldRoom.instances) {
+    push(() => ({
+      roomId: room.roomId,
+      mode: 'world',
+      players: room.state.players.size,
+      phase: 'live',
+      canJoin: false,
+    }));
+  }
+  for (const room of LobbyRoom.instances) {
+    push(() => ({
+      roomId: room.roomId,
+      mode: 'lobby',
+      players: room.state.players?.size ?? room.state.queueCount ?? 0,
+      phase: 'lobby',
+      canJoin: false,
+    }));
+  }
+  return entries.sort((a, b) => b.players - a.players);
+};
+
 /**
  * Attach a raw http 'request' listener that only LOGS (never writes to the
  * response, so it is safe alongside Colyseus' router dispatcher). It sees
@@ -236,6 +295,12 @@ export function buildHttpApp(app) {
       count: presenceCount(),
       players: listPresence().map(({ name, mode }) => ({ name, mode })),
     });
+  });
+
+  // --- Live Match Browser (PRD-live-matches.md): detailed listing of every
+  // live room. Registered BEFORE the catch-all below.
+  app.get('/api/rooms', (_req, res) => {
+    res.json({ rooms: listRooms() });
   });
 
   // Everything else is not served.

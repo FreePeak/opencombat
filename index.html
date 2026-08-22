@@ -80,6 +80,18 @@
     #online-panel .ally-row { display: flex; align-items: center; justify-content: space-between;
       gap: 10px; padding: 1px 0; }
     #online-panel .ally-time { font: 10px var(--mono); color: #55606c; }
+    /* Live matches rows (PRD-live-matches.md): same family as .presence-row. */
+    #online-panel .match-row { display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 1px 0; }
+    #online-panel .match-meta { font: 11px var(--mono); letter-spacing: .04em; color: var(--muted); }
+    #online-panel .match-row.muted .match-meta { color: #55606c; font-style: italic; }
+    #online-panel .join-btn { flex: none; font: 600 10px var(--mono); letter-spacing: .08em;
+      padding: 3px 10px; border-radius: 999px; border: none; cursor: pointer;
+      background: linear-gradient(90deg, var(--accent-deep), var(--accent)); color: #06281c;
+      box-shadow: 0 2px 8px rgba(52, 211, 153, 0.25); transition: filter .12s, transform .12s; }
+    #online-panel .join-btn:hover { filter: brightness(1.08); }
+    #online-panel .join-btn:active { transform: translateY(1px); }
+    #online-panel .join-btn:disabled { opacity: .45; cursor: default; filter: none; transform: none; }
 
     #net-badge { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
       display: none; color: var(--gold); font: 11px var(--mono); letter-spacing: .06em;
@@ -261,6 +273,8 @@
     <ul id="online-list"></ul>
     <div class="sub-header">RECENT ALLIES</div>
     <ul id="recent-allies"></ul>
+    <div class="sub-header">LIVE MATCHES</div>
+    <ul id="live-matches"></ul>
   </div>
   <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
   <div id="daily-results"></div>

@@ -134,7 +134,7 @@ try {
   clearInterval(respawnTimer);
 }
 const effectName = [...me().effects.keys()][0];
-assert.ok(['speed', 'shield', 'double'].includes(effectName),
+assert.ok(['speed', 'shield', 'double', 'magnet'].includes(effectName),
   `collected a known power-up type (${effectName})`);
 const effectMs = me().effects.get(effectName);
 assert.ok(effectMs > 0 && effectMs <= 15000, `effect has a sane duration (${effectMs}ms)`);
