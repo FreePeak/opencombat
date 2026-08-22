@@ -73,6 +73,22 @@ const servedIndex = () => {
     : html;
 };
 
+// Air-gapped asset vendoring (PRD-airgap-vendoring.md): with VENDORED_ASSETS=1
+// the served index swaps every pinned jsDelivr URL for its committed copy
+// under /vendor/* (assets/vendor mirrors the CDN path shape, so a single
+// prefix replace covers all URL families: three build + examples/jsm/,
+// @colyseus/schema, @colyseus/sdk). The rewritten string is cached behind
+// the same mtime guard as the raw HTML; default mode stays byte-identical.
+const CDN_PREFIX = 'https://cdn.jsdelivr.net/';
+let vendorIndexCache = { mtimeMs: -1, html: '' };
+const vendoredServedIndex = () => {
+  const html = servedIndex();
+  if (indexCache.mtimeMs !== vendorIndexCache.mtimeMs) {
+    vendorIndexCache = { mtimeMs: indexCache.mtimeMs, html: html.split(CDN_PREFIX).join('/vendor/') };
+  }
+  return vendorIndexCache.html;
+};
+
 const headerIp = (req) =>
   (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
 
@@ -251,9 +267,30 @@ export function buildHttpApp(app) {
 
   // --- Static surface (whitelist; see header comment) ----------------------
   app.get('/', (_req, res) => {
-    res.type('html').set('Cache-Control', 'no-cache').send(servedIndex());
+    const html = process.env.VENDORED_ASSETS === '1' ? vendoredServedIndex() : servedIndex();
+    res.type('html').set('Cache-Control', 'no-cache').send(html);
   });
   app.use('/assets', express.static(path.join(root, 'assets'), { maxAge: '1d', etag: true }));
+  // --- Vendored CDN assets (PRD-airgap-vendoring.md): committed copies of
+  // the pinned jsDelivr files. The env gate is read PER REQUEST (mirrors the
+  // admin token pattern) so VENDORED_ASSETS flips without a restart; off ->
+  // zero route surface, on -> JS MIME + immutable caching, unknown paths fall
+  // through to the catch-all 404 below.
+  const vendorStatic = express.static(path.join(root, 'assets', 'vendor'), {
+    setHeaders(res, filePath) {
+      res.setHeader(
+        'Content-Type',
+        filePath.endsWith('.mjs')
+          ? 'text/javascript; charset=utf-8'
+          : 'application/javascript; charset=utf-8'
+      );
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  });
+  app.use('/vendor', (req, res, next) => {
+    if (process.env.VENDORED_ASSETS !== '1') return next();
+    vendorStatic(req, res, next); // miss falls through -> catch-all 404 below
+  });
   // Zero-build client: ES modules load directly from /src. Server internals
   // are denied — the exceptions are the modules the browser client itself
   // imports: the shared schema, the tunables (LocalRoom mirrors them for the

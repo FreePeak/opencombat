@@ -1,0 +1,58 @@
+{
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js": {
+    "file": "npm/three@0.185.1/build/three.module.js",
+    "size": 650153
+  },
+  "https://cdn.jsdelivr.net/npm/@colyseus/schema@4.0.13/build/index.mjs": {
+    "file": "npm/@colyseus/schema@4.0.13/build/index.mjs",
+    "size": 218179
+  },
+  "https://cdn.jsdelivr.net/npm/@colyseus/sdk@0.17.43/dist/colyseus.js": {
+    "file": "npm/@colyseus/sdk@0.17.43/dist/colyseus.js",
+    "size": 440717
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js": {
+    "file": "npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js",
+    "size": 114959
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/postprocessing/EffectComposer.js": {
+    "file": "npm/three@0.185.1/examples/jsm/postprocessing/EffectComposer.js",
+    "size": 8501
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/postprocessing/RenderPass.js": {
+    "file": "npm/three@0.185.1/examples/jsm/postprocessing/RenderPass.js",
+    "size": 4280
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/postprocessing/UnrealBloomPass.js": {
+    "file": "npm/three@0.185.1/examples/jsm/postprocessing/UnrealBloomPass.js",
+    "size": 14921
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/utils/BufferGeometryUtils.js": {
+    "file": "npm/three@0.185.1/examples/jsm/utils/BufferGeometryUtils.js",
+    "size": 37621
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/utils/SkeletonUtils.js": {
+    "file": "npm/three@0.185.1/examples/jsm/utils/SkeletonUtils.js",
+    "size": 11535
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/shaders/CopyShader.js": {
+    "file": "npm/three@0.185.1/examples/jsm/shaders/CopyShader.js",
+    "size": 729
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/postprocessing/ShaderPass.js": {
+    "file": "npm/three@0.185.1/examples/jsm/postprocessing/ShaderPass.js",
+    "size": 3228
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/postprocessing/MaskPass.js": {
+    "file": "npm/three@0.185.1/examples/jsm/postprocessing/MaskPass.js",
+    "size": 4694
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/postprocessing/Pass.js": {
+    "file": "npm/three@0.185.1/examples/jsm/postprocessing/Pass.js",
+    "size": 4218
+  },
+  "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/shaders/LuminosityHighPassShader.js": {
+    "file": "npm/three@0.185.1/examples/jsm/shaders/LuminosityHighPassShader.js",
+    "size": 1291
+  }
+}

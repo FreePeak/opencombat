@@ -119,6 +119,10 @@ All optional; the defaults run a single-process game on :2567.
 - **Observability**: everything logs as JSON lines; `GET /metrics` exposes
   Prometheus-style gauges (rooms, players, tick duration, inputs/sec).
 
+  ### Offline deployment
+
+  Run `node tools/vendor-assets.mjs` once where network is available — the pinned three.js/Colyseus CDN files land in the committed `assets/vendor/` directory. Deploy with `VENDORED_ASSETS=1` and clients load them from your own origin (`/vendor/*`) instead of jsdelivr; without the flag, default CDN serving is unchanged.
+
 ## Game modes
 
 The login screen has a mode picker next to the character roster:
