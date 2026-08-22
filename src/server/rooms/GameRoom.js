@@ -30,7 +30,7 @@ import { attackFor } from '../../shared/classes.js';
 // Elite affixes (PRD-elite-affixes.md): pure shared module — every Nth wave
 // spawns slot 0 as an ELITE carrying a named affix; both rooms consume the
 // same table so online/offline parity is structural, not duplicated logic.
-import { isEliteWave, affixForWave, applyElite, affixByName } from '../../shared/sim/elites.js';
+import { isEliteWave, affixForWave, applyElite, affixByName, finaleBossFor } from '../../shared/sim/elites.js';
 import { archetypeByName, markArchetypes,
   SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
   SHOOTER_KITE_SPEED_MUL } from '../../shared/sim/archetypes.js';
@@ -340,7 +340,17 @@ export default class GameRoom extends Room {
     // ELITE AFFIXES (PRD-elite-affixes.md): every ELITE_EVERY_N_WAVES-th wave
     // marks slot 0 as the wave's ELITE (deterministic affix per wave number —
     // LocalRoom mirrors this exactly). Broadcast lets clients show the banner.
-    if (isEliteWave(n)) {
+    // FINALE BOSS (elites.js): on the configured finale wave slot 0 becomes
+    // the Warlord instead of any regular rotation elite — the run's last
+    // stand gets a face. LocalRoom mirrors byte-for-byte.
+    const bossName = finaleBossFor(n, SERVER.wave.finaleWave);
+    if (bossName) {
+      const boss = applyElite(this.state.enemies[0], bossName, effHp);
+      if (boss) {
+        this.broadcast('eliteSpawn', { name: boss.name });
+        this.logEvent('elite_spawn', { wave: n, name: boss.name, boss: true });
+      }
+    } else if (isEliteWave(n)) {
       const affix = applyElite(this.state.enemies[0], affixForWave(n), effHp);
       if (affix) {
         this.broadcast('eliteSpawn', { name: affix.name });
@@ -350,7 +360,10 @@ export default class GameRoom extends Room {
     // ENEMY ARCHETYPES (PRD-enemy-archetypes.md): deterministic per-(wave,
     // slot) tags on every live non-elite slot; LocalRoom mirrors exactly.
     const archMarked = markArchetypes(this.state.enemies, n,
-      { liveCount: spawned, eliteWave: isEliteWave(n) });
+      { liveCount: spawned,
+        // slot 0 is off-limits whenever a special occupies it (rotation
+        // elite OR finale boss) — otherwise archetype mults restamp its hp.
+        eliteWave: isEliteWave(n) || !!bossName });
     if (archMarked > 0) {
       this.logEvent('archetypes_marked', { wave: n, marked: archMarked });
     }

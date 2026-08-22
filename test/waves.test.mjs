@@ -398,6 +398,10 @@ const drainUpgradeCards = async (sr, ...clients) => {
           const ang = (i - (alive.length - 1) / 2) * 0.3;
           e.x = 1.8 * Math.cos(ang);
           e.z = 1.8 * Math.sin(ang);
+          // Freeze pursuit during the setup->impact window: a Rusher closing
+          // at 1.4x can cross BEHIND the swing arc on a loaded event loop,
+          // making the fan miss (P1.4-class timing flake).
+          sr.enemyStunUntil.set(e, Date.now() + 5000);
         });
         host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
         await waitFor(() => sr.state.matchState === 'intermission', 3000, 'finale clear');
@@ -420,6 +424,31 @@ const drainUpgradeCards = async (sr, ...clients) => {
     }
   } finally {
     SERVER.wave.finaleWave = prevFinale;
+  }
+}
+
+
+// --- Finale Boss: Warlord on the finale wave ----------------------------------
+{
+  const prevFinale = SERVER.wave.finaleWave;
+  SERVER.wave.finaleWave = 6; // NOT a multiple of 5: proves independence from elite cadence
+  try {
+    const host = await newRoom('Boss');
+    const sr = roomOf(host.r);
+    try {
+      sr.spawnWave(6);
+      const slot0 = sr.state.enemies[0];
+      assert.equal(slot0.elite, 'Warlord', 'finale wave fields the boss');
+      assert.equal(slot0.hp, Math.ceil(waveEnemyHp(6) * 3), 'boss hp composed');
+      // Non-finale waves keep normal rolls (wave 7 has no special).
+      sr.spawnWave(7);
+      assert.equal(sr.state.enemies[0].elite, '', 'wave after finale is clean');
+      host.r.leave();
+    } finally {
+      SERVER.wave.finaleWave = prevFinale;
+    }
+  } finally {
+    // newRoom already left; outer finally kept for symmetry
   }
 }
 
@@ -607,6 +636,26 @@ resetRateLimit();
     assert.equal(lroom.state.matchState, 'gameover', 'LOCAL: victory gameover');
     assert.equal(lroom.state.victory, true, 'LOCAL AC1: victory flag');
     lroom.leave();
+  } finally {
+    SERVER.wave.finaleWave = prevFinale;
+  }
+}
+
+// --- LOCAL parity: finale boss -------------------------------------------------
+{
+  const prevFinale = SERVER.wave.finaleWave;
+  SERVER.wave.finaleWave = 6;
+  try {
+    const lroom2 = new LocalRoom();
+    await lroom2.join('SoloBoss', 0);
+    lroom2._running = false;
+    lroom2._countdownTimer = 0;
+    lroom2._step(0.05);
+    lroom2._spawnWave(6);
+    assert.equal(lroom2.state.enemies[0].elite, 'Warlord', 'LOCAL: boss parity');
+    assert.equal(lroom2.state.enemies[0].hp,
+      Math.ceil(waveEnemyHp(6) * 3), 'LOCAL: boss hp parity');
+    lroom2.leave();
   } finally {
     SERVER.wave.finaleWave = prevFinale;
   }

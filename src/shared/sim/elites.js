@@ -25,6 +25,15 @@ export const ELITE_AFFIXES = [
   { name: 'Volatile', hpMul: 1.5,  speedMul: 1.0, knockbackImmune: false, vampiricPct: 0,   volatile: { radius: 3, damage: 25, fuseMs: 800 } },
 ];
 
+// FINALE BOSS ('Warlord'): registered in the lookup so combat hooks + client
+// render treat it like any affix, but deliberately OUTSIDE ELITE_AFFIXES so
+// affixForWave's rotation can never roll it. It exists solely for the finale
+// wave (see finaleBossFor) — the run's last stand gets a face.
+export const FINALE_BOSS_AFFIX = {
+  name: 'Warlord', hpMul: 3, speedMul: 1.15, knockbackImmune: true,
+  vampiricPct: 0.25, volatile: null,
+};
+
 export function isEliteWave(n) {
   return Number.isInteger(n) && n > 0 && n % ELITE_EVERY_N_WAVES === 0;
 }
@@ -36,7 +45,19 @@ export function affixForWave(n) {
 }
 
 export function affixByName(name) {
+  if (name === FINALE_BOSS_AFFIX.name) return FINALE_BOSS_AFFIX;
   return ELITE_AFFIXES.find(a => a.name === name) ?? null;
+}
+
+/**
+ * The finale wave's slot-0 boss tag ('Warlord'), or null on any other wave /
+ * when endless mode is configured (finaleWave <= 0). Supersedes a regular
+ * elite roll when the finale lands on an elite wave.
+ */
+export function finaleBossFor(n, finaleWave) {
+  return (Number.isInteger(finaleWave) && finaleWave > 0 && n === finaleWave)
+    ? FINALE_BOSS_AFFIX.name
+    : null;
 }
 
 // Marks an enemy-state-like object as elite. `baseMaxHp` is the wave's normal

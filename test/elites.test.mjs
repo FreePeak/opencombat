@@ -82,3 +82,35 @@ test('affixForWave agrees with isEliteWave for a long range', () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// FINALE BOSS (PRD-wave-finale follow-up): 'Warlord' — a boss-tier affix that
+// NEVER rolls in the regular rotation; it exists only for the finale wave so
+// the run's last stand has a face.
+// ---------------------------------------------------------------------------
+
+import {
+  finaleBossFor,
+} from '../src/shared/sim/elites.js';
+
+test('Warlord exists with boss-tier stats but is excluded from rotation', () => {
+  const warlord = affixByName('Warlord');
+  assert.ok(warlord, 'Warlord registered');
+  assert.equal(warlord.hpMul, 3);
+  assert.equal(warlord.knockbackImmune, true);
+  assert.equal(warlord.vampiricPct, 0.25);
+  // Rotation sweep: no regular elite wave ever hands out the boss.
+  for (let n = 1; n <= 200; n++) {
+    const a = affixForWave(n);
+    assert.notEqual(a, 'Warlord', `rotation leaked Warlord at wave ${n}`);
+  }
+});
+
+test('finaleBossFor: exact finale wave only', () => {
+  assert.equal(finaleBossFor(12, 12), 'Warlord');
+  assert.equal(finaleBossFor(11, 12), null);
+  assert.equal(finaleBossFor(13, 12), null);
+  assert.equal(finaleBossFor(10, 10), 'Warlord', 'supersedes a regular elite wave');
+  assert.equal(finaleBossFor(12, 0), null, 'endless mode has no boss');
+  assert.equal(finaleBossFor(12, undefined), null);
+});

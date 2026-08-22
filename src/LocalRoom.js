@@ -17,7 +17,7 @@ import { attackFor } from './shared/classes.js';
 // Elite affixes (PRD-elite-affixes.md): same pure table the server room
 // consumes — every Nth wave spawns slot 0 as an ELITE, affix chosen by wave
 // number so offline matches online without coordination.
-import { isEliteWave, affixForWave, applyElite, affixByName } from './shared/sim/elites.js';
+import { isEliteWave, affixForWave, applyElite, affixByName, finaleBossFor } from './shared/sim/elites.js';
 import { archetypeByName, markArchetypes,
   SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
   SHOOTER_KITE_SPEED_MUL } from './shared/sim/archetypes.js';
@@ -308,14 +308,21 @@ export class LocalRoom {
         enemy.elite = ''; // slots revive clean; re-marked below on elite waves
         enemy.archetype = ''; // archetype tags are re-stamped by markArchetypes
       });
-    if (isEliteWave(n)) {
+    // FINALE BOSS mirror of GameRoom (PRD parity).
+    const lboss = finaleBossFor(n, SERVER.wave.finaleWave);
+    if (lboss) {
+      const lbossAffix = applyElite(this.state.enemies[0], lboss,
+        waveEnemyHp(n));
+      if (lbossAffix) this._emitMessage('eliteSpawn', { name: lbossAffix.name });
+    } else if (isEliteWave(n)) {
       const affix = applyElite(this.state.enemies[0], affixForWave(n),
         waveEnemyHp(n));
       if (affix) this._emitMessage('eliteSpawn', { name: affix.name });
     }
     // ENEMY ARCHETYPES: same shared marker as GameRoom -> parity by construction.
     markArchetypes(this.state.enemies, n,
-      { liveCount: count, eliteWave: isEliteWave(n) });
+      { liveCount: count,
+        eliteWave: isEliteWave(n) || !!lboss }); // boss owns slot 0 too
     this.state.wave = n;
   }
 
