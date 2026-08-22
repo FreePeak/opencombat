@@ -125,6 +125,13 @@ export async function joinArena(name, character, mode = 'ffa', pve = false, roun
   return currentClient().joinOrCreate('arena', { name, character, mode, pve, roundsToWin }, WorldState);
 }
 
+/** Watch a live arena room by id (Arena Spectate): spectator:true means the
+ *  server grants NO player seat — state.players never contains our
+ *  sessionId; matchState/rounds/entities still sync for read-only viewing. */
+export async function spectateMatch(roomId, name) {
+  return currentClient().joinById(roomId, { spectator: true, name }, WorldState);
+}
+
 /** Consume a lobby seat reservation (the 'redirect' message payload) and
  * join the freshly minted arena room it points at. */
 export async function consumeReservation(reservation) {

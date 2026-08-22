@@ -227,6 +227,15 @@ export default class ArenaRoom extends Room {
   }
 
   onJoin(client, options = {}) {
+    // Spectator (PRD-arena-spectate.md): watch-only connection. No PlayerState
+    // seat, no capacity rejection (spectators allowed even when full), no team
+    // rebalance, no auto-start/auto-restart side effects — presence only.
+    if (options.spectator === true) {
+      registerPresence(client.sessionId,
+        { name: this.sanitizeName(options.name) + ' (spec)', mode: 'spectating', roomId: this.roomId });
+      this.logEvent('spectate_join', { sid: client.sessionId });
+      return;
+    }
     // Reconnect path: a player with a live seat rejoins — keep their
     // position/score/hp, just refresh the connection-scoped scratch state.
     let player = this.state.players.get(client.sessionId);
@@ -317,6 +326,10 @@ export default class ArenaRoom extends Room {
   onLeave(client, code = CloseCode.CONSENTED) {
     const sid = client.sessionId;
     removePresence(sid); // connection gone -> off /api/players (grace reconnect re-registers)
+    // Spectator (PRD-arena-spectate.md): no seat exists — presence removal is
+    // all that's needed. Skip seat cleanup / team rebalance / grace-reconnect
+    // paths that assume a player state existed.
+    if (!this.state.players.has(sid)) return;
     if (code === CloseCode.CONSENTED) {
       this.removePlayer(sid);
       return;

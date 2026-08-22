@@ -92,6 +92,25 @@
     #online-panel .join-btn:hover { filter: brightness(1.08); }
     #online-panel .join-btn:active { transform: translateY(1px); }
     #online-panel .join-btn:disabled { opacity: .45; cursor: default; filter: none; transform: none; }
+    /* SPECTATE pill on arena rows (PRD-arena-spectate): same family as
+       .join-btn but info-blue, so watching reads differently from joining. */
+    #online-panel .spectate-btn { flex: none; font: 600 10px var(--mono); letter-spacing: .08em;
+      padding: 3px 10px; border-radius: 999px; border: none; cursor: pointer;
+      background: linear-gradient(90deg, #0284c7, var(--info)); color: #062032;
+      box-shadow: 0 2px 8px rgba(56, 189, 248, 0.25); transition: filter .12s, transform .12s; }
+    #online-panel .spectate-btn:hover { filter: brightness(1.08); }
+    #online-panel .spectate-btn:active { transform: translateY(1px); }
+
+    /* Leave-spectate pill (right edge, in the gap between the leaderboard
+       and the online panel so it collides with neither). display:none until
+       GameScene flips it on while spectating. */
+    #spectate-leave { position: fixed; top: 158px; right: 14px; z-index: 11; display: none;
+      font: 600 10px var(--mono); letter-spacing: .08em; padding: 5px 12px;
+      border-radius: 999px; border: 1px solid rgba(248, 113, 113, 0.5); cursor: pointer;
+      background: var(--panel); color: var(--danger); backdrop-filter: blur(8px);
+      box-shadow: var(--shadow-1); transition: filter .12s, transform .12s; }
+    #spectate-leave:hover { filter: brightness(1.2); }
+    #spectate-leave:active { transform: translateY(1px); }
 
     #net-badge { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
       display: none; color: var(--gold); font: 11px var(--mono); letter-spacing: .06em;
@@ -286,6 +305,7 @@
     <ul id="live-matches"></ul>
   </div>
   <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
+  <button id="spectate-leave" type="button">✕ LEAVE SPECTATE</button>
   <div id="daily-results"></div>
   <div id="elite-toast"></div>
   <div id="streak-toast"></div>

@@ -24,7 +24,7 @@ import { MILESTONES } from '../shared/sim/streaks.js';
 import { achievementById, evaluateAchievements } from '../shared/sim/achievements.js';
 import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
-  joinWorld, joinLobby, sendQueue, consumeReservation } from '../network.js';
+  joinWorld, joinLobby, sendQueue, consumeReservation, spectateMatch } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { getUpgrade } from '../shared/progression.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
@@ -221,9 +221,17 @@ export default class GameScene {
     this._roomsInFlight = false;     // guard against overlapping fetches
     this._lastRoomsKey = '';         // last rendered payload signature
     this.liveMatchesEl?.addEventListener('click', (e) => {
+      // Arena rows carry a SPECTATE button (PRD-arena-spectate) — checked
+      // first so it can't fall through into the JOIN branch below.
+      const spec = e.target.closest('.spectate-btn');
+      if (spec && !spec.disabled) { this.spectateMatch(spec.dataset.roomId); return; }
       const btn = e.target.closest('.join-btn');
       if (btn && !btn.disabled) this.joinMatch(btn.dataset.mode);
     });
+    // Arena Spectate: fixed LEAVE pill, hidden until spectateMatch() shows it.
+    this.spectateLeaveEl = document.getElementById('spectate-leave');
+    this.spectateLeaveEl?.addEventListener('click', () => this.leaveSpectate());
+    this.spectating = false;         // read-only arena viewer (never set by normal joins)
     this.isArenaSession = false;     // are we in an arena (PvP) room?
 
     // One overlay serves three ends: death (respawn), wave cleared (next
@@ -447,8 +455,10 @@ export default class GameScene {
   /** Render [{ roomId, mode, players, phase, canJoin }] into #live-matches.
    *  Cheap: the DOM is only touched when the payload actually changed.
    *  Joinable rows get a JOIN button (handled by one delegated listener on
-   *  the UL); everything else renders muted with meta only. The server
-   *  already sorts rooms by players desc — the order is kept as-is. */
+   *  the UL); everything else renders muted with meta only — EXCEPT arena
+   *  rooms (PRD-arena-spectate): never joinable mid-match, always watchable,
+   *  so a SPECTATE button rides those rows whether canJoin is set or not.
+   *  The server already sorts rooms by players desc — the order is kept. */
   renderRooms(rooms) {
     if (!this.liveMatchesEl) return;
     const key = rooms ? JSON.stringify(rooms) : 'offline';
@@ -461,12 +471,17 @@ export default class GameScene {
     }
     this.liveMatchesEl.innerHTML = rooms.map((r) => {
       const meta = `${esc(r?.mode ?? '?')} · ${Number(r?.players) || 0}p`;
+      const spectateBtn = r?.mode === 'arena' && r?.roomId
+        ? `<button type="button" class="spectate-btn" data-room-id="${esc(r.roomId)}">SPECTATE</button>`
+        : '';
       if (!r?.canJoin) {
-        return `<li class="match-row muted"><span class="match-meta">${meta}</span></li>`;
+        return spectateBtn
+          ? `<li class="match-row"><span class="match-meta">${meta}</span>${spectateBtn}</li>`
+          : `<li class="match-row muted"><span class="match-meta">${meta}</span></li>`;
       }
       const mode = r.mode === 'daily' ? 'daily' : 'waves';
       return `<li class="match-row"><span class="match-meta">${meta}</span>` +
-        `<button type="button" class="join-btn" data-mode="${esc(mode)}">JOIN</button></li>`;
+        `<button type="button" class="join-btn" data-mode="${esc(mode)}">JOIN</button>${spectateBtn}</li>`;
     }).join('');
   }
 
@@ -654,6 +669,108 @@ export default class GameScene {
     this.adoptRoom(arena);
   }
 
+  // ==================== Arena Spectate (PRD-arena-spectate) ===============
+
+  /** Watch a live arena room straight from its LIVE MATCHES row. The server
+   *  grants NO player seat (state.players never holds our sessionId), so
+   *  every combatant renders through the remotePlayers path and the camera
+   *  follows the action instead of a local rig. Mirrors onJoinClick's
+   *  model/probe/error tail so the login card behaves identically when the
+   *  room vanished or the server dropped between listing and click. */
+  async spectateMatch(roomId) {
+    if (!roomId || this.room || this.joining || this.spectating) return;
+    this.joining = true;
+    try {
+      if (!this.models) {
+        this.models = await this.loadModels();
+        this.scatterProps();
+      }
+      document.getElementById('loading').style.display = 'none';
+      this.loginEl.classList.remove('visible');
+      this.loginError.style.display = 'none';
+      this.name = this.loginName.value.trim().slice(0, 16) || 'spectator';
+      localStorage.setItem('opengame.name', this.name);
+      // A typed server wins over the probed default (same rule as joins).
+      const rawServer = this.loginServer.value.trim();
+      if (rawServer && setServerUrl(rawServer) && CONFIG.serverUrl !== this.probedUrl) {
+        this.probedUrl = CONFIG.serverUrl;
+        this.serverOnline = serverAvailable();
+      }
+      await this.serverOnline;
+      // Clicking SPECTATE is a user gesture: unlock audio like a join does.
+      this.sound.init();
+      this.music ??= new MusicDirector({ sound: this.sound });
+      this.room = await spectateMatch(roomId, this.name);
+      this.spectating = true;
+      this.cameraRigged = false; // spectator rig snaps on its first frame
+      if (this.netBadge) {
+        this.netBadge.textContent = 'SPECTATING';
+        this.netBadge.style.display = 'block';
+      }
+      if (this.spectateLeaveEl) this.spectateLeaveEl.style.display = 'block';
+      // No match HUD without a seat — one static line replaces it instead.
+      this.hudText.textContent = 'spectating live match';
+      this.hudFill.style.width = '0%';
+      this.wireRoom(); // local-null-safe: no addPlayer for our sessionId
+    } catch (err) {
+      console.error(err);
+      this.loginError.textContent = joinErrorMessage(err);
+      this.loginError.style.display = 'block';
+      this.loginEl.classList.add('visible');
+    }
+    this.joining = false;
+  }
+
+  /** Spectator rig: follow the first remote player with the SAME third-
+   *  person constants as the local rig (CONFIG.player.camera via
+   *  cameraOffset/frameDamp); when nobody is on the field yet, orbit the
+   *  map center slowly until a target appears. */
+  updateSpectatorCamera(dt) {
+    const cfg = CONFIG.player.camera;
+    let target = null;
+    for (const rp of this.remotePlayers.values()) { target = rp.root.position; break; }
+    if (target) {
+      const off = cameraOffset(cfg.yaw, cfg.distance);
+      const desired = new THREE.Vector3(target.x + off.x, cfg.height, target.z + off.z);
+      if (!this.cameraRigged) { this.camera.position.copy(desired); this.cameraRigged = true; }
+      this.camera.position.lerp(desired, frameDamp(cfg.lerp, dt));
+      this.camera.lookAt(target);
+    } else {
+      const t = performance.now() / 1000;
+      const r = cfg.distance + 6;
+      this.camera.position.set(Math.cos(t * 0.12) * r, cfg.height, Math.sin(t * 0.12) * r);
+      this.camera.lookAt(0, 0, 0);
+      this.cameraRigged = false; // re-snap once someone spawns
+    }
+  }
+
+  /** Manual exit (fixed LEAVE pill): consented leave + full local reset. */
+  leaveSpectate() {
+    if (!this.spectating) return;
+    try { this.room?.leave(4000); } catch {}
+    this.endSpectate();
+  }
+
+  /** Tear down spectator state and return to the menu. Shared by the LEAVE
+   *  click and by wireRoom's onLeave (the match ending closes the room under
+   *  us); safe to run twice. */
+  endSpectate() {
+    this.spectating = false;
+    this.room = null;
+    this.cameraRigged = false;
+    this.disposeEntities();
+    this.lastHp = 100;
+    this.lastScore = 0;
+    this.leaderboardEl.innerHTML = '';
+    this.countdownEl.textContent = '';
+    if (this.netBadge) {
+      this.netBadge.textContent = 'OFFLINE — SOLO MODE (no game server)';
+      this.netBadge.style.display = 'none';
+    }
+    if (this.spectateLeaveEl) this.spectateLeaveEl.style.display = 'none';
+    this.loginEl.classList.add('visible');
+  }
+
   /** Swap the bounded-arena visuals for the open world (Phase 6): the
    * ChunkManager streams deterministic ground + props, the Minimap rides on
    * top. Both use the default world seed (1337), matching WorldRoom. */
@@ -821,8 +938,10 @@ export default class GameScene {
     });
     // CONSENTED (4000) = deliberate leave; anything else means the sdk's
     // automatic reconnection is not possible (room too young / retries
-    // exhausted) -> manual retry loop.
+    // exhausted) -> manual retry loop. Spectators have no seat to resume:
+    // a closed match just returns them to the menu.
     this.room.onLeave((code) => {
+      if (this.spectating) { this.endSpectate(); return; }
       if (code !== 4000) this.handleDisconnect();
       this.recordArenaSessionAllies();
     });
@@ -1432,6 +1551,11 @@ export default class GameScene {
       this.camera.lookAt(target);
 
       this.updateMatchUi(dt);
+    } else if (this.spectating && this.room) {
+      // Spectator (PRD-arena-spectate): no local rig, no match HUD, no
+      // input — just the follow/orbit camera. The remotePlayers/enemies/
+      // projectiles/nametags/leaderboard loops below run unchanged.
+      this.updateSpectatorCamera(dt);
     }
     for (const rp of this.remotePlayers.values()) {
       rp.update(dtWorld);
@@ -1525,7 +1649,7 @@ export default class GameScene {
         CONFIG.effects.speed.color, 2, 1.2, 0.4);
     }
 
-    this.touchControls?.update();
+    if (!this.spectating || this.local) this.touchControls?.update();
     // Hit-stop controller (PRD layer 2): while the freeze window is active,
     // FX/anim time is 0 — but ONLY for the cosmetic pools below. State
     // application, network messages, movement and state diffs above keep
