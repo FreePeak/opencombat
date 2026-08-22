@@ -125,7 +125,7 @@ The login screen has a mode picker next to the character roster:
 
 | Mode | Room | What it is |
 |------|------|------------|
-| Waves | `game` (GameRoom) | Default PvE arena survival — endless waves, orbs, power-ups; falls back to the browser-local solo sim when no server is reachable |
+| Waves | `game` (GameRoom) | PvE arena survival — waves with elites/bosses/archetypes and a co-op VICTORY finale (`wave.finaleWave`, 0 = endless); falls back to the browser-local solo sim when no server is reachable |
 | PvP Arena | `lobby` → `arena` | Queue in the lobby; matchmaking batches FFA players (2+) into a fresh ArenaRoom via seat reservation — rounds, first to 2 wins |
 | Open World | `world` (WorldRoom) | Infinite chunked world (seed 1337), level-scaled spawns, per-name JSON persistence; client streams deterministic chunks (radius 2) + minimap |
 
@@ -198,7 +198,7 @@ clients only render `matchState` + the countdown number.
 
 ## Power-ups
 
-Three types, rendered as pulsing glowing orbs; the server decides pickups
+Four types, rendered as pulsing glowing shapes; the server decides pickups
 and applies the timed effects, broadcasting the remaining duration in
 `PlayerState.effects` (name → ms). After a pickup the power-up hides and
 respawns elsewhere after `powerUps.respawnSeconds`.
@@ -208,6 +208,26 @@ respawns elsewhere after `powerUps.respawnSeconds`.
 | SPEED | 2x move speed, 5s | cyan trail particles |
 | SHIELD | blocks one enemy hit (consumed) | translucent bubble |
 | DOUBLE | 2x orb score, 10s | gold tint |
+| MAGNET | nearby orbs drift to you (charged kill-orbs included), 8s | violet horseshoe |
+
+## Gameplay systems (genre: bullet-heaven arena survival)
+
+- **Elites** — every 5th wave slot 0 is an ELITE carrying one affix
+  (Swift / Bulwark / Vampiric / Volatile — see `src/shared/sim/elites.js`);
+  toast announces it, killing pays double.
+- **Archetypes** — from wave 3, live slots carry deterministic tags:
+  RUSHER (fast/frail), TANK (slow/fat/knockback-resistant), and from wave 5
+  SHOOTER (keeps range, telegraphed arrows — red arrows are ENEMY fire).
+- **Kill drops** — every kill charges the nearest orb with its XP at the
+  corpse; charged orbs read GOLD and pay the stored XP on pickup
+  (`PRD-orb-drops.md`).
+- **Finale** — clearing wave `wave.finaleWave` (default 12; 0 = endless)
+  ends the run as a co-op VICTORY over the Warlord boss with a full-pool
+  SURGE last stand; daily/weekly gauntlets finalize streaks on victory too.
+- **Career stats** — runs/wins/bestWave persist per player name and show on
+  the results overlay.
+- **Daily & Weekly Gauntlets** — date/week-seeded modifiers, streak rewards,
+  leaderboards (`/api/daily`, `/api/weekly`).
 
 ## Combat
 
