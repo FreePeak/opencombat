@@ -29,3 +29,34 @@ Objective predicates (#2), ladder/grace (#3), cosmetics, cross-mode score unific
 ## Fan-out
 - A: weeklyRun.js + unit tests (I write)
 - B ∥ C: B server wiring + integration tests; C client card/subtitle/join routing
+
+---
+
+# ADDENDUM (Cycle 17): Objective-Based Weeklies
+
+## Problem
+Weeklies are score-only; multi-objective goals create mastery tiers (research: discovery → mastery → aspirational).
+
+## Solution
+Each week deterministically selects 2 OBJECTIVES from a fixed table, checked at every weekly finalize. Progress persists across attempts within the same week (partials kept — never wiped).
+
+## Objective table
+| id | desc | predicate(run {wave, score}) |
+|---|---|---|
+| wave_6 | Reach wave 6 | run.wave >= 6 |
+| wave_10 | Reach wave 10 | run.wave >= 10 |
+| score_800 | Score 800 in one run | run.score >= 800 |
+| score_2000 | Score 2000 in one run | run.score >= 2000 |
+
+Selection: `weeklyObjectives(weekKey)` → 2 distinct entries via LCG from weeklySeed.
+
+## Scope
+1. weeklyRun.js additions: WEEKLY_OBJECTIVES table, weeklyObjectives(weekKey), evaluateWeeklyObjectives(objectives, run) → [{id, done}].
+2. Finalize (weekly mode only): merge into player.weekly.objectives — per id keep `done` once true (sticky within the week); new week replaces wholesale.
+3. /api/weekly adds `objectives: [{id, description}]` (definitions for the week).
+4. Leaderboard rows add `objectivesDone` count.
+5. Client: weekly subtitle appends objective descriptions; results banner shows "OBJECTIVES n/2".
+6. Tests: selection determinism/distinctness; sticky-merge across attempts (attempt1 wave4 → wave_6 not done; attempt2 wave7 → done stays); new week resets; /api/weekly shape.
+
+## ACs
+AC1: objectives deterministic + 2 distinct. AC2: sticky merge semantics. AC3: endpoint+leaderboard shape. AC4: full gate green.
