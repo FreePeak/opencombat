@@ -396,9 +396,12 @@ const drainUpgradeCards = async (sr, ...clients) => {
       me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
       const clearWave = async () => {
         const alive = sr.state.enemies.filter((e) => e.hp > 0);
+        // Finale SURGE can field the whole pool: keep the fan inside the
+        // 60-degree melee cone regardless of count (spacing shrinks to fit).
+        const spacing = Math.min(0.3, 0.9 / Math.max(1, alive.length - 1));
         alive.forEach((e, i) => {
           e.hp = 1;
-          const ang = (i - (alive.length - 1) / 2) * 0.3;
+          const ang = (i - (alive.length - 1) / 2) * spacing;
           e.x = 1.8 * Math.cos(ang);
           e.z = 1.8 * Math.sin(ang);
           // Freeze pursuit during the setup->impact window: a Rusher closing
@@ -451,6 +454,11 @@ const drainUpgradeCards = async (sr, ...clients) => {
       const slot0 = sr.state.enemies[0];
       assert.equal(slot0.elite, 'Warlord', 'finale wave fields the boss');
       assert.equal(slot0.hp, Math.ceil(waveEnemyHp(6) * 3), 'boss hp composed');
+      // FINALE SURGE: the last stand deploys the ENTIRE pool, not the formula count.
+      assert.equal(
+        [...sr.state.enemies].filter((e) => e.hp > 0).length,
+        SERVER.enemy.pool,
+        'finale surge: every pool slot live');
       // Non-finale waves keep normal rolls (wave 7 has no special).
       sr.spawnWave(7);
       assert.equal(sr.state.enemies[0].elite, '', 'wave after finale is clean');
@@ -616,17 +624,26 @@ resetRateLimit();
 {
   const prevFinale = SERVER.wave.finaleWave;
   SERVER.wave.finaleWave = 1;
+  let lroomFinale = null;
   try {
-    const lroom = new LocalRoom();
+    const lroom = lroomFinale = new LocalRoom();
     await lroom.join('SoloFinale', 0);
     lroom._running = false;
     lroom._countdownTimer = 0;
     lroom._step(0.05);
     const lme = lroom.state.players.get(lroom.sessionId);
     lme.x = 0; lme.z = 0;
-    // Clear wave 1 (the finale here).
+    // Clear wave 1 (the finale here — SURGE fields the whole pool, so keep
+    // the fan inside the melee cone with adaptive spacing).
     const la = [...lroom.state.enemies].filter((e) => e.hp > 0);
-    la.forEach((e, i) => { e.hp = 1; const a2 = (i - (la.length - 1) / 2) * 0.3; e.x = 1.8 * Math.cos(a2); e.z = 1.8 * Math.sin(a2); });
+    const lsp = Math.min(0.3, 0.9 / Math.max(1, la.length - 1));
+    la.forEach((e, i) => {
+      e.hp = 1;
+      const a2 = (i - (la.length - 1) / 2) * lsp;
+      e.x = 1.8 * Math.cos(a2);
+      e.z = 1.8 * Math.sin(a2);
+      lroom._enemyStunUntil.set(e, performance.now() + 5000);
+    });
     lme.rotY = Math.PI / 2;
     lroom.send('input', { dirX: 0, dirZ: 0, attack: true, skill: false, anim: 'attack', block: false });
     lroom._step(0.05);
@@ -646,8 +663,10 @@ resetRateLimit();
     lroom._step(0.05);
     assert.equal(lroom.state.matchState, 'gameover', 'LOCAL: victory gameover');
     assert.equal(lroom.state.victory, true, 'LOCAL AC1: victory flag');
-    lroom.leave();
+  } catch (e) {
+    throw e;
   } finally {
+    try { lroomFinale?.leave(); } catch {}
     SERVER.wave.finaleWave = prevFinale;
   }
 }
@@ -664,6 +683,10 @@ resetRateLimit();
     lroom2._step(0.05);
     lroom2._spawnWave(6);
     assert.equal(lroom2.state.enemies[0].elite, 'Warlord', 'LOCAL: boss parity');
+    assert.equal(
+      [...lroom2.state.enemies].filter((e) => e.hp > 0).length,
+      SERVER.enemy.pool,
+      'LOCAL: finale surge parity');
     assert.equal(lroom2.state.enemies[0].hp,
       Math.ceil(waveEnemyHp(6) * 3), 'LOCAL: boss hp parity');
     lroom2.leave();

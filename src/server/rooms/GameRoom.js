@@ -337,6 +337,22 @@ export default class GameRoom extends Room {
         this.state.enemies[i].anim = 'idle';
       }
     }
+    // FINALE SURGE (PRD-wave-finale.md): the last stand deploys the ENTIRE
+    // pool regardless of the growth formula — placed away from players like
+    // daily bonus slots. Non-finale waves keep the formula count exactly.
+    if (SERVER.wave.finaleWave > 0 && n === SERVER.wave.finaleWave &&
+        spawned < this.state.enemies.length) {
+      const hazards2 = [...this.state.players.values()].filter((p) => p.hp > 0);
+      for (let i = spawned; i < this.state.enemies.length; i++) {
+        const pos = spawnAwayFromPlayers(hazards2, () => this.randomPos());
+        const e = this.state.enemies[i];
+        e.x = pos.x;
+        e.z = pos.z;
+        e.hp = effHp;
+        e.anim = 'idle';
+      }
+      spawned = this.state.enemies.length;
+    }
     this.waveBaseHp = effHp; // elite maxHp derives from the same base everyone got
     // ELITE AFFIXES (PRD-elite-affixes.md): every ELITE_EVERY_N_WAVES-th wave
     // marks slot 0 as the wave's ELITE (deterministic affix per wave number —

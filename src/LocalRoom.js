@@ -308,6 +308,19 @@ export class LocalRoom {
         enemy.elite = ''; // slots revive clean; re-marked below on elite waves
         enemy.archetype = ''; // archetype tags are re-stamped by markArchetypes
       });
+    // FINALE SURGE mirror of GameRoom: full-pool last stand.
+    if (SERVER.wave.finaleWave > 0 && n === SERVER.wave.finaleWave &&
+        count < this.state.enemies.length) {
+      const half = SERVER.world.size / 2;
+      for (let i = count; i < this.state.enemies.length; i++) {
+        const pos = randomInCircle(this._rng, half - 2);
+        const e = this.state.enemies[i];
+        e.x = pos.x;
+        e.z = pos.z;
+        e.hp = waveEnemyHp(n);
+        e.anim = 'idle';
+      }
+    }
     // FINALE BOSS mirror of GameRoom (PRD parity).
     const lboss = finaleBossFor(n, SERVER.wave.finaleWave);
     if (lboss) {
