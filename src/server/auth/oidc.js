@@ -17,6 +17,9 @@
 //   - GET /auth/logout : destroys the session, clears the cookie.
 //   - GET /api/me : {name, verified:true} for a live session, else
 //     {verified:false}.
+//   - GET /auth/join-token : {ticket} for the live session (single-use,
+//     60s TTL, bound to playerName) — Colyseus joins cannot read cookies, so
+//     the verified client passes it as a join option (PRD-name-guard.md).
 //
 // SECURITY (AC4): provider tokens NEVER leave this module's memory — no
 // id_token/access_token is ever serialized into a response; the browser only
@@ -55,7 +58,22 @@ const stash = new Map();
 // Live sessions: sessionId -> {sub, iss, playerName}.
 const sessions = new Map();
 
+// Join tickets (PRD-name-guard.md): playerName -> {ticket, expiresAt, used}.
+// One live ticket per bound name (a fresh mint replaces the previous one);
+// single-use, 60s TTL. Single process assumption, same as the maps above.
+const JOIN_TICKET_TTL_MS = 60 * 1000;
+const joinTickets = new Map();
+
+// Tests-only override of oidcEnabled(): null defers to env. Production paths
+// never touch this.
+let forcedEnabled = null;
+
+export function _setOidcEnabledForTests(value) {
+  forcedEnabled = typeof value === 'boolean' ? value : null;
+}
+
 export function oidcEnabled() {
+  if (forcedEnabled !== null) return forcedEnabled;
   return Boolean(process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID && process.env.OIDC_CLIENT_SECRET);
 }
 
@@ -107,6 +125,61 @@ function sweepStash() {
   for (const [key, entry] of stash) {
     if (entry.expiresAt <= now) stash.delete(key);
   }
+}
+
+function sweepJoinTickets() {
+  const now = Date.now();
+  for (const [name, entry] of joinTickets) {
+    if (entry.used || entry.expiresAt <= now) joinTickets.delete(name);
+  }
+}
+
+/** Mint a single-use, 60s join ticket bound to the session's playerName
+ *  (PRD-name-guard.md). Returns null when the session is unknown. */
+export function mintTicketForSession(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) return null;
+  sweepJoinTickets();
+  const ticket = crypto.randomBytes(32).toString('base64url');
+  joinTickets.set(session.playerName, {
+    ticket,
+    playerName: session.playerName,
+    expiresAt: Date.now() + JOIN_TICKET_TTL_MS,
+    used: false
+  });
+  return ticket;
+}
+
+/**
+ * Verified-name join guard (PRD-name-guard.md): every room calls this in
+ * onJoin before creating a seat. Enforcement is tied to the OIDC feature —
+ * with auth disabled (or for unbound names) behavior is byte-identical.
+ * A name whose persisted player file carries `oidcSub` rejects guest joins
+ * unless the join options carry that name's valid, unused, unexpired ticket.
+ * Mirrors how rooms reject full arenas (room-level throw from onJoin); the
+ * code 4103 lets the client surface a typed message via src/joinError.js.
+ */
+export function assertNameJoinable(name, options = {}) {
+  if (!oidcEnabled()) return; // guest-only deployments keep zero behavior change
+  const sanitized = sanitizeName(name);
+  const saved = loadPlayer(sanitized);
+  if (!saved?.oidcSub) return; // unbound names are never locked
+
+  sweepJoinTickets();
+  const entry = joinTickets.get(sanitized);
+  if (
+    entry && !entry.used && entry.expiresAt > Date.now() &&
+    entry.playerName === sanitized &&
+    typeof options.joinTicket === 'string' && options.joinTicket === entry.ticket
+  ) {
+    entry.used = true; // strictly single-use
+    log('join_ticket_used', { name: sanitized });
+    return;
+  }
+
+  const err = new Error('name locked by verified account');
+  err.code = 4103;
+  throw err;
 }
 
 /** Scan player files for an existing binding of `sub`; returns the owning
@@ -226,9 +299,27 @@ export function buildAuthRoutes(app) {
     if (session) return res.json({ name: session.playerName, verified: true });
     res.json({ verified: false });
   });
+
+  // --- Join ticket (PRD-name-guard.md) ---------------------------------------
+  // The verified page fetches this once per join attempt and passes
+  // { joinTicket } in the Colyseus join options (joins cannot read cookies).
+  app.get('/auth/join-token', (req, res) => {
+    const sessionId = getCookie(req, SESSION_COOKIE);
+    const ticket = sessionId ? mintTicketForSession(sessionId) : null;
+    if (!ticket) return res.status(401).json({ error: 'not authenticated' });
+    res.json({ ticket });
+  });
 }
 
 /** Tests-only: force-expire every pending stash entry. */
 export function _testExpireStashes() {
   for (const entry of stash.values()) entry.expiresAt = Date.now() - 1;
+}
+
+/** Tests-only: fabricate a live session for `playerName` and return its id,
+ *  so tests can mint real join tickets without driving the IdP flow. */
+export function _testSeedSession(playerName) {
+  const sessionId = crypto.randomBytes(16).toString('base64url');
+  sessions.set(sessionId, { sub: `sub-test-${playerName}`, iss: 'test', playerName });
+  return sessionId;
 }

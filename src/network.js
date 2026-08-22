@@ -57,14 +57,29 @@ export function serverAvailable(timeoutMs = 3000) {
  *  mode 'daily' targets the seeded Daily Gauntlet room ('daily'), 'weekly'
  *  the Weekly Gauntlet room ('weekly'); every other value keeps the classic
  *  arena room ('game'). */
-export async function joinGame(name, character, mode = 'waves') {
+export async function joinGame(name, character, mode = 'waves', joinTicket = null) {
   // rootSchema lets the client decode the binary state patches; without it
   // room.state stays undefined (schema-based serialization). The name, the
   // chosen character index and the mode ride the join options to the server,
-  // which sanitizes them into PlayerState / match setup.
+  // which sanitizes them into PlayerState / match setup. `joinTicket` is an
+  // optional single-use token for verified (OIDC) sessions playing under a
+  // bound name — ignored by guests and by servers with auth disabled.
   return currentClient().joinOrCreate(
     mode === 'daily' ? 'daily' : mode === 'weekly' ? 'weekly' : 'game',
-    { name, character, mode }, WorldState);
+    { name, character, mode, ...(joinTicket ? { joinTicket } : {}) }, WorldState);
+}
+
+/** Fetch a single-use join ticket for the current verified session, or null
+ *  for guests / feature-off / any failure. Cheap enough to call per join. */
+export async function fetchJoinTicket() {
+  try {
+    const base = CONFIG.serverUrl.replace(/^ws/i, 'http');
+    const res = await fetch(`${base}/auth/join-token`, { credentials: 'include' });
+    if (!res.ok) return null;
+    return (await res.json())?.ticket ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Re-join a dropped connection using the colyseus reconnection token. */
@@ -105,8 +120,9 @@ export function sendChooseShop(room, choice) {
 }
 
 /** Join the open world (Phase 6) — infinite chunked world with persistence. */
-export async function joinWorld(name, character) {
-  return currentClient().joinOrCreate('world', { name, character }, WorldState);
+export async function joinWorld(name, character, joinTicket = null) {
+  return currentClient().joinOrCreate('world',
+    { name, character, ...(joinTicket ? { joinTicket } : {}) }, WorldState);
 }
 
 /** Join the lobby for PvP arena matchmaking (Phase 5). */
@@ -121,8 +137,9 @@ export function sendQueue(room, mode, pve = false, roundsToWin = 2) {
 }
 
 /** Join an arena directly (bypass lobby) — for testing / direct connect. */
-export async function joinArena(name, character, mode = 'ffa', pve = false, roundsToWin = 2) {
-  return currentClient().joinOrCreate('arena', { name, character, mode, pve, roundsToWin }, WorldState);
+export async function joinArena(name, character, mode = 'ffa', pve = false, roundsToWin = 2, joinTicket = null) {
+  return currentClient().joinOrCreate('arena',
+    { name, character, mode, pve, roundsToWin, ...(joinTicket ? { joinTicket } : {}) }, WorldState);
 }
 
 /** Watch a live arena room by id (Arena Spectate): spectator:true means the

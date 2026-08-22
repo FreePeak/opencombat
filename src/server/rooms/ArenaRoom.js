@@ -32,6 +32,8 @@ import { sanitizeMode, sanitizePve, sanitizeRoundsToWin, assignTeams, roundWinne
 import { newStreakState, registerKill, resetSid, resetAll } from '../../shared/sim/streaks.js';
 // Presence panel (PRD-presence.md): cross-room live population registry.
 import { registerPresence, removePresence } from '../presence.js';
+// Verified-name join guard (PRD-name-guard.md): no-op unless OIDC is enabled.
+import { assertNameJoinable } from '../auth/oidc.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -242,6 +244,11 @@ export default class ArenaRoom extends Room {
     if (player) {
       this.logEvent('player_reconnect', { sid: client.sessionId, name: player.name });
     } else {
+      // Verified-name join guard (PRD-name-guard.md): a guest cannot claim a
+      // name whose persisted file carries oidcSub without a single-use join
+      // ticket. No-op when OIDC auth is disabled. Spectators bypass (no seat,
+      // no save) and reconnects skip — their seat already passed the gate.
+      assertNameJoinable(options.name, options);
       // Enforce per-mode maxPlayers: reject if room already full for this mode
       const maxForMode = maxPlayersForMode(this.arenaMode);
       if (this.state.players.size >= maxForMode) {

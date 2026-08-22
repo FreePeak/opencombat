@@ -68,6 +68,8 @@ import { utcWeekKey, weeklySeed, weeklyModifiers, weeklyRewardXp, mergeWeekly } 
 import { loadPlayer, savePlayerDebounced } from '../persistence.js';
 // Presence panel (PRD-presence.md): cross-room live population registry.
 import { registerPresence, removePresence } from '../presence.js';
+// Verified-name join guard (PRD-name-guard.md): no-op unless OIDC is enabled.
+import { assertNameJoinable } from '../auth/oidc.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -450,6 +452,11 @@ export default class GameRoom extends Room {
     if (player) {
       this.logEvent('player_reconnect', { sid: client.sessionId, name: player.name });
     } else {
+      // Verified-name join guard (PRD-name-guard.md): a guest cannot claim a
+      // name whose persisted file carries oidcSub without a single-use join
+      // ticket. No-op when OIDC auth is disabled. Reconnects skip this —
+      // their seat already passed the gate.
+      assertNameJoinable(options.name, options);
       const name = this.sanitizeName(options.name);
       const p = this.randomPos();
       player = new PlayerState(p.x, p.z);

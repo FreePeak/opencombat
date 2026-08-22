@@ -26,7 +26,7 @@ import { waveEnemyHp } from '../shared/waves.js';
 import { achievementById, evaluateAchievements } from '../shared/sim/achievements.js';
 import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
-  joinWorld, joinLobby, sendQueue, consumeReservation, spectateMatch } from '../network.js';
+  joinWorld, joinLobby, sendQueue, consumeReservation, spectateMatch, fetchJoinTicket } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
 import { getUpgrade } from '../shared/progression.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
@@ -440,8 +440,16 @@ export default class GameScene {
         verified = (await res.json())?.verified === true;
       }
     } catch { /* unreachable / static hosting: stay guest-only */ }
+    this.verifiedSession = featureOn && verified;
     this.setVerifiedBadge(featureOn && verified);
     this.setSsoLoginVisible(featureOn);
+  }
+
+  /** Single-use join ticket for verified sessions (PRD-name-guard.md).
+   *  Guests / feature-off / failures yield null — joins stay unchanged. */
+  async ticketForJoin() {
+    if (!this.verifiedSession) return null;
+    return fetchJoinTicket();
   }
 
   /** IdP round trip returns to /?login=ok: re-read /api/me now that the
@@ -697,11 +705,11 @@ export default class GameScene {
         await this.joinPvpLobby(); // resolves once the arena room is adopted
       } else if (this.mode === 'world') {
         this.enterWorldVisuals();
-        this.adoptRoom(await joinWorld(this.name, this.character));
+        this.adoptRoom(await joinWorld(this.name, this.character, await this.ticketForJoin()));
       } else if (online) {
         // Waves/Daily/Weekly share the hosted path — joinGame routes the
         // gauntlet modes to their seeded rooms; waves keeps the classic arena.
-        this.adoptRoom(await joinGame(this.name, this.character, this.mode));
+        this.adoptRoom(await joinGame(this.name, this.character, this.mode, await this.ticketForJoin()));
       } else {
         // No server (static hosting, host offline): same wire-up, but the
         // room is a browser-local simulation — single-player only. Daily
@@ -1096,7 +1104,7 @@ export default class GameScene {
           // daily room; every other mode keeps its previous behavior.
           this.isArenaSession = false; // joinGame is never an arena room
           this.room = await joinGame(this.name, this.character,
-            this.mode === 'daily' ? 'daily' : undefined);
+            this.mode === 'daily' ? 'daily' : undefined, await this.ticketForJoin());
           this.reconnectEl.classList.remove('visible');
           this.wireRoom();
           console.log('[client] re-joined fresh');
