@@ -348,6 +348,26 @@ const drainUpgradeCards = async (sr, ...clients) => {
     assert.equal(shot.damage, SERVER.enemy.shotDamage, 'shot carries shotDamage');
     assert.equal(shot.kind, 'arrow', 'client renders it via generic arrow config');
     assert.ok(sr.state.projectiles.length >= before, 'pooled into state.projectiles');
+
+    // FAIRNESS: a guarding player facing the shooter blocks its arrow —
+    // zero HP loss + blocked feedback, same contract as melee/PvP blocks.
+    // ISOLATION: park+freeze every OTHER enemy so no melee noise contaminates
+    // the hp assertion (wave 5 carries an elite + rushers).
+    let blockedMsgs = 0;
+    host.r.onMessage('blocked', () => { blockedMsgs++; });
+    sr.state.enemies.forEach((e) => {
+      if (e !== sh) { e.x = 40; e.z = 40; sr.enemyStunUntil.set(e, Date.now() + 15000); }
+    });
+    me.rotY = Math.atan2(sh.x - me.x, sh.z - me.z); // face the shooter
+    me.blocking = true;
+    const hpAtBlock = me.hp;
+    // Soak until a volley demonstrably reaches the guard (impact -> blocked
+    // feedback) — volleys are periodic, so poll rather than sample.
+    await waitFor(() => blockedMsgs > 0, 6000,
+      'shooter arrow reached the guard (blocked fired)');
+    assert.equal(me.hp, hpAtBlock,
+      'guard holds: zero HP lost to enemy arrows while facing the source');
+    me.blocking = false;
   } finally {
     host.r.leave();
   }
