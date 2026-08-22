@@ -182,7 +182,7 @@
       font: 11px var(--mono); color: var(--muted); letter-spacing: .04em; }
 
     /* ============ daily gauntlet result banner ============ */
-    #daily-results { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 16;
+    #daily-results { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 23; /* above gameover(20)/upgrade(22): streak lines must stay readable on victory */
       display: none; background: var(--panel); border: 1px solid rgba(251, 191, 36, 0.4);
       border-radius: var(--radius-l); padding: 10px 18px; box-shadow: var(--shadow-1);
       backdrop-filter: blur(8px); font: 12px/1.7 var(--mono); color: var(--muted);
