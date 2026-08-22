@@ -48,6 +48,25 @@ const newRoom = async (name) => {
 };
 const roomOf = (r) => [...GameRoom.instances].find((x) => x.roomId === r.roomId);
 const aliveCount = (state) => state.enemies.filter((e) => e.hp > 0).length;
+// Kill-drop XP (PRD-orb-drops.md) makes wave clears cross level thresholds
+// more often -> level-up cards open the D7 pause wall and freeze the next
+// countdown until picked. The wall is GLOBAL across players and every client
+// must pick its OWN card (onChooseUpgrade binds to the sender's session), so
+// drain everyone present.
+const drainUpgradeCards = async (sr, ...clients) => {
+  for (let i = 0; i < 24; i++) {
+    let picked = false;
+    for (const c of clients) {
+      const p = sr.state.players.get(c.sessionId);
+      if (p && p.pendingChoices.length > 0) {
+        c.send('chooseUpgrade', { choice: p.pendingChoices[0] });
+        picked = true;
+      }
+    }
+    if (!picked) break;
+    await waitMs(80);
+  }
+};
 
 // --- Wave 1 shape ------------------------------------------------------------
 {
@@ -98,6 +117,7 @@ const aliveCount = (state) => state.enemies.filter((e) => e.hp > 0).length;
   assert.notEqual(sr.state.matchState, 'playing', 'intermission does not auto-advance');
 
   // nextWave click -> countdown -> playing with a bigger wave.
+  await drainUpgradeCards(sr, host.r, r2); // ANY player's card walls the sim
   host.r.send('nextWave');
   await waitFor(() => sr.state.matchState === 'countdown', 1000, 'countdown after nextWave');
   await waitFor(() => sr.state.matchState === 'playing', 5000, 'playing after wave countdown');
@@ -133,7 +153,9 @@ const aliveCount = (state) => state.enemies.filter((e) => e.hp > 0).length;
   assert.equal(me.hp, hpAtHit, 'stunned enemy deals no contact damage');
   assert.equal(enemy.anim, 'hit', 'stunned enemy plays the hit react');
   // After the stun it resumes the chase (converging on the new position).
-  await waitFor(() => Math.hypot(enemy.x - me.x, enemy.z - me.z) < 10, 5000, 'chase resumed after stun');
+  // Budget 10s: full-suite runs share the event loop with peer sessions and
+  // starve ticks below the old 5s (P1.4-class flake).
+  await waitFor(() => Math.hypot(enemy.x - me.x, enemy.z - me.z) < 10, 10000, 'chase resumed after stun');
   host.r.leave();
 }
 
@@ -228,6 +250,72 @@ const aliveCount = (state) => state.enemies.filter((e) => e.hp > 0).length;
   }
 }
 
+// --- Kill-drop XP orbs (PRD-orb-drops.md) ------------------------------------
+{
+  const host = await newRoom('OrbDrops');
+  const sr = roomOf(host.r);
+  try {
+    const me = sr.state.players.get(host.r.sessionId);
+    me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
+
+    const alive = sr.state.enemies.filter((e) => e.hp > 0);
+    alive.forEach((e, i) => {
+      e.hp = 1;
+      const ang = (i - (alive.length - 1) / 2) * 0.3;
+      e.x = 1.8 * Math.cos(ang);
+      e.z = 1.8 * Math.sin(ang);
+    });
+    host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+    await waitFor(() => sr.state.matchState === 'intermission', 3000,
+      'intermission after orb-drop clear');
+
+    // AC1: every credited kill charged a distinct orb; wave-1 crosses no
+    // level threshold so there are exactly `alive.length` charges.
+    assert.equal(sr.orbCharges.size, alive.length,
+      'each kill charged one orb');
+    for (const amount of sr.orbCharges.values()) {
+      assert.equal(amount, SERVER.progression?.xpPerKill ?? 30,
+        'plain kills charge xpPerKill');
+    }
+    // Charged orbs sit on corpse positions (post-knockback).
+    const corpseSpots = new Set(sr.state.enemies.filter((e) => e.hp <= 0)
+      .map((e) => `${e.x.toFixed(4)},${e.z.toFixed(4)}`));
+    for (const orb of sr.orbCharges.keys()) {
+      assert.ok(corpseSpots.has(`${orb.x.toFixed(4)},${orb.z.toFixed(4)}`),
+        'charged orb teleported to its corpse');
+    }
+
+    // Collection drains charges and pays them beyond the base payout.
+    // Standing on one corpse-fan spot may collect SEVERAL orbs in one tick —
+    // account per-orb: every drained orb pays base score + its stored XP.
+    const beforeSize = sr.orbCharges.size;
+    let chargeSum = 0;
+    for (const v of sr.orbCharges.values()) chargeSum += v;
+    const target = [...sr.orbCharges.keys()][0];
+    const xpBefore = me.xp;
+    const scoreBefore = me.score;
+    me.x = target.x;
+    me.z = target.z;
+    await waitFor(() => sr.orbCharges.size < beforeSize, 3000,
+      'charged orb collected');
+    await waitMs(150); // let same-tick neighbor pickups resolve too
+    const collected = beforeSize - sr.orbCharges.size;
+    assert.ok(collected >= 1, 'at least the targeted orb drained');
+    assert.equal(me.score - scoreBefore, collected * SERVER.orb.score,
+      'each drained orb paid base score exactly once');
+    assert.equal(me.xp - xpBefore,
+      collected * (SERVER.progression?.xpPerOrb ?? 20) + chargeSum - remainderChargeSum(sr),
+      'XP = base per orb + all drained charges');
+      function remainderChargeSum(sr2) {
+        let sum = 0;
+        for (const v of sr2.orbCharges.values()) sum += v;
+        return sum;
+      }
+  } finally {
+    host.r.leave();
+  }
+}
+
 await gameServer.gracefullyShutdown(false);
 httpServer.closeAllConnections();
 await new Promise((res) => httpServer.close(res));
@@ -318,6 +406,18 @@ resetRateLimit();
   }
   assert.equal(room.state.matchState, 'intermission', 'LOCAL: intermission reached');
   assert.equal(lme.pendingChoices.length, 0, 'LOCAL: cards drained');
+
+  // AC5 parity: credited kills left identical charge values to GameRoom's
+  // rule — every plain kill charges xpPerKill at its corpse. NOTE: count
+  // CREDITED kills (waves spawned 3+4, all cleared), not hp<=0 slots — the
+  // fixed pool keeps never-alive slots at hp 0 without any kill.
+  assert.equal(room._orbCharges.size,
+    waveEnemyCount(1) + waveEnemyCount(2),
+    'LOCAL: one charge per credited kill');
+  for (const amount of room._orbCharges.values()) {
+    assert.equal(amount, SERVER.progression?.xpPerKill ?? 30,
+      'LOCAL: charge value matches the shared rule');
+  }
 
   room.send('nextWave');
   assert.equal(room.state.matchState, 'countdown', 'LOCAL: countdown to wave 3');

@@ -21,6 +21,8 @@ import { createLiveReload } from './liveReload.js';
 // Daily Gauntlet public API: date/seed/modifier math from the shared module,
 // streak reward table derived from the same source of truth.
 import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp } from '../shared/sim/dailyRun.js';
+// Presence panel (PRD-presence.md): merged view of the live population registry.
+import { listPresence, presenceCount } from './presence.js';
 
 // XP rewarded per consecutive-day streak length (day 1..7, capped).
 const DAILY_REWARDS = [1, 2, 3, 4, 5, 6, 7].map(streakRewardXp);
@@ -223,6 +225,16 @@ export function buildHttpApp(app) {
       },
       rewards: DAILY_REWARDS,
       leaderboard: leaderboard.slice(0, 10),
+    });
+  });
+
+  // --- Online Now (PRD-presence.md): live population across ALL room types,
+  // straight from the presence registry (authoritative). Registered BEFORE
+  // the catch-all below.
+  app.get('/api/players', (_req, res) => {
+    res.json({
+      count: presenceCount(),
+      players: listPresence().map(({ name, mode }) => ({ name, mode })),
     });
   });
 

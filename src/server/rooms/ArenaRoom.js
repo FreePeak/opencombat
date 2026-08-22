@@ -30,6 +30,8 @@ import { sanitizeMode, sanitizePve, sanitizeRoundsToWin, assignTeams, roundWinne
 // Kill streaks (PRD-kill-streaks.md): same pure module GameRoom/LocalRoom use —
 // PvP kills feed per-player streaks, announced ONLY at MILESTONES counts.
 import { newStreakState, registerKill, resetSid, resetAll } from '../../shared/sim/streaks.js';
+// Presence panel (PRD-presence.md): cross-room live population registry.
+import { registerPresence, removePresence } from '../presence.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -262,6 +264,11 @@ export default class ArenaRoom extends Room {
     clearTimeout(this.graceTimers.get(client.sessionId));
     this.graceTimers.delete(client.sessionId);
 
+    // Presence panel (PRD-presence.md): name from options / PlayerState
+    // (redirected lobby players keep their queued name via reserveSeatFor).
+    registerPresence(client.sessionId,
+      { name: player.name, mode: 'arena', roomId: this.roomId });
+
     // Assign teams (recompute for all players on every join, deterministic by join order)
     this.assignArenaTeams();
 
@@ -309,6 +316,7 @@ export default class ArenaRoom extends Room {
   // the same PlayerState (position/score/hp survive — no reload).
   onLeave(client, code = CloseCode.CONSENTED) {
     const sid = client.sessionId;
+    removePresence(sid); // connection gone -> off /api/players (grace reconnect re-registers)
     if (code === CloseCode.CONSENTED) {
       this.removePlayer(sid);
       return;
@@ -343,6 +351,7 @@ export default class ArenaRoom extends Room {
   }
 
   onDispose() {
+    for (const sid of this.state.players.keys()) removePresence(sid); // error-path cleanup
     ArenaRoom.instances.delete(this);
     this.logEvent('room_dispose');
   }

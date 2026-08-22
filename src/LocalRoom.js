@@ -19,6 +19,7 @@ import { attackFor } from './shared/classes.js';
 // number so offline matches online without coordination.
 import { isEliteWave, affixForWave, applyElite, affixByName } from './shared/sim/elites.js';
 import { archetypeByName, markArchetypes } from './shared/sim/archetypes.js';
+import * as orbDrops from './shared/sim/orbDrops.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
 // server room uses; clock/emit hooks below keep offline behavior identical.
 // Slice 2 moved D5 enemy-hit + D4 burn DoT (combatBook) and D3 shop effects
@@ -89,6 +90,7 @@ export class LocalRoom {
     // Kill-streak scratch (PRD-kill-streaks.md): sid -> { count, lastAt },
     // mirrors GameRoom.streaks so payloads stay byte-equal across modes.
     this.streaks = newStreakState();
+    this._orbCharges = new Map(); // orb -> stored kill-XP (PRD-orb-drops.md)
     this.simCombat = {
       state: this.state,
       half: SERVER.world.size / 2,
@@ -99,6 +101,8 @@ export class LocalRoom {
       activeBurns: this._activeBurns,
       volatilePending: this._volatilePending,
       now: () => performance.now(),
+      dropOrb: (x, z, amount) =>
+        orbDrops.chargeForKill(this.state.orbs, this._orbCharges, x, z, amount),
       grantXp: (_sid, amount) =>
         leveling.grantXp(this.simLeveling, this.sessionId, amount), // single local player
       damagePlayer: (_sid, victim, amount, srcX, srcZ) =>
@@ -560,7 +564,11 @@ export class LocalRoom {
           let score = SERVER.orb.score;
           if (p.effects.has('double')) score *= 2;
           p.score += score;
-          if (p === this.state.players.get(this.sessionId)) this._grantXp(SERVER.progression?.xpPerOrb ?? 20);
+          if (p === this.state.players.get(this.sessionId)) {
+            this._grantXp(SERVER.progression?.xpPerOrb ?? 20);
+            const lcharge = orbDrops.drainCharge(this._orbCharges, orb);
+            if (lcharge > 0) this._grantXp(lcharge);
+          }
           // Respawn orb
           const pos = randomInCircle(this._rng, half - 2);
           orb.x = pos.x;
@@ -832,6 +840,7 @@ export class LocalRoom {
       onResetTransient: () => { this._pendingStrikes = []; this._volatilePending.clear(); },
     });
     resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
+    orbDrops.clearCharges(this._orbCharges); // fresh match = plain orbs
     this._notifyStateChange();
   }
 

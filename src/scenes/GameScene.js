@@ -197,6 +197,13 @@ export default class GameScene {
     // Kill-streak milestone toast ('killStreak' broadcast / LocalRoom emit).
     this.streakToastEl = document.getElementById('streak-toast');
     this.streakToastEl?.addEventListener('click', () => this.hideStreakToast());
+    // Presence panel (PRD-presence.md): Online Now list + Recent Allies.
+    this.onlineCountEl = document.getElementById('online-count');
+    this.onlineListEl = document.getElementById('online-list');
+    this.recentAlliesEl = document.getElementById('recent-allies');
+    this._presenceInFlight = false;  // guard against overlapping fetches
+    this._lastPresenceKey = '';      // last rendered payload signature
+    this.isArenaSession = false;     // are we in an arena (PvP) room?
 
     // One overlay serves three ends: death (respawn), wave cleared (next
     // wave) and match end (again). Priority in that order on click.
@@ -256,6 +263,11 @@ export default class GameScene {
     this.loginBtn.addEventListener('click', () => this.onJoinClick());
     this.loginName.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
     this.loginServer.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
+    // Presence panel runs from boot in every mode — liveliness is the point
+    // (PRD-presence.md), including while the player is still on the login
+    // screen. Recent Allies render once here and again after each record.
+    this.renderRecentAllies();
+    this.startPresencePoller();
   }
 
   /** Game-mode cards on the login screen (MODES drives it). The Daily card
@@ -306,6 +318,93 @@ export default class GameScene {
     }
   }
 
+  // ===================== Presence panel (PRD-presence.md) =================
+
+  /** Poll GET /api/players every 5s against the same host as the daily API
+   *  and render the Online Now list. Runs from boot in every mode; any
+   *  failure flips the panel to its OFFLINE state instead of throwing. */
+  startPresencePoller() {
+    this.pollPresence(); // first paint without waiting a full interval
+    this._presenceTimer = setInterval(() => this.pollPresence(), 5000);
+  }
+
+  async pollPresence() {
+    if (!this.onlineListEl || this._presenceInFlight) return;
+    this._presenceInFlight = true;
+    try {
+      // CONFIG.serverUrl is ws(s)://… — same ws->http derivation as above.
+      const httpBase = CONFIG.serverUrl.replace(/^ws/i, 'http');
+      const res = await fetch(`${httpBase}/api/players`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this.renderPresence(data);
+    } catch {
+      this.renderPresence(null);
+    } finally {
+      this._presenceInFlight = false;
+    }
+  }
+
+  /** Render { count, players: [{name, mode}] } into #online-panel. Cheap:
+   *  the DOM is only touched when the payload actually changed. */
+  renderPresence(data) {
+    if (!this.onlineListEl || !this.onlineCountEl) return;
+    const key = data ? JSON.stringify(data.players ?? null) : 'offline';
+    if (key === this._lastPresenceKey) return;
+    this._lastPresenceKey = key;
+    if (!data || !Array.isArray(data.players)) {
+      this.onlineCountEl.textContent = 'ONLINE —';
+      this.onlineListEl.innerHTML = '<li class="presence-offline">OFFLINE</li>';
+      return;
+    }
+    this.onlineCountEl.textContent = `ONLINE ${data.count ?? data.players.length}`;
+    this.onlineListEl.innerHTML = data.players.map((p) =>
+      `<li class="presence-row"><span class="dot mode-${esc(p?.mode ?? 'idle')}"></span>${esc(p?.name ?? '???')}</li>`
+    ).join('');
+  }
+
+  /** Recent Allies: localStorage memory of arena co-participants —
+   *  [{name, lastSeenAt}] deduped by name (move-to-front), capped at 20. */
+  loadRecentAllies() {
+    try {
+      const list = JSON.parse(localStorage.getItem('opengame.recentAllies') ?? '[]');
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  recordRecentAlly(name) {
+    try {
+      const n = String(name ?? '').trim().slice(0, 16);
+      if (!n || n === this.name) return;
+      const rest = this.loadRecentAllies().filter((a) => a && a.name !== n);
+      const list = [{ name: n, lastSeenAt: Date.now() }, ...rest].slice(0, 20);
+      localStorage.setItem('opengame.recentAllies', JSON.stringify(list));
+      this.renderRecentAllies();
+    } catch {} // storage disabled / quota errors must never break gameplay
+  }
+
+  /** Static section under the Online Now panel; renders on boot and after
+   *  each record. Shows a muted placeholder when empty. */
+  renderRecentAllies() {
+    if (!this.recentAlliesEl) return;
+    const ago = (ms) => {
+      if (!ms) return '';
+      const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+      if (s < 60) return 'now';
+      if (s < 3600) return `${Math.floor(s / 60)}m`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h`;
+      return `${Math.floor(s / 86400)}d`;
+    };
+    this.recentAlliesEl.innerHTML =
+      this.loadRecentAllies()
+        .filter((a) => a && a.name)
+        .map((a) =>
+          `<li class="ally-row"><span>${esc(a.name)}</span><span class="ally-time">${ago(Number(a.lastSeenAt))}</span></li>`
+        ).join('') || '<li class="presence-offline">none yet</li>';
+  }
+
   /** Character cards on the login screen (CONFIG.characters drives it). */
   buildCharacterPicker() {
     const picker = document.getElementById('char-picker');
@@ -333,6 +432,7 @@ export default class GameScene {
     // First user gesture: unlock audio (browser requirement) + start pad.
     this.sound.init();
     try {
+      this.isArenaSession = false; // re-decided below if this join is PvP
       if (!this.models) {
         this.models = await this.loadModels();
         this.scatterProps();
@@ -412,7 +512,9 @@ export default class GameScene {
     });
     // Deliberate leave (CONSENTED): the reserved arena seat replaces it.
     lobby.leave(4000);
-    this.adoptRoom(await consumeReservation(reservation));
+    const arena = await consumeReservation(reservation);
+    this.isArenaSession = true;
+    this.adoptRoom(arena);
   }
 
   /** Swap the bounded-arena visuals for the open world (Phase 6): the
@@ -559,7 +661,23 @@ export default class GameScene {
     // exhausted) -> manual retry loop.
     this.room.onLeave((code) => {
       if (code !== 4000) this.handleDisconnect();
+      this.recordArenaSessionAllies();
     });
+  }
+
+  /** Recent Allies hook (PRD-presence.md): no server message lists arena
+   *  participants today, so when an ARENA session ends we snapshot the
+   *  other names straight off room.state.players. Defensive end to end:
+   *  leaving a room must never throw, even mid-disconnect. */
+  recordArenaSessionAllies() {
+    try {
+      if (this.isArenaSession && this.room?.state?.players) {
+        for (const p of this.room.state.players.values()) {
+          if (p?.name) this.recordRecentAlly(p.name);
+        }
+      }
+    } catch {}
+    this.isArenaSession = false; // the next join decides the new mode
   }
 
   handleDisconnect() {
@@ -591,6 +709,7 @@ export default class GameScene {
         try {
           // Fresh join after reconnect: daily players land back in the seeded
           // daily room; every other mode keeps its previous behavior.
+          this.isArenaSession = false; // joinGame is never an arena room
           this.room = await joinGame(this.name, this.character,
             this.mode === 'daily' ? 'daily' : undefined);
           this.reconnectEl.classList.remove('visible');

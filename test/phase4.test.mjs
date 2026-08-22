@@ -215,7 +215,15 @@ const newRoom = async (name, character = 0) => {
   sr.hitEnemy(enemy, ehp, p().x, p().z, p());
   await waitMs(100);
   assert.equal(enemy.hp, 0, 'kill succeeded');
-  assert.ok(p().xp > xpAfterOrb, `kill gave XP (${xpAfterOrb} -> ${p().xp})`);
+  // Kill XP rides a charged orb at the corpse now (PRD-orb-drops.md):
+  // deliver it by ticking pickups with the player on the drop site.
+  const chargedOrb = [...sr.orbCharges.keys()][0];
+  assert.ok(chargedOrb, 'kill charged an orb');
+  p().x = chargedOrb.x;
+  p().z = chargedOrb.z;
+  sr.updatePickups(0.05);
+  await waitMs(100);
+  assert.ok(p().xp > xpAfterOrb, `kill gave XP via charge pickup (${xpAfterOrb} -> ${p().xp})`);
 
   // Scholar bonus: grant vitality's scholar? Actually scholar is separate.
   // Set scholar stack and verify next grant is boosted

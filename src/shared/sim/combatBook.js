@@ -40,6 +40,7 @@ import { SERVER } from '../../server/config.js';
 import { strikeEnemy } from '../combat.js';
 import { affixByName } from './elites.js';
 import { archetypeByName } from './archetypes.js';
+import * as orbDrops from './orbDrops.js';
 
 /**
  * Apply one hit of `damage` to a LIVING enemy from (srcX, srcZ): knockback +
@@ -66,7 +67,7 @@ export function resolveEnemyHit(ctx, enemy, damage, srcX, srcZ, killerSid = null
     const killer = killerSid != null ? ctx.players.get(killerSid) : undefined;
     if (killer) {
       killer.score += SERVER.enemy.killScore;
-      ctx.grantXp?.(killerSid, SERVER.progression?.xpPerKill ?? 30);
+      payKillXp(ctx, enemy, killerSid); // charge-or-grant; elite doubles inside
     }
     ctx.log?.('enemy_killed', { wave: ctx.state.wave, by: killer?.name });
     onEliteKill(ctx, enemy, killerSid);
@@ -105,6 +106,22 @@ export function knockbackAgainst(enemy, baseKnockback) {
 }
 
 /**
+ * Single source of kill-XP payment (PRD-orb-drops.md). Elites double the
+ * value BEFORE the drop attempt so an elite charges ONE orb with 2x. When
+ * the room wires ctx.dropOrb and it succeeds, XP rides a charged orb at the
+ * corpse; on failure/absence the legacy direct grant fires — the economy
+ * never leaks. Callers must have already added score themselves.
+ */
+export function payKillXp(ctx, enemy, killerSid) {
+  if (killerSid == null) return;
+  const base = SERVER.progression?.xpPerKill ?? 30;
+  const affix = enemy?.elite ? affixByName(enemy.elite) : null;
+  const value = affix ? base * 2 : base;
+  if (ctx.dropOrb?.(enemy.x, enemy.z, value)) return;
+  ctx.grantXp?.(killerSid, value);
+}
+
+/**
  * Elite kill extras, called from EVERY kill path (resolveEnemyHit here plus
  * each room's direct bash strike): a reward burst of DOUBLE killScore + XP
  * through the same score/grantXp paths, and — for Volatile elites — arming a
@@ -118,8 +135,9 @@ export function onEliteKill(ctx, enemy, killerSid = null) {
   if (!affix) return;
   const killer = killerSid != null ? ctx.players.get(killerSid) : undefined;
   if (killer) {
-    killer.score += SERVER.enemy.killScore;                        // double score
-    ctx.grantXp?.(killerSid, SERVER.progression?.xpPerKill ?? 30); // double XP
+    killer.score += SERVER.enemy.killScore; // double score
+    // XP doubling lives in payKillXp (charge-or-grant with value x2) —
+    // PRD-orb-drops.md routes ALL kill XP through one site.
   }
   ctx.log?.('elite_killed', { wave: ctx.state.wave, affix: affix.name, by: killer?.name });
   if (affix.volatile && ctx.volatilePending && !ctx.volatilePending.has(enemy)) {

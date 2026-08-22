@@ -58,6 +58,29 @@
       box-shadow: var(--shadow-1); backdrop-filter: blur(8px); }
     #leaderboard span { display: block; padding: 1px 0; }
     #leaderboard b { color: var(--gold); font-weight: 600; }
+
+    /* ============ online presence panel (PRD-presence.md) ============ */
+    /* Mirrors #leaderboard styling; hangs below it on the right edge. */
+    #online-panel { position: fixed; top: 190px; right: 14px; z-index: 10; min-width: 150px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-l);
+      padding: 10px 14px; font-size: 13px; color: var(--muted);
+      box-shadow: var(--shadow-1); backdrop-filter: blur(8px); }
+    #online-panel .panel-header { color: var(--text); font-weight: 600;
+      letter-spacing: .04em; text-align: left; margin-bottom: 4px; }
+    #online-panel ul { list-style: none; margin: 0; padding: 0; text-align: left; }
+    #online-panel .presence-row { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+    #online-panel .dot { width: 8px; height: 8px; border-radius: 50%; flex: none;
+      background: var(--muted); box-shadow: 0 0 6px currentColor; }
+    .dot.mode-waves, .dot.mode-daily, .dot.mode-world { background: var(--gold); color: var(--gold); }
+    .dot.mode-lobby, .dot.mode-idle { background: var(--accent); color: var(--accent); }
+    .dot.mode-arena { background: var(--danger); color: var(--danger); }
+    .presence-offline { font-style: italic; color: #55606c; padding: 1px 0; }
+    #online-panel .sub-header { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line);
+      font-size: 11px; letter-spacing: .06em; text-align: left; }
+    #online-panel .ally-row { display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 1px 0; }
+    #online-panel .ally-time { font: 10px var(--mono); color: #55606c; }
+
     #net-badge { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
       display: none; color: var(--gold); font: 11px var(--mono); letter-spacing: .06em;
       background: var(--panel); border: 1px solid rgba(251, 191, 36, 0.4);
@@ -233,6 +256,12 @@
     <div id="hud-text">connecting…</div>
   </div>
   <div id="leaderboard"></div>
+  <div id="online-panel">
+    <div class="panel-header" id="online-count">ONLINE …</div>
+    <ul id="online-list"></ul>
+    <div class="sub-header">RECENT ALLIES</div>
+    <ul id="recent-allies"></ul>
+  </div>
   <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
   <div id="daily-results"></div>
   <div id="elite-toast"></div>

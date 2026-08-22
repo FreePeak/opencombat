@@ -32,6 +32,7 @@ import { attackFor } from '../../shared/classes.js';
 // same table so online/offline parity is structural, not duplicated logic.
 import { isEliteWave, affixForWave, applyElite, affixByName } from '../../shared/sim/elites.js';
 import { archetypeByName, markArchetypes } from '../../shared/sim/archetypes.js';
+import * as orbDrops from '../../shared/sim/orbDrops.js';
 // Kill streaks (PRD-kill-streaks.md): pure shared module — both rooms track
 // consecutive credited kills per player (2.5s window, reset on death/reset)
 // and announce ONLY at MILESTONES so online/offline payloads stay identical.
@@ -54,6 +55,8 @@ import { aggregateBonuses,
 import { utcDateStr, dailySeed, dailyModifiers, nextStreak, streakRewardXp } from '../../shared/sim/dailyRun.js';
 // Per-player JSON persistence (WorldRoom pattern): load on finalize, save debounced.
 import { loadPlayer, savePlayerDebounced } from '../persistence.js';
+// Presence panel (PRD-presence.md): cross-room live population registry.
+import { registerPresence, removePresence } from '../presence.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -119,6 +122,7 @@ export default class GameRoom extends Room {
     this.enemyStunUntil = new Map();// enemy -> ms of HIT-STUN (no move/attack)
     this.pendingMelee = [];      // {sid, at} — impacts land mid-swing, not at press
     this.powerUpTimers = new Map(); // powerUp -> seconds until it respawns
+    this.orbCharges = new Map();    // orb -> stored kill-XP (PRD-orb-drops.md)
     this._projectileId = 0;        // monotonic ID for projectile spawn
     this.pendingUntil = new Map(); // sid -> ms deadline for upgrade auto-pick
     this.pendingQueue = new Map(); // sid -> queued level-ups waiting for card pick
@@ -167,6 +171,8 @@ export default class GameRoom extends Room {
       activeBurns: this._activeBurns,
       volatilePending: this.volatilePending,
       now: () => Date.now(),
+      dropOrb: (x, z, amount) =>
+        orbDrops.chargeForKill(this.state.orbs, this.orbCharges, x, z, amount),
       grantXp: (sid, amount) => leveling.grantXp(this.simLeveling, sid, amount),
       damagePlayer: (sid, victim, amount, srcX, srcZ) =>
         this.damagePlayer(sid, victim, amount, srcX, srcZ),
@@ -408,6 +414,10 @@ export default class GameRoom extends Room {
     clearTimeout(this.graceTimers.get(client.sessionId));
     this.graceTimers.delete(client.sessionId);
 
+    // Presence panel (PRD-presence.md): one registry row per connected player.
+    registerPresence(client.sessionId,
+      { name: player.name, mode: this.mode === 'daily' ? 'daily' : 'waves', roomId: this.roomId });
+
     // Match start (documented choice): the countdown begins as soon as the
     // minPlayers threshold is met — default 1, i.e. the first player.
     if (this.state.matchState === 'lobby' && this.state.players.size >= SERVER.match.minPlayers) {
@@ -428,6 +438,7 @@ export default class GameRoom extends Room {
   // the same PlayerState (position/score/hp survive — no reload).
   onLeave(client, code = CloseCode.CONSENTED) {
     const sid = client.sessionId;
+    removePresence(sid); // connection gone -> off /api/players (grace reconnect re-registers)
     if (code === CloseCode.CONSENTED) {
       this.removePlayer(sid);
       return;
@@ -459,6 +470,7 @@ export default class GameRoom extends Room {
   }
 
   onDispose() {
+    for (const sid of this.state.players.keys()) removePresence(sid); // error-path cleanup
     GameRoom.instances.delete(this);
     this.logEvent('room_dispose');
   }
@@ -615,6 +627,7 @@ export default class GameRoom extends Room {
       onResetPowerUps: () => this.powerUpTimers.clear(),
     });
     resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
+    orbDrops.clearCharges(this.orbCharges); // fresh match = plain orbs
     this.matchElapsed = 0;
     this.logEvent('match_reset');
     this.startCountdown();
@@ -1268,6 +1281,10 @@ export default class GameRoom extends Room {
         if (dx * dx + dz * dz < radius * radius) {
           player.score += orbScore(player);
           this.grantXp(sid, SERVER.progression?.xpPerOrb ?? 20);
+          // Charged kill-orbs pay their stored XP on top, then revert
+          // (PRD-orb-drops.md) — order matters: drain BEFORE the teleport.
+          const charge = orbDrops.drainCharge(this.orbCharges, orb);
+          if (charge > 0) this.grantXp(sid, charge);
           const p = this.randomPos();
           orb.x = p.x;
           orb.z = p.z;

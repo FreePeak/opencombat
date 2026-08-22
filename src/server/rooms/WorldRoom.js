@@ -19,6 +19,8 @@ import { xpForLevel, rollUpgrades, getUpgrade, aggregateBonuses,
          AUTO_PICK_MS } from '../../shared/progression.js';
 import { generateChunk, activeChunksForPos, CHUNK_SIZE, enemiesForLevel } from '../../shared/worldgen.js';
 import { loadPlayer, savePlayerDebounced } from '../persistence.js';
+// Presence panel (PRD-presence.md): cross-room live population registry.
+import { registerPresence, removePresence } from '../presence.js';
 
 function nameHash(name) {
   let h = 0;
@@ -253,10 +255,13 @@ export default class WorldRoom extends Room {
     }
     // No countdown in open world; ensure playing
     this.state.matchState = 'playing';
+    // Presence panel (PRD-presence.md): one registry row per connected player.
+    registerPresence(client.sessionId, { name: player.name, mode: 'world', roomId: this.roomId });
   }
 
   onLeave(client, code = CloseCode.CONSENTED) {
     const sid = client.sessionId;
+    removePresence(sid); // connection gone -> off /api/players (grace reconnect re-registers)
     // Persist immediately on leave (flush)
     const player = this.state.players.get(sid);
     if (player) {
@@ -295,6 +300,7 @@ export default class WorldRoom extends Room {
   }
 
   onDispose() {
+    for (const sid of this.state.players.keys()) removePresence(sid); // error-path cleanup
     // Flush all pending saves
     for (const [sid, player] of this.state.players) {
       this.persistPlayer(sid, player);

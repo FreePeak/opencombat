@@ -17,6 +17,8 @@ import {
   startBurnFromProjectile,
   tickBurns,
   knockbackAgainst,
+  onEliteKill,
+  payKillXp,
 } from '../src/shared/sim/combatBook.js';
 import { applyShopChoice } from '../src/shared/sim/shopEffects.js';
 import { getUpgrade, effectiveMaxHp } from '../src/shared/progression.js';
@@ -396,4 +398,63 @@ test('knockbackAgainst: elite Bulwark immunity wins over any archetype', () => {
 
 test('knockbackAgainst: non-positive base passes through untouched', () => {
   assert.equal(knockbackAgainst({ elite: '', archetype: 'Tank' }, 0), 0);
+});
+
+// ---------------------------------------------------------------------------
+// Kill-drop XP orbs (PRD-orb-drops.md): when the room wires ctx.dropOrb, kill
+// XP routes to a charged orb instead of landing directly; elites double the
+// charge BEFORE the drop attempt. Without the hook, legacy behavior is
+// byte-identical.
+// ---------------------------------------------------------------------------
+
+test('resolveEnemyHit: kill XP rides ctx.dropOrb when provided', () => {
+  const h = makeHarness();
+  h.state.wave = 1;
+  const enemy = new EnemyState(12, 12);
+  enemy.hp = 1;
+  const drops = [];
+  h.ctx.dropOrb = (x, z, amount) => { drops.push([x, z, amount]); return true; };
+  resolveEnemyHit(h.ctx, enemy, 5, 0, 0, 'sid-1');
+  // The strike knocks the corpse back BEFORE payment — the orb charges
+  // where the body lands, not where it stood.
+  assert.deepEqual(drops, [[enemy.x, enemy.z, SERVER.progression?.xpPerKill ?? 30]]);
+  assert.equal(h.xpGrants.length, 0, 'direct grant skipped on successful drop');
+});
+
+test('resolveEnemyHit: failed drop falls back to direct grantXp', () => {
+  const h = makeHarness();
+  h.ctx.dropOrb = () => false;
+  const enemy = new EnemyState(3, 3);
+  enemy.hp = 1;
+  resolveEnemyHit(h.ctx, enemy, 5, 0, 0, 'sid-1');
+  assert.equal(h.xpGrants.length, 1, 'economy never leaks');
+});
+
+test('payKillXp: elites double the charge; one drop, zero direct grants', () => {
+  const h = makeHarness();
+  const elite = new EnemyState(6, 6);
+  elite.elite = 'Swift';
+  const drops = [];
+  h.ctx.dropOrb = (x, z, amount) => { drops.push(amount); return true; };
+  payKillXp(h.ctx, elite, 'sid-1');
+  assert.deepEqual(drops, [(SERVER.progression?.xpPerKill ?? 30) * 2]);
+  assert.equal(h.xpGrants.length, 0);
+});
+
+test('payKillXp: plain kills charge base value', () => {
+  const h = makeHarness();
+  const enemy = new EnemyState(1, 1);
+  const drops = [];
+  h.ctx.dropOrb = (_x, _z, amount) => { drops.push(amount); return true; };
+  payKillXp(h.ctx, enemy, 'sid-1');
+  assert.deepEqual(drops, [SERVER.progression?.xpPerKill ?? 30]);
+});
+
+test('payKillXp: null killer never pays anything', () => {
+  const h = makeHarness();
+  let called = 0;
+  h.ctx.dropOrb = () => { called++; return true; };
+  payKillXp(h.ctx, new EnemyState(0, 0), null);
+  assert.equal(called, 0);
+  assert.equal(h.xpGrants.length, 0);
 });

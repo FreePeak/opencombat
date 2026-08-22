@@ -11,6 +11,8 @@ import { LobbyState } from '../schema/StateSchema.js';
 import { SERVER } from '../config.js';
 import { log, warn } from '../log.js';
 import { takeToken, normalizeIp } from '../ratelimit.js';
+// Presence panel (PRD-presence.md): lobby presence flips to 'arena' on redirect.
+import { registerPresence, removePresence, updateMode } from '../presence.js';
 import { sanitizeMode, sanitizePve, sanitizeRoundsToWin, minPlayersForMode, maxPlayersForMode } from '../../shared/arena.js';
 
 export default class LobbyRoom extends Room {
@@ -71,6 +73,8 @@ export default class LobbyRoom extends Room {
     const name = this.sanitizeName(options.name);
     const character = this.sanitizeCharacter(options.character);
     this.logEvent('lobby_join', { sid, name, character, players: this.clients.length });
+    // Presence panel (PRD-presence.md): name from join options / queued map.
+    registerPresence(sid, { name, mode: 'lobby', roomId: this.roomId });
     // Store join options for potential auto-queue
     this.queued.set(sid, {
       // not queued until they explicitly send 'queue', but keep defaults for now
@@ -91,12 +95,14 @@ export default class LobbyRoom extends Room {
 
   onLeave(client, code) {
     const sid = client.sessionId;
+    removePresence(sid);
     this.queued.delete(sid);
     this.syncState();
     this.logEvent('lobby_leave', { sid, code });
   }
 
   onDispose() {
+    for (const sid of this.queued.keys()) removePresence(sid); // error-path cleanup
     LobbyRoom.instances.delete(this);
     this.logEvent('lobby_dispose');
   }
@@ -218,6 +224,7 @@ export default class LobbyRoom extends Room {
         this.queued.delete(sid);
         this.syncState();
         client.send('redirect', reservation);
+        updateMode(sid, 'arena'); // presence flips lobby -> arena on redirect
         // Also send a friendlier 'seat' alias for clients that listen for it
         // (tests may check either name).
         // client.send('seat', reservation);
@@ -228,6 +235,7 @@ export default class LobbyRoom extends Room {
         // If we already deleted, restore?
         if (!this.queued.has(sid)) {
           this.queued.set(sid, entry);
+          updateMode(sid, 'lobby'); // requeued -> back to lobby presence
           this.syncState();
         }
       }
