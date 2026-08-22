@@ -2048,6 +2048,9 @@ export default class GameScene {
     el.innerHTML = isBoss
       ? `<span class="elite-title">☠ BOSS</span> — ${esc(payload?.name ?? 'UNKNOWN')} — SURVIVE THE SURGE`
       : `<span class="elite-title">⚠ ELITE</span> — ${esc(payload?.name ?? 'UNKNOWN')}`;
+    // Boss arrivals SHAKE the screen (streaks-era trauma accumulator) — the
+    // last stand should be felt, not just read.
+    if (isBoss) this.trauma = Math.min(1, (this.trauma ?? 0) + 0.5);
     el.style.borderColor = isBoss ? '#ff5252' : '';
     el.classList.add('visible');
     clearTimeout(this._eliteToastTimer);
