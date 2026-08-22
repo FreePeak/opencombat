@@ -200,3 +200,9 @@ test('sticky merge: partials kept, once true stays true; new week resets (AC2)',
     }
   });
 }
+
+// Bound the process: the shutdown race above can leave room-dispose timers
+// dangling (httpServer.close waits on them), which would hang `node --test`
+// forever even though all results are in — same reason every other
+// integration test ends with an explicit exit.
+process.exit(0);
