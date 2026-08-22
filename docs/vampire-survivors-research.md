@@ -107,8 +107,10 @@ buy the most engagement per unit of engineering.
 | 2 | Enemy archetypes (Shooter/Rusher/Tank) via deterministic per-wave tags | High | M | shared/sim/archetypes.js (new), chase loops both rooms, StateSchema tag, client tint/scale | SHIPPED all three (750844e Rusher/Tank; Shooter cycle landed with projectileLoop enemy-owned branch) |
 | 3 | Wave-finale run end + results share card | Med | S–M | matchPhases win conditions, GameScene banner | SHIPPED core (finale+surge+boss 761d5c8/8268a8a); share card backlog |
 | 4 | Persistent waves-mode meta (unlock track) | Med | M | persistence.js + PlayerStore shape from daily finalize | backlog |
-| 5 | Trickle spawns during intermission tail | Low–Med | S | matchPhases/updatePlaying spawner | backlog |
-| 6 | Magnet power-up (pull all orbs) | Low–Med | S | SERVER.powerUps + pickup loop | backlog |
+| 5 | Trickle spawns during intermission tail | Low–Med | S | matchPhases/updatePlaying spawner | REJECTED — conflicts with the invulnerable-breather shop identity; wave-discrete pacing is a design pillar, not a gap |
+| 6 | Magnet power-up (pull all orbs) | Low–Med | S | SERVER.powerUps + pickup loop | SHIPPED (3d42bff) |
+| 7 | Shooter windup telegraph + hostile-arrow tint | Med | S | archetypes constants, chase branches, Projectile view | SHIPPED (6009c2c, 4c605db) |
+| 8 | Career unlock tints (cosmetic) | Med | M | career tier at join, nametag accents | SHIPPED tier system (f5ef94e); unlock toast deferred (cosmetic polish) |
 
 ## 7. Decision for this cycle
 
