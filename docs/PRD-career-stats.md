@@ -125,3 +125,5 @@ deletes forget them.
   via pure objectivesHud evaluator; mode-gated chip/subtitles — no overlap
   with career/tier/toast surfaces. Combined gate 230 tests (1 intentional
   admin-skip), all green. Compose-clean.
+- CYCLE-BA health cert (post-handoff-refresh): gate 132 files / 230 tests
+  (1 intentional admin-skip) green; CI success on handoff refresh. Steady.
