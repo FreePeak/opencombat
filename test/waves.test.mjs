@@ -336,6 +336,11 @@ const drainUpgradeCards = async (sr, ...clients) => {
     me.x = sh.x + SHOOTER_PREFERRED_RANGE;
     me.z = sh.z;
     const before = sr.state.projectiles.length;
+    // TELEGRAPH (research lesson #11): the windup window shows attack anim
+    // BEFORE any projectile exists — deaths must be legible.
+    await waitFor(() => sh.anim === 'attack', 4000, 'shooter windup anim');
+    assert.equal(sr.state.projectiles.length, before,
+      'no projectile during windup');
     await waitFor(
       () => [...sr.state.projectiles].some((pr) => !pr.ownerIsPlayer),
       6000, 'shooter fired an enemy-owned arrow');

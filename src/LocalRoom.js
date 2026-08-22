@@ -20,7 +20,7 @@ import { attackFor } from './shared/classes.js';
 import { isEliteWave, affixForWave, applyElite, affixByName, finaleBossFor } from './shared/sim/elites.js';
 import { archetypeByName, markArchetypes,
   SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
-  SHOOTER_KITE_SPEED_MUL } from './shared/sim/archetypes.js';
+  SHOOTER_KITE_SPEED_MUL, SHOOTER_WINDUP_MS } from './shared/sim/archetypes.js';
 import * as orbDrops from './shared/sim/orbDrops.js';
 import { pullOrbs } from './shared/sim/magnetPull.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
@@ -561,21 +561,29 @@ export class LocalRoom {
             enemy.z = clamp(enemy.z, -half, half);
             if (!moved && !animOverride) enemy.anim = 'idle';
             else if (moved && !animOverride) enemy.anim = 'run';
-            let due = this._shooterFireAt.get(enemy);
-            if (due === undefined) due = now + SHOOTER_FIRE_COOLDOWN_MS;
-            if (now >= due && dist <= SHOOTER_PREFERRED_RANGE + 1) {
-              const proj = new ProjectileState(this._projectileId++, '', 'arrow',
-                enemy.x, enemy.z, dxn, dzn);
-              proj.speed = SERVER.projectile.arrowSpeed;
-              proj.damage = SERVER.enemy.shotDamage;
-              proj.ttl = SERVER.projectile.arrowTtlMs;
-              proj.ownerIsPlayer = false;
-              this.state.projectiles.push(proj);
-              this._enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
-              enemy.anim = 'attack';
-              due = now + SHOOTER_FIRE_COOLDOWN_MS;
+            let vol = this._shooterFireAt.get(enemy);
+            if (!vol) vol = { at: now + SHOOTER_FIRE_COOLDOWN_MS, told: false };
+            if (dist <= SHOOTER_PREFERRED_RANGE + 1) {
+              // WINDUP TELEGRAPH mirror of GameRoom.
+              if (!vol.told && now >= vol.at - SHOOTER_WINDUP_MS) {
+                vol.told = true;
+                if (!animOverride) enemy.anim = 'attack';
+                this._enemyAnimUntil.set(enemy, now + SHOOTER_WINDUP_MS);
+              }
+              if (now >= vol.at) {
+                const proj = new ProjectileState(this._projectileId++, '', 'arrow',
+                  enemy.x, enemy.z, dxn, dzn);
+                proj.speed = SERVER.projectile.arrowSpeed;
+                proj.damage = SERVER.enemy.shotDamage;
+                proj.ttl = SERVER.projectile.arrowTtlMs;
+                proj.ownerIsPlayer = false;
+                this.state.projectiles.push(proj);
+                this._enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
+                enemy.anim = 'attack';
+                vol = { at: now + SHOOTER_FIRE_COOLDOWN_MS, told: false };
+              }
             }
-            this._shooterFireAt.set(enemy, due);
+            this._shooterFireAt.set(enemy, vol);
           } else if (dist > SERVER.enemy.contactRange) {
             // Elite affixes add their speedMul (Swift +60%) — same math as
             // GameRoom's chase (no daily modifier exists offline).

@@ -29,6 +29,7 @@ export const SHOOTER_PREFERRED_RANGE = 6;
 export const SHOOTER_KITE_RANGE = 4;
 export const SHOOTER_FIRE_COOLDOWN_MS = 2500;
 export const SHOOTER_KITE_SPEED_MUL = 0.8;
+export const SHOOTER_WINDUP_MS = 500; // attack-anim warning before each volley
 
 // PRD numbers: Rusher speed x1.4 / hp x0.75; Tank hp x2.0 / speed x0.7 /
 // knockback x0.25. Chaser is the implicit default ('' -> no entry).
