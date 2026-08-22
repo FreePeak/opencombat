@@ -36,7 +36,7 @@ import { archetypeByName, markArchetypes,
   SHOOTER_KITE_SPEED_MUL, SHOOTER_WINDUP_MS } from '../../shared/sim/archetypes.js';
 import * as orbDrops from '../../shared/sim/orbDrops.js';
 import { pullOrbs } from '../../shared/sim/magnetPull.js';
-import { recordRun } from '../../shared/sim/careerStats.js';
+import { recordRun, tierForCareer } from '../../shared/sim/careerStats.js';
 // Kill streaks (PRD-kill-streaks.md): pure shared module — both rooms track
 // consecutive credited kills per player (2.5s window, reset on death/reset)
 // and announce ONLY at MILESTONES so online/offline payloads stay identical.
@@ -459,6 +459,11 @@ export default class GameRoom extends Room {
       while (player.pendingChoices.length) player.pendingChoices.pop();
       player.upgrades.clear();
       this.state.players.set(client.sessionId, player);
+      // CAREER TIER (PRD-career-stats.md): cosmetic rank from persisted
+      // bestWave — derived once at join; endMatch's careerUpdate keeps the
+      // overlay current and the next join picks up new tiers.
+      const savedCareer = loadPlayer(name)?.career ?? null;
+      player.tier = tierForCareer(savedCareer);
       this.logEvent('player_join', { sid: client.sessionId, name, players: this.state.players.size });
     }
 

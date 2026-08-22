@@ -7,6 +7,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CONFIG, setServerUrl } from '../config.js';
+
+// Career unlock tiers (PRD-career-stats.md): cosmetic nametag accents.
+const TIER_COLORS = { 1: '#7c4dff', 2: '#ffd700', 3: '#ff5252' };
 import Player from '../entities/Player.js';
 import RemotePlayer from '../entities/RemotePlayer.js';
 import Enemy from '../entities/Enemy.js';
@@ -34,12 +37,13 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 /** Login-screen game modes. `offline` = can fall back to the browser-local
  *  solo simulation when no server is reachable (PvP needs opponents and the
  *  open world needs the hosted chunked room — neither exists offline).
- *  Daily degrades to local waves too (no streak recorded — accepted). */
+ *  Daily and Weekly degrade to local waves too (no streak/best recorded). */
 const MODES = [
   { key: 'waves', label: 'Waves', offline: true },
   { key: 'pvp', label: 'PvP Arena', offline: false },
   { key: 'world', label: 'Open World', offline: false },
-  { key: 'daily', label: 'Daily', offline: true }
+  { key: 'daily', label: 'Daily', offline: true },
+  { key: 'weekly', label: 'Weekly', offline: true }
 ];
 
 // Deterministic LCG: scatters props identically on every client so the
@@ -126,7 +130,8 @@ export default class GameScene {
     this.buildGround();
     this.props = [];
 
-    // Login-screen mode: 'waves' (default) | 'pvp' | 'world' | 'daily' — see MODES.
+    // Login-screen mode: 'waves' (default) | 'pvp' | 'world' | 'daily' |
+    // 'weekly' — see MODES.
     this.mode = 'waves';
     this.worldMode = false;       // open-world visuals active (chunks + minimap)
     this.chunkManager = null;
@@ -281,8 +286,8 @@ export default class GameScene {
     this.startPresencePoller();
   }
 
-  /** Game-mode cards on the login screen (MODES drives it). The Daily card
-   *  also pulls today's modifier line from /api/daily. */
+  /** Game-mode cards on the login screen (MODES drives it). The Daily and
+   *  Weekly cards also pull their modifier line from /api/daily + /api/weekly. */
   buildModePicker() {
     const picker = document.getElementById('mode-picker');
     picker.innerHTML = '';
@@ -297,12 +302,25 @@ export default class GameScene {
         localStorage.setItem('opengame.mode', m.key);
         for (const el of picker.children) el.classList.remove('selected');
         btn.classList.add('selected');
+        this.clearGauntletSubs();
         if (m.key === 'daily') this.fetchDailyInfo();
+        else if (m.key === 'weekly') this.fetchWeeklyInfo();
       });
       picker.appendChild(btn);
     });
-    // Daily was the persisted choice: refresh today's line right away.
+    // A gauntlet mode was the persisted choice: refresh its line right away.
+    this.clearGauntletSubs();
     if (this.mode === 'daily') this.fetchDailyInfo();
+    else if (this.mode === 'weekly') this.fetchWeeklyInfo();
+  }
+
+  /** Only one gauntlet subtitle line is live at a time — switching cards
+   *  clears the previous one so the login card never stacks both. */
+  clearGauntletSubs() {
+    for (const id of ['mode-daily-sub', 'mode-weekly-sub']) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '';
+    }
   }
 
   /** Daily Gauntlet subtitle: today's modifier label (+ our best score when
@@ -326,6 +344,28 @@ export default class GameScene {
     } catch {
       this.dailyInfo = null;
       sub.textContent = 'daily: offline';
+    }
+  }
+
+  /** Weekly Gauntlet subtitle: this ISO week's stacked modifier label (+ our
+   *  best score when the name is already on this week's leaderboard). Same
+   *  degrade-to-'weekly: offline' behavior as fetchDailyInfo above. */
+  async fetchWeeklyInfo() {
+    const sub = document.getElementById('mode-weekly-sub');
+    if (!sub) return;
+    sub.textContent = 'weekly: loading…';
+    try {
+      const httpBase = CONFIG.serverUrl.replace(/^ws/i, 'http');
+      const res = await fetch(`${httpBase}/api/weekly`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this.weeklyInfo = data ?? null;
+      const label = data?.modifiers?.label ?? 'unknown modifiers';
+      const mine = (data?.leaderboard ?? []).find((r) => r && r.name === this.name);
+      sub.textContent = `this week: ${label}` + (mine ? ` · your best ${mine.score}` : '');
+    } catch {
+      this.weeklyInfo = null;
+      sub.textContent = 'weekly: offline';
     }
   }
 
@@ -541,7 +581,7 @@ export default class GameScene {
       if (!online && !MODES.find((m) => m.key === this.mode)?.offline) {
         // PvP needs opponents + matchmaking; the open world needs the hosted
         // chunked room. Neither exists in the browser-local solo simulation.
-        throw new Error('this mode needs the game server online — start it (npm run serve) or pick Waves or Daily, which also work offline');
+        throw new Error('this mode needs the game server online — start it (npm run serve) or pick Waves, Daily or Weekly, which also work offline');
       }
       if (this.mode === 'pvp') {
         await this.joinPvpLobby(); // resolves once the arena room is adopted
@@ -549,8 +589,8 @@ export default class GameScene {
         this.enterWorldVisuals();
         this.adoptRoom(await joinWorld(this.name, this.character));
       } else if (online) {
-        // Waves and Daily share the hosted path — joinGame routes mode:'daily'
-        // to the seeded 'daily' room; waves keeps the classic arena room.
+        // Waves/Daily/Weekly share the hosted path — joinGame routes the
+        // gauntlet modes to their seeded rooms; waves keeps the classic arena.
         this.adoptRoom(await joinGame(this.name, this.character, this.mode));
       } else {
         // No server (static hosting, host offline): same wire-up, but the
@@ -1705,8 +1745,13 @@ export default class GameScene {
       tag.div.style.display = behind ? 'none' : 'block';
       if (behind) continue;
       tag.div.style.transform = `translate(-50%, -100%) translate(${sx}px, ${sy}px)`;
-      tag.div.textContent = `${tag.state.name} ${tag.state.hp}`;
-      tag.div.style.borderColor = tag.color;
+      const tier = tag.state?.tier ?? 0;
+      const tierColor = TIER_COLORS[tier];
+      tag.div.textContent =
+        `${tier >= 2 ? '\u2605'.repeat(tier - 1) + ' ' : ''}${tag.state.name} ${tag.state.hp}`;
+      tag.div.style.borderColor = tierColor ?? tag.color;
+      if (tier >= 3) tag.div.style.boxShadow = `0 0 8px ${TIER_COLORS[3]}`;
+      else tag.div.style.boxShadow = '';
     }
   }
 
@@ -1740,17 +1785,19 @@ export default class GameScene {
     this.leaderboardEl.innerHTML = 'LEADERBOARD<br>' + rows;
   }
 
-  /** Daily Gauntlet result banner (top-center): one row per finishing player
+  /** Gauntlet result banner (top-center): one row per finishing player
    *  — name, score, streak multiplier, XP reward. Auto-hides after ~8s;
-   *  clicking it dismisses immediately. */
+   *  clicking it dismisses immediately. Weekly runs reuse the same event
+   *  name + shape, tagged payload.kind === 'weekly' (header swap only). */
   showDailyResults(payload) {
     const el = this.dailyResultsEl;
     if (!el || !payload) return;
     const rows = (payload.results ?? [])
       .map((r) => `${esc(r.name)} — score <b>${r.score}</b> · streak x${r.streak ?? 1} · <b>+${r.rewardXp ?? 0}</b> XP`)
       .join('<br>');
+    const title = payload.kind === 'weekly' ? 'WEEKLY GAUNTLET COMPLETE' : 'DAILY GAUNTLET COMPLETE';
     el.innerHTML =
-      '<div class="title">DAILY GAUNTLET COMPLETE</div>' +
+      `<div class="title">${title}</div>` +
       rows +
       '<div style="margin-top:4px;">click to dismiss</div>';
     el.classList.add('visible');

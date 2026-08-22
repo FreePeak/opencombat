@@ -29,3 +29,14 @@ export function recordRun(career, run) {
     bestScore: Math.max(prev.bestScore, score),
   };
 }
+
+/** Cosmetic tier from a career record: bestWave 6/9/12 unlock tiers 1/2/3.
+ *  Purely visual — never touches balance. Absent records are tier 0. */
+export function tierForCareer(career) {
+  const best = Number(career?.bestWave);
+  if (!Number.isFinite(best)) return 0;
+  if (best >= 12) return 3;
+  if (best >= 9) return 2;
+  if (best >= 6) return 1;
+  return 0;
+}

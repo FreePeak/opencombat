@@ -476,6 +476,28 @@ const drainUpgradeCards = async (sr, ...clients) => {
   }
 }
 
+
+// --- Career unlock tiers: join-time derivation --------------------------------
+{
+  const pf = path.join(_dirForTests(), 'TierPin.json');
+  try { fs.unlinkSync(pf); } catch {}
+  fs.writeFileSync(pf, JSON.stringify({
+    career: { runs: 3, victories: 1, bestWave: 9, bestScore: 500 },
+  }));
+  try {
+    const c = new Client(`ws://localhost:${port}`);
+    const r = await c.create('game', { name: 'TierPin' }, WorldState);
+    await waitFor(() => r.state?.matchState === 'playing', 8000, 'tier match playing');
+    const p = roomOf(r).state.players.get(r.sessionId);
+    assert.equal(p.tier, 2, 'bestWave 9 -> cosmetic tier 2 at join');
+    try { fs.unlinkSync(pf); } catch {}
+    r.leave();
+  } catch (e) {
+    try { fs.unlinkSync(pf); } catch {}
+    throw e;
+  }
+}
+
 await gameServer.gracefullyShutdown(false);
 httpServer.closeAllConnections();
 await new Promise((res) => httpServer.close(res));

@@ -34,3 +34,22 @@ test('recordRun: unknown/NaN inputs are sanitized defensively', () => {
   assert.equal(c.bestScore, 0);
   assert.equal(c.victories, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Unlock tiers (PRD-career-stats.md tier addendum): bestWave thresholds map
+// to cosmetic tiers. Pure derivation — pinned here so rooms + client agree.
+// ---------------------------------------------------------------------------
+import { tierForCareer } from '../src/shared/sim/careerStats.js';
+
+test('tierForCareer: 6/9/12 bestWave thresholds', () => {
+  assert.equal(tierForCareer({ bestWave: 0 }), 0);
+  assert.equal(tierForCareer({ bestWave: 5 }), 0);
+  assert.equal(tierForCareer({ bestWave: 6 }), 1);
+  assert.equal(tierForCareer({ bestWave: 8 }), 1);
+  assert.equal(tierForCareer({ bestWave: 9 }), 2);
+  assert.equal(tierForCareer({ bestWave: 11 }), 2);
+  assert.equal(tierForCareer({ bestWave: 12 }), 3);
+  assert.equal(tierForCareer({ bestWave: 99 }), 3);
+  assert.equal(tierForCareer(null), 0);
+  assert.equal(tierForCareer(undefined), 0);
+});

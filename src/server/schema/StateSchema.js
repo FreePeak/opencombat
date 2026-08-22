@@ -19,6 +19,7 @@ export class PlayerState extends Schema {
     this.rotY = 0;    // facing angle, radians (atan2 convention: +Z is 0)
     this.hp = 100;
     this.score = 0;
+    this.tier = 0;    // cosmetic unlock tier (career.bestWave thresholds)
     this.anim = 'idle';       // 'idle' | 'run' | 'attack' — drives AnimationMixer
     this.name = '';           // chosen pre-join, rides the join options
     this.character = 0;       // chosen pre-join: index into CONFIG.characters
@@ -53,7 +54,8 @@ defineTypes(PlayerState, {
   xp: 'number',
   pendingChoices: ['string'],
   upgrades: { map: 'number' },
-  team: 'number'
+  team: 'number',
+  tier: 'number'
 });
 
 // One collectible. Shared pool: first player within radius wins, the orb
