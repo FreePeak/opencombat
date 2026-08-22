@@ -88,6 +88,37 @@ Single source of truth for delivery status. **How to use this doc:** update the 
 
 - **UI revamp session (concurrent, separate agent):** tracked in `docs/artwork-ui-rework/TODO.md` (phases A/U) per the research committed in a868e54. It touches client files `index.html`, `src/main.js`, `src/client/NatureDressing.js`. Do not rebuild that artwork/UI work inside roadmap phases, and do not edit those three files from roadmap branches without coordinating — expect mid-air collisions otherwise. Roadmap phases that touch client visuals (3.1, 3.3, 4.5) must rebase onto that session's landed commits first.
 
+## Session summary — infinite-loop gameplay hackathon (2026-08-22)
+
+One continuous agent-driven product cycle (research -> backlog -> TDD ->
+gate -> land, repeating) layered the full Vampire-Survivors-style genre core
+onto Ashfall while peer sessions shipped enterprise-track systems in the
+same tree (weekly gauntlet ca95762, presence b40264f/7ae1d7b spectate,
+achievements 604cc26, offline checkpoints 5ea1919, music director, OIDC in
+flight). Coordination protocol held all day: claim via PRD files, targeted
+staging, monitor-then-land on shared files, joint landings credited both
+sides.
+
+| Theme | Cycles | Key commits |
+|-------|--------|-------------|
+| Genre research + backlog | R3 | e4956e5 (VS study, ranked ideas, PRDs) |
+| Elite affixes support + shooter archetype | R4-R5 | 750844e (joint), 6009c2c windup telegraph |
+| Kill-drop orb economy | A | b40264f (joint), PRD b9c85cb |
+| Magnet power-up | C | 3d42bff |
+| Finale arc: victory + surge + Warlord boss | D-E-H | 761d5c8, 4eff0f4, 8268a8a |
+| Career meta: stats/tints/toasts/offline parity | F-N-Y | f2be3cf, f45a477, d1953aa, 4abf254 |
+| Fairness fixes: victory finalize, burn attribution, ranged block | K-U-V | 6d0dab9, a6fefe7, 10fb248 |
+| Readability: hostile arrows, gold orbs, chime, boss bar, trauma shake | G-AG-AJ | 4c605db, f888fa0, 5e374a7, 89a5da7 |
+| UI audit fixes: banner z-order x2, weekly streak text, new-best callout | R-S-AM-AO | fb4cdfb, 55af191, 77af692, e9d5b2c |
+| Stability: perf gate, soak evidence, orb-noise guards x3 | AC-AD-T | 8595a6d, 1c2ca84, a9dc254/21cd6bb/806c04a |
+| Docs syncs: README, ARCHITECTURE sim inventory, backlog statuses | M-W-AA | c2ad807, 5003523, cddf492/5a2c84d |
+
+Final state at last push: master `e9d5b2c` — `npm run check` 114 files ok,
+`npm test` **203/203** (88 tests added today), smoke 8/8, CI verify+e2e
+green streak. Zero TODO/FIXME markers repo-wide. Audit findings shipped as
+fixes: daily-victory finalize skip (winners lost streaks), banner z-order,
+weekly fake-streak text, two missing-module CI breaks repaired with peers.
+
 ## Session summary — Q1 SHIPPED (2026-08-22)
 
 Q1 "Harden & License" is complete and live on origin master. Every phase went
