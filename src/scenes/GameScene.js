@@ -21,6 +21,7 @@ import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
 import { MILESTONES } from '../shared/sim/streaks.js';
+import { waveEnemyHp } from '../shared/waves.js';
 import { achievementById, evaluateAchievements } from '../shared/sim/achievements.js';
 import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
@@ -201,6 +202,11 @@ export default class GameScene {
     this.dailyResultsEl?.addEventListener('click', () => this.hideDailyResults());
     // Elite spawn toast (server 'eliteSpawn' broadcast / LocalRoom emit hook).
     this.eliteToastEl = document.getElementById('elite-toast');
+    // BOSS BAR (PRD-wave-finale follow-up): dedicated top bar while a boss
+    // (elite name 'Warlord') is alive; schema-polled in the HUD tick.
+    this.bossBarEl = document.getElementById('boss-bar');
+    this.bossFillEl = document.getElementById('boss-fill');
+    this.bossNameEl = document.getElementById('boss-name');
     this.eliteToastEl?.addEventListener('click', () => this.hideEliteToast());
     // Achievement toast (server 'achievementsUnlocked' broadcast).
     this.achievementToastEl = document.getElementById('achievement-toast');
@@ -1660,6 +1666,7 @@ export default class GameScene {
     this.floatTexts.update(dtWorld * fxScale, this.camera, window.innerWidth, window.innerHeight);
     this.updateNametags();
     this.updateLeaderboard();
+    this.updateBossBar();
 
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
@@ -2012,6 +2019,23 @@ export default class GameScene {
       el.classList.remove('visible');
       el.style.borderColor = '';
     }, isBoss ? 6000 : 4000);
+  }
+
+  /** Boss bar: tracks the living Warlord (elite==='Warlord'). Hidden when no
+   *  boss exists or it dies — polled every frame from HUD sync. */
+  updateBossBar() {
+    const el = this.bossBarEl;
+    if (!el) return;
+    let boss = null;
+    for (const e of this.enemies.values()) {
+      if (e.state?.elite === 'Warlord' && e.state.hp > 0) { boss = e; break; }
+    }
+    if (!boss) { el.classList.remove('visible'); return; }
+    // Max hp mirrors applyElite's stamp: ceil(waveEnemyHp(wave) * hpMul 3).
+    const maxHp = Math.ceil(waveEnemyHp(this.room.state.wave) * 3);
+    const pct = Math.max(0, Math.min(1, boss.state.hp / maxHp));
+    if (this.bossFillEl) this.bossFillEl.style.width = `${pct * 100}%`;
+    el.classList.add('visible');
   }
 
   hideEliteToast() {
