@@ -642,6 +642,9 @@ export default class GameRoom extends Room {
     const careerRows = [];
     for (const [sid, player] of this.state.players) {
       const saved = loadPlayer(player.name) ?? {};
+      // NEW-BEST flag derives from the PRIOR record — after recordRun the
+      // best already includes this run, so the distinction is lost.
+      const priorBestWave = Number(saved.career?.bestWave) || 0;
       const career = recordRun(saved.career ?? null, {
         wave: this.state.wave,
         score: player.score,
@@ -653,7 +656,8 @@ export default class GameRoom extends Room {
       savePlayerDebounced(player.name, merged);
       const tier = tierForCareer(career);
       player.tier = tier; // live schema update for nametag accents
-      careerRows.push({ sid, name: player.name, career, tier });
+      careerRows.push({ sid, name: player.name, career, tier,
+        wasBestWave: this.state.wave > priorBestWave });
     }
     if (careerRows.length > 0) this.broadcast('careerUpdate', { rows: careerRows });
     this.logEvent('match_over', { winnerSid: this.state.winnerId, winnerName: this.state.winnerName });

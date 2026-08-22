@@ -949,6 +949,9 @@ export default class GameScene {
           });
         }
         this.lastTierSeen[row.sid] = row.tier;
+        if (row.wasBestWave && row.sid === this.room.sessionId) {
+          this.showEliteToast({ name: 'NEW BEST WAVE REACHED', boss: false });
+        }
         try {
           localStorage.setItem('ashfall-lasttier', JSON.stringify(this.lastTierSeen));
         } catch {}
