@@ -136,6 +136,25 @@ also evaluated in the browser because LocalRoom imports it.
 | `shared/worldgen.js` | deterministic chunk generation: CHUNK_SIZE 32, 3 biomes, `generateChunk(cx,cz,seed)` (props/spawnPoints/grass via seeded LCG), `activeChunksForPos`, `diffChunks`, `enemiesForLevel` |
 | `shared/arena.js` | arena-mode sanitizers, `assignTeams`, `scoresByTeam`, `roundWinner`, `matchWinner`, min/max players per mode |
 
+### src/shared/sim/ (room-level orchestration extracted in P1.3 + hackathon cycles)
+
+| File | Owns |
+|------|------|
+| `sim/leveling.js` | D2 XP/levels: grantXp (Scholar-aware), level-up card offers via pendingChoices + queue, chooseUpgrade/auto-pick deadlines |
+| `sim/combatBook.js` | D5 enemy-hit resolution + D4 burn DoT lifecycle; knockback composition (elite immunity > archetype mult); kill payment single-source `payKillXp` (dropOrb routing + elite doubling); elite kill extras (`onEliteKill`: double score, Volatile fuse); BURN-KILL ATTRIBUTION (fatal ticks credit sourced burns); ranged/melee block-aware damage routing stays room-side |
+| `sim/shopEffects.js` | D3 intermission shop pick application |
+| `sim/projectileLoop.js` | D6 step/collide/remove over live projectiles: owner arrows vs enemies (+burn handoff), PvP owner-excluded branch, ENEMY-owned branch (Shooter) hitting any living player |
+| `sim/matchPhases.js` | D7 pause wall/auto-pick gate + intermission deadline extension; D8 match reset (winner/victory cleared, players reseeded, orbs/power-ups respawned) |
+| `sim/dailyRun.js` | UTC-date seed + modifier stacks + streak math for the Daily Gauntlet |
+| `sim/weeklyRun.js` | ISO-week seeded modifier stacks + bestScore merge (no streak — forgiveness by design) |
+| `sim/elites.js` | Elite affix table (Swift/Bulwark/Vampiric/Volatile) + deterministic rotation, FINALE BOSS ('Warlord', excluded from rotation), applyElite stat stamping |
+| `sim/archetypes.js` | Enemy behavior tags from wave 3: Rusher/Tank/Shooter (wave-gated), deterministic `(wave+slot)%5` selector, markArchetypes pool stamping (slot-0 exclusions for elites/bosses), shooter constants (range/kite/cooldown/windup) |
+| `sim/orbDrops.js` | Kill-drop economy: chargeForKill teleports+charges nearest uncharged orb at the corpse, drainCharge pays/reverts, clearCharges reset |
+| `sim/magnetPull.js` | Magnet power-up pull math (strict radius, clamp-no-overshoot, first-holder-wins) |
+| `sim/careerStats.js` | Per-player lifetime record {runs,victories,bestWave,bestScore} + cosmetic tierForCareer thresholds (6/9/12) |
+| `sim/streaks.js` | Kill-streak windows/milestones (2.5s window, milestone-only announcements) |
+| `sim/achievements.js` | Pure predicate engine evaluating unlock conditions over persisted career/daily/weekly blobs |
+
 ### src/ client directories
 
 | Directory/File | Owns |
