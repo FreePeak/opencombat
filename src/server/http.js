@@ -24,7 +24,17 @@ const root = path.resolve(__dirname, '../..');
 
 // index.html is static, but in dev mode the live-reload script is injected
 // at the <!-- @live-reload --> placeholder (a no-op comment in production).
-const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+// Read lazily behind an mtime guard so dev edits to index.html show up
+// without a server restart.
+let indexCache = { mtimeMs: -1, html: '' };
+const loadIndexHtml = () => {
+  const file = path.join(root, 'index.html');
+  const mtimeMs = fs.statSync(file).mtimeMs;
+  if (mtimeMs !== indexCache.mtimeMs) {
+    indexCache = { mtimeMs, html: fs.readFileSync(file, 'utf8') };
+  }
+  return indexCache.html;
+};
 const RELOADER_SCRIPT = `<script>
 (function () {
   if (!window.EventSource) return;
@@ -34,10 +44,12 @@ const RELOADER_SCRIPT = `<script>
   es.onmessage = function (e) { if (e.data === 'reload') location.reload(); };
 })();
 </script>`;
-const servedIndex = () =>
-  SERVER.liveReload && indexHtml.includes('<!-- @live-reload -->')
-    ? indexHtml.replace('<!-- @live-reload -->', RELOADER_SCRIPT)
-    : indexHtml;
+const servedIndex = () => {
+  const html = loadIndexHtml();
+  return SERVER.liveReload && html.includes('<!-- @live-reload -->')
+    ? html.replace('<!-- @live-reload -->', RELOADER_SCRIPT)
+    : html;
+};
 
 const headerIp = (req) =>
   (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';

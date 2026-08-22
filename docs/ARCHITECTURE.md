@@ -350,10 +350,7 @@ LocalRoom.
 | Item | Purpose | Still needed? |
 |------|---------|---------------|
 | `test/browser.test.py` | Playwright e2e vs a running server: catches browser-only wiring errors node tests cannot see | YES — keep; run manually per README |
-| `test/fixproof.py` | one-off headless proof of RC5 (camera azimuth), RC6 (attack root), skill press against live server+client; screenshots into test/shots/ | historical; superseded by strafeRootSkill.test.mjs contracts. Delete candidate |
-| `test/shotproof.py` | one-off screenshot + numeric proof of RC1 (hips slide) and RC2 (attack timeScale) | historical; superseded by movementAttack.test.mjs. Delete candidate |
-| `test/burstprobe.py` | frame-delta probe proving the knight swing is visually distinct; wrote attack_peak.png | historical one-off. Delete candidate |
-| `test/shots/*.png` (8 files) | committed outputs of those probes | evidence only; nothing consumes them. Delete candidate alongside the probes |
+| `test/fixproof.py`, `test/shotproof.py`, `test/burstprobe.py`, `test/shots/*.png` | REMOVED — one-off ROOT_CAUSES-era probes + 2.3MB of PNG evidence; contracts already covered by strafeRootSkill/movementAttack/combat tests | deleted (redundant-tooling cleanup) |
 
 ---
 

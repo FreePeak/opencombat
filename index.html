@@ -7,113 +7,187 @@
   <!-- @live-reload -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%2366ff66'/></svg>">
   <style>
-    html, body { margin: 0; height: 100%; background: #0b0e14; overflow: hidden; font-family: monospace; }
+    /* ============ design tokens ============ */
+    :root {
+      --bg: #0b0f14;
+      --bg-2: #10161d;
+      --panel: rgba(16, 22, 29, 0.86);
+      --panel-solid: #141b24;
+      --line: rgba(148, 163, 184, 0.18);
+      --line-strong: rgba(148, 163, 184, 0.35);
+      --text: #e6edf3;
+      --muted: #8b98a5;
+      --accent: #34d399;
+      --accent-deep: #10b981;
+      --gold: #fbbf24;
+      --info: #38bdf8;
+      --danger: #f87171;
+      --radius-s: 6px;
+      --radius-m: 10px;
+      --radius-l: 16px;
+      --shadow-1: 0 2px 10px rgba(0, 0, 0, 0.35);
+      --shadow-2: 0 12px 40px rgba(0, 0, 0, 0.5);
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden;
+      font-family: var(--font); color: var(--text); }
     #game { position: fixed; inset: 0; }
-    #hud { position: fixed; top: 12px; left: 12px; color: #fff; z-index: 10; text-shadow: 0 1px 2px #000; }
-    #hp-bar { width: 220px; height: 14px; border: 1px solid #444; border-radius: 7px; background: #000a; overflow: hidden; }
-    #hp-fill { height: 100%; width: 100%; background: #4caf50; transition: width .15s; }
-    #cooldown-bar { width: 220px; height: 6px; margin-top: 3px; border-radius: 3px; background: #000a; overflow: hidden; }
-    #cooldown-fill { height: 100%; width: 0%; background: #ffd54f; }
-    #skill-cooldown-bar { width: 220px; height: 6px; margin-top: 3px; border-radius: 3px; background: #000a; overflow: hidden; }
-    #skill-cooldown-fill { height: 100%; width: 0%; background: #4fc3f7; }
-    #hud-text { margin-top: 6px; font-size: 13px; }
-    #leaderboard { position: fixed; top: 12px; right: 12px; z-index: 10; color: #ddd; font-size: 13px;
-      text-align: right; text-shadow: 0 1px 2px #000; }
-    #net-badge { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
-      display: none; color: #ffd54f; font-size: 12px; background: #000a; border: 1px solid #ffd54f66;
-      border-radius: 6px; padding: 3px 10px; text-shadow: 0 1px 2px #000; }
-    #leaderboard span { display: block; }
-    #leaderboard b { color: #ffd54f; }
-    #countdown { position: fixed; inset: 0; display: grid; place-items: center; z-index: 15;
-      color: #fff; font-size: 120px; font-weight: bold; text-shadow: 0 4px 12px #000; pointer-events: none; }
-    #flash { position: fixed; inset: 0; z-index: 12; background: #f00; opacity: 0; pointer-events: none; }
-    #gameover { position: fixed; inset: 0; display: none; place-items: center; z-index: 20; background: #0008; cursor: pointer; }
-    #gameover.visible { display: grid; }
-    #gameover .card { text-align: center; color: #fff; font-size: 30px; text-shadow: 0 2px 4px #000; }
-    #gameover .sub { font-size: 15px; color: #ffd54f; margin-top: 12px; }
-    #login { position: fixed; inset: 0; display: none; place-items: center; z-index: 30; background: #0b0e14; }
-    #login.visible { display: grid; }
-    #login .card { text-align: center; color: #fff; }
-    #login h1 { font-size: 26px; margin: 0 0 6px; }
-    #login p { color: #888; font-size: 13px; margin: 0 0 16px; }
-    #login input { font: 15px monospace; padding: 8px 12px; width: 220px; border-radius: 6px; border: 1px solid #333; background: #161b22; color: #fff; }
-    /* long trycloudflare/tunnel hosts need more room than the name field */
-    #login-server { width: 260px; margin-top: 8px; font-size: 13px; }
-    #char-picker { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
-    #mode-picker { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
-    /* #login .char-card must outrank the generic "#login button" rule below. */
-    #login .char-card { font: 13px monospace; padding: 8px 10px; border-radius: 6px; border: 1px solid #333;
-      background: #161b22; color: #bbb; cursor: pointer; }
-    #login .char-card:hover { border-color: #555; color: #fff; }
-    #login .char-card.selected { border-color: #4caf50; color: #fff; background: #1d2a1e; }
-    #login button { margin-top: 12px; font: 14px monospace; padding: 8px 26px; border-radius: 6px; border: none;
-      background: #4caf50; color: #fff; cursor: pointer; }
-    #login-error { color: #ff6b6b; font-size: 13px; margin-top: 10px; display: none; }
 
-    /* --- Touch controls overlay (Mobile joystick + buttons) ------------ */
+    /* ============ HUD ============ */
+    #hud { position: fixed; top: 14px; left: 14px; z-index: 10;
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-l);
+      padding: 12px 14px; box-shadow: var(--shadow-1); backdrop-filter: blur(8px); }
+    #hp-bar { width: 230px; height: 12px; border-radius: 999px; background: rgba(255,255,255,0.08);
+      border: 1px solid var(--line); overflow: hidden; }
+    #hp-fill { height: 100%; width: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.45); transition: width .15s ease-out; }
+    #cooldown-bar { width: 230px; height: 5px; margin-top: 6px; border-radius: 999px;
+      background: rgba(255,255,255,0.07); overflow: hidden; }
+    #cooldown-fill { height: 100%; width: 0%; background: var(--gold); transition: width .1s linear; }
+    #skill-cooldown-bar { width: 230px; height: 5px; margin-top: 4px; border-radius: 999px;
+      background: rgba(255,255,255,0.07); overflow: hidden; }
+    #skill-cooldown-fill { height: 100%; width: 0%; background: var(--info); transition: width .1s linear; }
+    #hud-text { margin-top: 8px; font: 12px/1.5 var(--mono); color: var(--muted); letter-spacing: .02em; }
+
+    /* ============ leaderboard / badges ============ */
+    #leaderboard { position: fixed; top: 14px; right: 14px; z-index: 10; min-width: 150px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-l);
+      padding: 10px 14px; font-size: 13px; color: var(--muted); text-align: right;
+      box-shadow: var(--shadow-1); backdrop-filter: blur(8px); }
+    #leaderboard span { display: block; padding: 1px 0; }
+    #leaderboard b { color: var(--gold); font-weight: 600; }
+    #net-badge { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
+      display: none; color: var(--gold); font: 11px var(--mono); letter-spacing: .06em;
+      background: var(--panel); border: 1px solid rgba(251, 191, 36, 0.4);
+      border-radius: 999px; padding: 5px 14px; backdrop-filter: blur(8px); }
+    #paused-badge { position: fixed; top: 84px; left: 14px; z-index: 13; display: none;
+      color: var(--gold); font: 11px var(--mono); letter-spacing: .06em;
+      background: var(--panel); border: 1px solid rgba(251, 191, 36, 0.4);
+      border-radius: 999px; padding: 5px 14px; }
+
+    /* ============ countdown / flash ============ */
+    #countdown { position: fixed; inset: 0; display: grid; place-items: center; z-index: 15;
+      pointer-events: none; color: var(--text); font-family: var(--font); font-size: 128px; font-weight: 800;
+      text-shadow: 0 6px 30px rgba(0,0,0,.8), 0 0 60px rgba(52, 211, 153, 0.25); }
+    #flash { position: fixed; inset: 0; z-index: 12; background: var(--danger); opacity: 0; pointer-events: none; }
+
+    /* ============ overlays ============ */
+    #gameover, #reconnect, #upgrade-overlay, #shop-overlay, #login {
+      position: fixed; inset: 0; display: none; place-items: center; }
+    #gameover.visible, #reconnect.visible, #upgrade-overlay.visible, #shop-overlay.visible, #login.visible {
+      display: grid; }
+    #gameover { z-index: 20; background: rgba(4, 8, 12, 0.72); cursor: pointer; backdrop-filter: blur(4px); }
+    #reconnect { z-index: 25; background: rgba(4, 8, 12, 0.78); }
+    #upgrade-overlay { z-index: 22; background: rgba(4, 8, 12, 0.66); backdrop-filter: blur(4px); }
+    #shop-overlay { z-index: 21; background: rgba(4, 8, 12, 0.66); backdrop-filter: blur(4px); }
+    #login { z-index: 30; background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(52, 211, 153, 0.09), transparent 60%), var(--bg); }
+
+    /* ============ game over / reconnect ============ */
+    #gameover .card { text-align: center; color: var(--text); font-size: 40px; font-weight: 800;
+      letter-spacing: .04em; text-shadow: 0 4px 24px rgba(0,0,0,.8); }
+    #gameover .sub, #reconnect .sub { font-size: 15px; color: var(--gold); margin-top: 14px; font-weight: 500; }
+    #reconnect .card { color: var(--text); font-size: 22px; font-weight: 600; text-align: center; }
+
+    /* ============ upgrade + shop ============ */
+    #upgrade-overlay > div, #shop-overlay > div { text-align: center; }
+    #upgrade-title, #shop-title { color: var(--text); font-size: 20px; font-weight: 700;
+      letter-spacing: .03em; margin-bottom: 16px; }
+    #upgrade-grid, #shop-grid { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .up-card, .shop-card { width: 190px; min-height: 124px; box-sizing: border-box;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0)), var(--panel-solid);
+      border: 1px solid var(--line-strong); border-radius: var(--radius-m);
+      padding: 14px; color: var(--text); text-align: center; cursor: pointer;
+      box-shadow: var(--shadow-1); transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+    .up-card:hover, .shop-card:hover { transform: translateY(-4px); border-color: var(--gold);
+      box-shadow: 0 10px 26px rgba(0,0,0,.45); }
+    .up-card { border-top: 2px solid var(--accent); }
+    .shop-card { border-top: 2px solid var(--info); }
+    .up-title, .shop-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+    .up-title { color: var(--accent); }
+    .shop-title { color: var(--info); }
+    .up-desc, .shop-desc { font-size: 12px; line-height: 1.5; color: var(--muted); }
+    .up-timer, .shop-timer { margin-top: 12px; font: 11px var(--mono); color: var(--muted); letter-spacing: .05em; }
+
+    /* ============ login ============ */
+    #login .card { text-align: center; color: var(--text);
+      background: var(--panel-solid); border: 1px solid var(--line); border-radius: var(--radius-l);
+      box-shadow: var(--shadow-2); padding: 36px 44px 32px; min-width: 340px; }
+    #login h1 { font-size: 30px; font-weight: 800; letter-spacing: .02em; margin: 0 0 6px;
+      background: linear-gradient(90deg, var(--accent), var(--info));
+      -webkit-background-clip: text; background-clip: text; color: transparent; }
+    #login p { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+    #login input { font: 14px var(--mono); padding: 10px 14px; width: 240px; box-sizing: border-box;
+      border-radius: var(--radius-s); border: 1px solid var(--line-strong);
+      background: var(--bg-2); color: var(--text); outline: none; transition: border-color .12s, box-shadow .12s; }
+    #login input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18); }
+    #login input::placeholder { color: #55606c; }
+    #login-server { width: 280px !important; margin-top: 8px; font-size: 13px; }
+    #char-picker, #mode-picker { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    #char-picker { margin-top: 18px; }
+    #mode-picker { margin-top: 10px; }
+    /* #login .char-card must outrank the generic "#login button" rule below. */
+    #login .char-card { font: 12px var(--mono); padding: 9px 12px; border-radius: var(--radius-s);
+      border: 1px solid var(--line-strong); background: var(--bg-2); color: var(--muted); cursor: pointer;
+      transition: border-color .12s, color .12s, background .12s; }
+    #login .char-card:hover { border-color: var(--muted); color: var(--text); }
+    #login .char-card.selected { border-color: var(--accent); color: var(--text);
+      background: rgba(52, 211, 153, 0.1); box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.12); }
+    #login button { margin-top: 18px; font: 600 14px var(--font); letter-spacing: .06em;
+      padding: 11px 42px; border-radius: 999px; border: none; cursor: pointer;
+      background: linear-gradient(90deg, var(--accent-deep), var(--accent)); color: #06281c;
+      box-shadow: 0 6px 20px rgba(52, 211, 153, 0.3); transition: filter .12s, transform .12s; }
+    #login button:hover { filter: brightness(1.08); }
+    #login button:active { transform: translateY(1px); }
+    #login-error { color: var(--danger); font-size: 13px; margin-top: 12px; display: none; }
+
+    /* ============ touch controls ============ */
     #touch-controls { display: none; position: fixed; inset: 0; z-index: 14;
       pointer-events: none; -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent; user-select: none; }
     #touch-controls.tc-active { display: block; }
-
     #tc-stick-zone { position: absolute; left: 0; bottom: 0;
       width: 45vw; height: 70vh; pointer-events: auto; touch-action: none; }
-
     .tc-ring { position: fixed; border-radius: 50%; pointer-events: none;
       transform: translate(-50%, -50%); opacity: 0; transition: opacity .15s; }
     .tc-ring.tc-visible { opacity: 1; }
-    #tc-base { width: 80px; height: 80px; background: rgba(255,255,255,0.12);
-      border: 2px solid rgba(255,255,255,0.3); }
-    #tc-knob { width: 44px; height: 44px; background: rgba(255,255,255,0.4);
-      border: 2px solid rgba(255,255,255,0.6); }
-
+    #tc-base { width: 80px; height: 80px; background: rgba(255,255,255,0.10);
+      border: 2px solid rgba(255,255,255,0.25); }
+    #tc-knob { width: 44px; height: 44px; background: rgba(255,255,255,0.35);
+      border: 2px solid rgba(255,255,255,0.55); }
     #tc-buttons { position: fixed; right: 16px; bottom: 24px;
       display: flex; flex-direction: column; align-items: center; gap: 14px;
       pointer-events: auto; padding-bottom: env(safe-area-inset-bottom, 0);
       padding-right: env(safe-area-inset-right, 0); }
-
-    .tc-btn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
-      background: rgba(255,255,255,0.15); color: #fff; font-size: 26px;
-      display: flex; align-items: center; justify-content: center;
-      touch-action: none; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-    .tc-btn:active { background: rgba(255,255,255,0.35); }
+    .tc-btn { width: 64px; height: 64px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.12);
+      color: var(--text); font-size: 26px; display: flex; align-items: center; justify-content: center;
+      touch-action: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+      backdrop-filter: blur(4px); }
+    .tc-btn:active { background: rgba(255,255,255,0.3); }
     .tc-btn-primary { width: 76px; height: 76px; font-size: 30px;
-      background: rgba(255,80,80,0.3); border-color: rgba(255,100,100,0.5); }
-    .tc-btn-primary:active { background: rgba(255,80,80,0.55); }
+      background: rgba(248, 113, 113, 0.28); border-color: rgba(248, 113, 113, 0.5); }
+    .tc-btn-primary:active { background: rgba(248, 113, 113, 0.5); }
     .tc-btn-small { width: 44px; height: 44px; font-size: 18px;
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
       padding-bottom: env(safe-area-inset-bottom, 0); }
-    #reconnect { position: fixed; inset: 0; display: none; place-items: center; z-index: 25; background: #000a; }
-    #reconnect.visible { display: grid; }
-    #reconnect .card { color: #fff; font-size: 20px; text-align: center; }
-    #reconnect .sub { color: #bbb; font-size: 13px; margin-top: 8px; }
-    #upgrade-overlay { position: fixed; inset: 0; display: none; place-items: center; z-index: 22; background: #0007; }
-    #upgrade-overlay.visible { display: grid; }
-    #upgrade-overlay .upgrade-grid { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
-    #upgrade-overlay .up-card { width: 180px; min-height: 120px; background: #1b2332; border: 1px solid #4caf50; border-radius: 10px;
-      padding: 12px; color: #fff; text-align: center; cursor: pointer; transition: transform .12s, border-color .12s; }
-    #upgrade-overlay .up-card:hover { transform: translateY(-4px); border-color: #ffd54f; }
-    #upgrade-overlay .up-title { font-size: 14px; font-weight: bold; color: #ffd54f; margin-bottom: 6px; }
-    #upgrade-overlay .up-desc { font-size: 12px; color: #ccc; }
-    #upgrade-overlay .up-timer { margin-top: 10px; font-size: 12px; color: #aaa; }
-    #shop-overlay { position: fixed; inset: 0; display: none; place-items: center; z-index: 21; background: #0007; }
-    #shop-overlay.visible { display: grid; }
-    #shop-overlay .shop-grid { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
-    #shop-overlay .shop-card { width: 180px; min-height: 110px; background: #1b2332; border: 1px solid #4fc3f7; border-radius: 10px;
-      padding: 12px; color: #fff; text-align: center; cursor: pointer; transition: transform .12s, border-color .12s; }
-    #shop-overlay .shop-card:hover { transform: translateY(-4px); border-color: #ffd54f; }
-    #shop-overlay .shop-title { font-size: 14px; font-weight: bold; color: #4fc3f7; margin-bottom: 6px; }
-    #shop-overlay .shop-desc { font-size: 12px; color: #ccc; }
-    #shop-overlay .shop-timer { margin-top: 10px; font-size: 12px; color: #aaa; }
-    #paused-badge { position: fixed; top: 64px; left: 12px; z-index: 13; display: none; color: #ffd54f; background: #000a; border: 1px solid #ffd54f66; border-radius: 6px; padding: 4px 10px; font-size: 12px; }
-    #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #ccc; font-size: 15px; z-index: 5; }
+
+    /* ============ nametags + floating text ============ */
     #nametag-layer { position: fixed; inset: 0; z-index: 8; pointer-events: none; }
     .nametag { position: absolute; top: 0; left: 0; transform: translate(-50%, -100%);
-      color: #fff; font-size: 12px; background: rgba(0,0,0,0.55); border: 1px solid #fff;
-      border-radius: 4px; padding: 1px 6px; white-space: nowrap; text-shadow: none; }
+      color: var(--text); font: 11px var(--mono); background: rgba(6, 10, 14, 0.72);
+      border: 1px solid var(--line-strong); border-radius: 999px; padding: 2px 9px;
+      white-space: nowrap; backdrop-filter: blur(3px); }
     #float-layer { position: fixed; inset: 0; z-index: 9; pointer-events: none; overflow: hidden; }
-    .float-text { position: absolute; top: 0; left: 0; font-size: 16px; font-weight: bold;
-      color: #fff; text-shadow: 0 1px 2px #000; will-change: transform, opacity; }
+    .float-text { position: absolute; top: 0; left: 0; font-size: 16px; font-weight: 700;
+      font-family: var(--font); color: var(--text); text-shadow: 0 2px 6px rgba(0,0,0,.85);
+      will-change: transform, opacity; }
+
+    /* ============ loading ============ */
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; z-index: 5;
+      color: var(--muted); font: 13px var(--mono); letter-spacing: .08em; }
   </style>
 </head>
 <body>

@@ -19,18 +19,19 @@ test('makeLcg values stay in [0, 1)', () => {
   }
 });
 
-test('sampleOpenPositions returns exactly count unique-enough points outside the spawn square', () => {
-  const pts = sampleOpenPositions(makeLcg(1), 50, 24, 7);
+test('sampleOpenPositions returns exactly count points outside the spawn square', () => {
+  // half = size/2 - 1 mirrors GameScene.scatterProps' h.
+  const pts = sampleOpenPositions(makeLcg(1), 50, 23, 7);
   assert.equal(pts.length, 50);
   for (const { x, z } of pts) {
     assert.ok(Math.abs(x) >= 7 || Math.abs(z) >= 7, 'point inside spawn square: ' + x + ',' + z);
-    assert.ok(Math.abs(x) <= 24 && Math.abs(z) <= 24, 'point outside arena: ' + x + ',' + z);
+    assert.ok(Math.abs(x) <= 23 && Math.abs(z) <= 23, 'point outside arena: ' + x + ',' + z);
   }
 });
 
 test('sampleOpenPositions is deterministic', () => {
-  const a = sampleOpenPositions(makeLcg(42), 20, 24, 7);
-  const b = sampleOpenPositions(makeLcg(42), 20, 24, 7);
+  const a = sampleOpenPositions(makeLcg(42), 20, 23, 7);
+  const b = sampleOpenPositions(makeLcg(42), 20, 23, 7);
   assert.deepEqual(a, b);
 });
 

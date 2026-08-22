@@ -11,6 +11,7 @@
 // (serverAvailable) lives in network.js; the fallback room is
 // src/LocalRoom.js.
 import GameScene from './scenes/GameScene.js';
+import { dressArena } from './client/NatureDressing.js';
 
 window.__OPENGAME_BOOTED = true; // set BEFORE any async work below
 
@@ -39,6 +40,9 @@ if (!webglAvailable()) {
   try {
     const scene = new GameScene(document.getElementById('game'));
     scene.init();
+    // GLB nature dressing (downloaded CC0 set): async, non-blocking,
+    // and must never block or break boot — failures are logged only.
+    dressArena(scene).catch((err) => console.warn('[opengame] nature dressing failed:', err));
     // E2E hook: browser tests (test/browser.test.py) probe the live scene via
     // window.__gameScene to assert rendering + movement internals.
     window.__gameScene = scene;

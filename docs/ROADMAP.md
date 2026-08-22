@@ -33,7 +33,7 @@ Plan shape: 4 quarters, each with an explicit theme. Phases inside a quarter res
 
 ### Phase 1.4 — Flaky-test elimination
 - FR refs: FR-FAIR-03.
-- Deliverables: identify and fix timing-dependent assertions (the class of bug fixed by commit de77d54 "fix: flaky phase4 assertion"); delete historical probe scripts flagged as delete candidates in ARCHITECTURE.md section 5.4 (`fixproof.py`, `shotproof.py`, `burstprobe.py`, `test/shots/*.png`) once their contracts are confirmed covered by movementAttack/strafeRootSkill tests.
+- Deliverables: identify and fix timing-dependent assertions (the class of bug fixed by commit de77d54 "fix: flaky phase4 assertion"); historical probe scripts (`fixproof.py`, `shotproof.py`, `burstprobe.py`, `test/shots/*.png`) were removed in the redundant-tooling cleanup; focus on timing-dependent assertions like the class fixed by de77d54.
 - Acceptance criteria: `npm test` x20 consecutive runs locally with zero failures; CI run on 3 consecutive pushes green; deleted files listed in PROGRESS.md evidence.
 - Dependencies: Phase 1.2 (gate to observe flakiness against).
 - Estimate: 1 agent-week.
