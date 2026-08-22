@@ -958,6 +958,20 @@ export default class GameScene {
     mesh.position.set(orb.x, CONFIG.orb.y, orb.z);
     this.scene.add(mesh);
     this.orbViews[i] = { mesh, state: orb };
+    this.applyOrbChargeLook(this.orbViews[i]);
+  }
+
+  /** Charged kill-orbs read gold with a hot emissive; plain orbs stay green.
+   *  Polled from the per-frame orb sync so charge flips (collect/teleport)
+   *  revert instantly without extra schema callbacks. */
+  applyOrbChargeLook(view) {
+    const charged = (view.state?.charge ?? 0) > 0;
+    const mat = view.mesh.material;
+    if (!mat || mat._charged === charged) return;
+    mat._charged = charged;
+    mat.color.setHex(charged ? 0xffd700 : CONFIG.colors.orb);
+    mat.emissive.setHex(charged ? 0x8a6d00 : 0x22aa22);
+    mat.emissiveIntensity = charged ? 0.95 : 0.6;
   }
 
   /** Create a power-up with distinct silhouette per type (Phase 5).
@@ -1016,9 +1030,13 @@ export default class GameScene {
     const cfg = CONFIG.projectiles[proj.kind] ?? CONFIG.projectiles.arrow;
     let mesh;
     if (proj.kind === 'arrow') {
+      // Enemy-owned arrows (Shooter archetype) render red-shifted so incoming
+      // fire reads as danger at a glance — research lesson #10/#11.
+      const hostile = proj.ownerIsPlayer === false;
+      const color = hostile ? 0xff5252 : cfg.color;
       mesh = new THREE.Mesh(
         new THREE.CylinderGeometry(cfg.scale, cfg.scale * 0.5, cfg.height, 6),
-        new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.emissive, emissiveIntensity: 0.6 })
+        new THREE.MeshStandardMaterial({ color, emissive: hostile ? 0xb71c1c : cfg.emissive, emissiveIntensity: 0.6 })
       );
       mesh.rotation.x = Math.PI / 2; // point forward along Z
     } else if (proj.kind === 'fireball') {
@@ -1374,6 +1392,7 @@ export default class GameScene {
     for (const view of this.orbViews) {
       view.mesh.position.x = view.state.x;
       view.mesh.position.z = view.state.z;
+      this.applyOrbChargeLook(view); // charged<->plain flip without callbacks
       // Crystal spin + emissive pulse + bob (Phase 5).
       view.mesh.rotation.y += dt * 2;
       view.mesh.rotation.x += dt * 0.85;

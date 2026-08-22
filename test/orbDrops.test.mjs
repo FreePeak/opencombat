@@ -71,3 +71,12 @@ test('clearCharges: reset path empties everything', () => {
   clearCharges(charges);
   assert.equal(charges.size, 0);
 });
+
+test('chargeForKill/drainCharge mirror the charge onto the orb object', () => {
+  const orbs = makeOrbs([[2, 0]]);
+  const charges = new Map();
+  chargeForKill(orbs, charges, 4, 4, 30);
+  assert.equal(orbs[0].charge, 30, 'charged orb exposes its value for rendering');
+  assert.equal(drainCharge(charges, orbs[0]), 30);
+  assert.equal(orbs[0].charge, 0, 'drain reverts the exposed value');
+});

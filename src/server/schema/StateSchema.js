@@ -63,9 +63,10 @@ export class OrbState extends Schema {
     super();
     this.x = x;
     this.z = z;
+    this.charge = 0; // stored kill-XP (PRD-orb-drops.md) — >0 renders gold
   }
 }
-defineTypes(OrbState, { x: 'number', z: 'number' });
+defineTypes(OrbState, { x: 'number', z: 'number', charge: 'number' });
 
 // One power-up pick-up. type cycles through speed/shield/double; active=false
 // while it is respawning (clients hide it).

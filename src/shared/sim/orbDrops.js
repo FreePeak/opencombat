@@ -48,6 +48,7 @@ export function chargeForKill(orbs, charges, x, z, amount) {
   const orb = orbs[bestIdx];
   orb.x = x;
   orb.z = z;
+  orb.charge = amount; // exposed for client rendering (gold pulse)
   charges.set(orb, amount);
   return true;
 }
@@ -66,6 +67,7 @@ export function drainCharge(charges, orb) {
     return 0;
   }
   charges.delete(orb);
+  if ('charge' in orb) orb.charge = 0; // revert the rendered state too
   return amount;
 }
 
