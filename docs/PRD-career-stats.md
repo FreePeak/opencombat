@@ -95,3 +95,7 @@ deletes forget them.
 
 - 2.18 air-gap vendoring (31990b9): asset-serving only — no career/auth
   interaction. Combined tree gate green (119 files, 207/207). Compose-clean.
+- 2.20 waves spectate (701a267): spectators are presence-only (no
+  PlayerState seat — first branch in onJoin), so endMatch's career loop
+  cannot see them; peer's own test pins 'only the real player finalized'.
+  Compose-clean with explicit coverage.
