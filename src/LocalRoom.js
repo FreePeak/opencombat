@@ -863,6 +863,16 @@ export class LocalRoom {
   /** Click on the wave-cleared popup: next wave + countdown (also auto-advance). */
    _requestNextWave() {
     if (this.state.matchState !== 'intermission') return;
+    // WAVE FINALE mirror of GameRoom.startNextWave (PRD-wave-finale.md).
+    if (SERVER.wave.finaleWave > 0 &&
+        this.state.wave + 1 > SERVER.wave.finaleWave) {
+      this.state.victory = true;
+      this.state.matchState = 'gameover';
+      this.state.countdown = 0;
+      this._matchEnded = true;
+      this._notifyStateChange();
+      return;
+    }
     this._pendingStrikes = [];
     this.state.projectiles.clear();
     this.simPhases.intermissionBox.until = 0;

@@ -380,6 +380,49 @@ const drainUpgradeCards = async (sr, ...clients) => {
   }
 }
 
+
+// --- Wave finale (PRD-wave-finale.md) -----------------------------------------
+{
+  const prevFinale = SERVER.wave.finaleWave;
+  SERVER.wave.finaleWave = 2; // shrink the run for test speed
+  try {
+    const host = await newRoom('Finale');
+    const sr = roomOf(host.r);
+    try {
+      const me = sr.state.players.get(host.r.sessionId);
+      me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
+      const clearWave = async () => {
+        const alive = sr.state.enemies.filter((e) => e.hp > 0);
+        alive.forEach((e, i) => {
+          e.hp = 1;
+          const ang = (i - (alive.length - 1) / 2) * 0.3;
+          e.x = 1.8 * Math.cos(ang);
+          e.z = 1.8 * Math.sin(ang);
+        });
+        host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+        await waitFor(() => sr.state.matchState === 'intermission', 3000, 'finale clear');
+        await drainUpgradeCards(sr, host.r);
+      };
+      await clearWave();
+      host.r.send('nextWave');
+      await waitFor(() => sr.state.matchState === 'playing', 8000, 'finale wave 2 playing');
+      await clearWave();
+      // Advancing past the finale wave ends the match as a co-op VICTORY.
+      host.r.send('nextWave');
+      await waitFor(() => sr.state.matchState === 'gameover', 3000, 'victory gameover');
+      assert.equal(sr.state.victory, true, 'AC1: victory flag set');
+      // AC3: playAgain restores a fresh endless=false run.
+      host.r.send('playAgain');
+      await waitFor(() => sr.state.matchState === 'playing', 8000, 'playing after victory replay');
+      assert.equal(sr.state.victory, false, 'victory reset on replay');
+    } finally {
+      host.r.leave();
+    }
+  } finally {
+    SERVER.wave.finaleWave = prevFinale;
+  }
+}
+
 await gameServer.gracefullyShutdown(false);
 httpServer.closeAllConnections();
 await new Promise((res) => httpServer.close(res));
@@ -527,6 +570,46 @@ resetRateLimit();
   const lshot = [...lroom.state.projectiles].find((pr2) => !pr2.ownerIsPlayer);
   assert.equal(lshot.damage, SERVER.enemy.shotDamage, 'LOCAL: same shotDamage');
   lroom.leave();
+}
+
+// --- LOCAL parity: finale ends with victory + replay reset --------------------
+{
+  const prevFinale = SERVER.wave.finaleWave;
+  SERVER.wave.finaleWave = 1;
+  try {
+    const lroom = new LocalRoom();
+    await lroom.join('SoloFinale', 0);
+    lroom._running = false;
+    lroom._countdownTimer = 0;
+    lroom._step(0.05);
+    const lme = lroom.state.players.get(lroom.sessionId);
+    lme.x = 0; lme.z = 0;
+    // Clear wave 1 (the finale here).
+    const la = [...lroom.state.enemies].filter((e) => e.hp > 0);
+    la.forEach((e, i) => { e.hp = 1; const a2 = (i - (la.length - 1) / 2) * 0.3; e.x = 1.8 * Math.cos(a2); e.z = 1.8 * Math.sin(a2); });
+    lme.rotY = Math.PI / 2;
+    lroom.send('input', { dirX: 0, dirZ: 0, attack: true, skill: false, anim: 'attack', block: false });
+    lroom._step(0.05);
+    await waitMs(SERVER.player.attackImpactMs + 250);
+    lroom._step(0.05);
+    for (let i = 0; i < 12 && (lme.pendingChoices.length > 0 ||
+         lroom.state.matchState !== 'intermission'); i++) {
+      while (lme.pendingChoices.length > 0) {
+        lroom.send('chooseUpgrade', { choice: lme.pendingChoices[0] });
+        lroom._step(0.05);
+      }
+      lroom._step(0.05);
+    }
+    assert.equal(lroom.state.matchState, 'intermission', 'LOCAL finale: cleared');
+    // Advancing past finale -> victory gameover.
+    lroom.send('nextWave');
+    lroom._step(0.05);
+    assert.equal(lroom.state.matchState, 'gameover', 'LOCAL: victory gameover');
+    assert.equal(lroom.state.victory, true, 'LOCAL AC1: victory flag');
+    lroom.leave();
+  } finally {
+    SERVER.wave.finaleWave = prevFinale;
+  }
 }
 
 console.log('ok — waves.test.mjs: wave spawning/scaling, intermission gate + invulnerability, nextWave click flow, hit-stun freeze, play-again reset, local-sim parity, enemy archetypes');

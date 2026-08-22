@@ -98,6 +98,7 @@ export const SERVER = {
   wave: {
     intermissionMs: 8000,         // wave-clear breather before next countdown
     maxPauseMs: 30000,            // global pause cap while upgrade/shop open
+    finaleWave: 12,               // clearing this wave + advancing = co-op VICTORY (0 = endless)
   },
 
   enemy: {

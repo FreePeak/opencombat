@@ -1393,9 +1393,14 @@ export default class GameScene {
         this.deadShown = true; // suppress the death overlay underneath
       }
       if (state.matchState === 'gameover') {
-        this.sound.gameOver();
-        this.overlayTitle.textContent = state.winnerId === this.room.sessionId
-          ? 'YOU WIN!' : state.winnerName + ' WINS!';
+        // WAVE FINALE (PRD-wave-finale.md): co-op victory reads differently
+        // from a death/PvP ending — the run was WON.
+        if (state.victory) this.sound.victory?.();
+        else this.sound.gameOver();
+        this.overlayTitle.textContent = state.victory
+          ? 'THE HORDE IS BROKEN — VICTORY!'
+          : state.winnerId === this.room.sessionId
+            ? 'YOU WIN!' : state.winnerName + ' WINS!';
         const scores = [...state.players.values()]
           .sort((a, b) => b.score - a.score).slice(0, 3)
           .map((p) => `${p.name}: ${p.score}`).join('   ');

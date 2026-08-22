@@ -654,6 +654,14 @@ export default class GameRoom extends Room {
   startNextWave() {
     if (this.state.matchState !== 'intermission') return;
     const next = this.state.wave + 1;
+    // WAVE FINALE (PRD-wave-finale.md): advancing past the finale wave is a
+    // co-op win — the run ends instead of spawning another wave.
+    if (SERVER.wave.finaleWave > 0 && next > SERVER.wave.finaleWave) {
+      this.state.victory = true;
+      this.logEvent('match_victory', { waves: this.state.wave });
+      this.endMatch('');
+      return;
+    }
     this.pendingMelee = [];
     this.intermissionShopChoices.clear();
     this.state.projectiles.clear();

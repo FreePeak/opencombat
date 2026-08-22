@@ -128,6 +128,7 @@ export function resetMatchState(ctx, opts = {}) {
   // Winner cleared first; LocalRoom's _matchEnded flag stays room-side.
   state.winnerId = '';
   state.winnerName = '';
+  state.victory = false; // PRD-wave-finale.md: replays start un-won
   if (opts.resetProjectiles !== false) state.projectiles.clear(); // alignment #2
 
   // Players: repositioned by the injected sampler, base HP, everything that

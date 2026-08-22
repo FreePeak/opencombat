@@ -147,6 +147,7 @@ export class WorldState extends Schema {
     this.matchState = 'lobby';  // 'lobby' | 'countdown' | 'playing' | 'intermission' | 'gameover'
     this.countdown = 0;         // seconds left in the countdown (0 otherwise)
     this.wave = 1;              // current enemy wave (1-based)
+    this.victory = false;       // co-op win: finale cleared (PRD-wave-finale.md)
     this.winnerId = '';         // sessionId of the match winner
     this.winnerName = '';       // ...and their name, for the results overlay
     this.paused = false;        // true while choosing upgrade/shop (PVE pause)
@@ -169,6 +170,7 @@ defineTypes(WorldState, {
   matchState: 'string',
   countdown: 'number',
   wave: 'number',
+  victory: 'boolean',
   winnerId: 'string',
   winnerName: 'string',
   paused: 'boolean',
