@@ -138,6 +138,9 @@ const roomOfLobby = (r) => [...LobbyRoom.instances].find((x) => x.roomId === r.r
   attacker.rotY = Math.atan2(oppVictim.x - attacker.x, oppVictim.z - attacker.z);
   sr.invulnUntil.set(oppTeamSid, 0);
   const oppHpBefore = oppVictim.hp;
+  // Park orbs away: ArenaRoom seeds them too, and a stray proximity pickup
+  // would contaminate the exact +10 kill-score assert below.
+  sr.state.orbs.forEach((o) => { o.x = 40; o.z = 40; });
   const scoreBefore = attacker.score;
   sr.melee(attackerSid);
   await waitMs(100);

@@ -193,6 +193,8 @@ const parkPickups = (room) => {
   // intermission invulnerability gate.
 
   const myHpBefore = me.hp;
+  // Park uncharged orbs away so only the elite burst lands in the delta.
+  room.state.orbs.forEach((o) => { if (o.charge === 0) { o.x = 30; o.z = 30; } });
   const scoreBefore = me.score;
   assert.equal(room._hitEnemy(boom, 99, -6, 0, room.sessionId), true, 'killing blow lands');
   assert.equal(boom.hp, 0);
