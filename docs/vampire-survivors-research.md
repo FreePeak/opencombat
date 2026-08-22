@@ -110,7 +110,9 @@ buy the most engagement per unit of engineering.
 | 5 | Trickle spawns during intermission tail | Low–Med | S | matchPhases/updatePlaying spawner | REJECTED — conflicts with the invulnerable-breather shop identity; wave-discrete pacing is a design pillar, not a gap |
 | 6 | Magnet power-up (pull all orbs) | Low–Med | S | SERVER.powerUps + pickup loop | SHIPPED (3d42bff) |
 | 7 | Shooter windup telegraph + hostile-arrow tint | Med | S | archetypes constants, chase branches, Projectile view | SHIPPED (6009c2c, 4c605db) |
-| 8 | Career unlock tints (cosmetic) | Med | M | career tier at join, nametag accents | SHIPPED tier system (f5ef94e); unlock toast deferred (cosmetic polish) |
+| 8 | Career unlock tints (cosmetic) | Med | M | career tier at join, nametag accents | SHIPPED full stack (tints f5ef94e; toast + persisted baselines f45a477/d1953aa; offline parity 4abf254) |
+| 9 | Burn-kill attribution | Med | S | tickBurns fatal-tick credit chain | SHIPPED (a6fefe7) |
+| 10 | Ranged-block fairness pin | Low | S | guard vs Shooter arrows | SHIPPED pin (10fb248) |
 
 ## 7. Decision for this cycle
 
