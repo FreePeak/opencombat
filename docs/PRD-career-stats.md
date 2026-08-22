@@ -118,3 +118,6 @@ deletes forget them.
   rows carry streak, weekly carry objectivesDone, victory headline matches
   the finale banner text. Closes research backlog idea #3's deferred polish.
   Compose-clean.
+- Perf gate v2 (3915f65): peer hardened the raw-max assert to p99+250ms
+  ceiling after observing a 102ms OS-preemption blip under parallel-suite
+  contention; certified this cycle at median 0.35ms / p99 3.38ms. Compose-clean.
