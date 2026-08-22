@@ -118,10 +118,21 @@ const liveRooms = () => {
 // must be skipped, never fail the API.
 const listRooms = () => {
   const entries = [];
+  // Spectator counts (PRD-waves-spectate.md): ONE presence scan per request
+  // into Map<roomId, count>, then every room entry below gets annotated.
+  const spectatorsByRoom = new Map();
+  for (const p of listPresence()) {
+    if (p.mode === 'spectating' && p.roomId) {
+      spectatorsByRoom.set(p.roomId, (spectatorsByRoom.get(p.roomId) ?? 0) + 1);
+    }
+  }
   const push = (read) => {
     try {
       const entry = read();
-      if (entry) entries.push(entry);
+      if (entry) {
+        entry.spectators = spectatorsByRoom.get(entry.roomId) ?? 0;
+        entries.push(entry);
+      }
     } catch {} // disposed mid-read -> drop this room
   };
   for (const room of GameRoom.instances) {

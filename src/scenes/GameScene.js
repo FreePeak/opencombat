@@ -568,8 +568,11 @@ export default class GameScene {
       return;
     }
     this.liveMatchesEl.innerHTML = rooms.map((r) => {
-      const meta = `${esc(r?.mode ?? '?')} · ${Number(r?.players) || 0}p`;
-      const spectateBtn = r?.mode === 'arena' && r?.roomId
+      const eyes = Number(r?.spectators) || 0;
+      const meta = `${esc(r?.mode ?? '?')} · ${Number(r?.players) || 0}p` +
+        (eyes > 0 ? ` · 👁${eyes}` : '');
+      // Waves/daily/weekly rooms are spectatable too (PRD-waves-spectate.md)
+      const spectateBtn = r?.roomId && r?.mode !== 'world' && r?.mode !== 'lobby'
         ? `<button type="button" class="spectate-btn" data-room-id="${esc(r.roomId)}">SPECTATE</button>`
         : '';
       if (!r?.canJoin) {
