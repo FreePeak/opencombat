@@ -90,3 +90,8 @@ unlink ("durable delete"), closing the exact resurrection race an in-flight
 debounced career save could otherwise cause. Complementary halves of one
 durability guarantee — overlay makes loads see queued writes; cancel makes
 deletes forget them.
+
+## Integration audit log (rolling, CYCLE-AU onward)
+
+- 2.18 air-gap vendoring (31990b9): asset-serving only — no career/auth
+  interaction. Combined tree gate green (119 files, 207/207). Compose-clean.
