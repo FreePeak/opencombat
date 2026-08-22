@@ -11,6 +11,7 @@ import Player from '../entities/Player.js';
 import RemotePlayer from '../entities/RemotePlayer.js';
 import Enemy from '../entities/Enemy.js';
 import SoundManager from '../audio/SoundManager.js';
+import MusicDirector from '../audio/MusicDirector.js';
 import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
@@ -431,6 +432,8 @@ export default class GameScene {
     localStorage.setItem('opengame.name', this.name);
     // First user gesture: unlock audio (browser requirement) + start pad.
     this.sound.init();
+    // Adaptive music director rides the same ctx/master (PRD-music-director.md).
+    this.music = new MusicDirector({ sound: this.sound });
     try {
       this.isArenaSession = false; // re-decided below if this join is PvP
       if (!this.models) {
@@ -882,6 +885,12 @@ export default class GameScene {
         makeShieldGeometry(),
         new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 })
       );
+    } else if (type === 'magnet') {
+      // Horseshoe magnet silhouette (PRD-magnet.md): half-torus, opening down.
+      mesh = new THREE.Mesh(
+        new THREE.TorusGeometry(0.32, 0.11, 8, 20, Math.PI),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 })
+      );
     } else { // double — coin stack Group
       mesh = makeDoubleGroup(color);
     }
@@ -1171,6 +1180,21 @@ export default class GameScene {
     const paused = !!(this.room && this.room.state && this.room.state.paused);
     const dtWorld = paused ? 0 : dt;
 
+    // Music director signals (PRD-music-director.md): cheap per-frame copy
+    // from values this frame already computed; damage/milestone timestamps
+    // are stamped at their own trigger sites (see _lastDamageAt/_lastMilestoneAt).
+    if (this.music) {
+      const me = this.local?.state;
+      const maxHp = me ? (me.maxHp || CONFIG.player.maxHp) : 0;
+      this.music.setSignals({
+        matchState: this.room?.state?.matchState ?? '',
+        paused,
+        hpPct: me && maxHp > 0 ? Math.max(0, Math.min(1, me.hp / maxHp)) : 1,
+        eliteActive: !!this.eliteToastEl?.classList.contains('visible'),
+      });
+      this.music.update(performance.now());
+    }
+
     if (this.local) {
       this.local.update(dtWorld, this.camera);
 
@@ -1425,6 +1449,7 @@ export default class GameScene {
     // --- Damage feedback: red flash + shake + sound + number + blood ------
     if (me.hp < this.lastHp) {
       const dmg = this.lastHp - me.hp;
+      this._lastDamageAt = performance.now(); // music director: recent-damage signal
       this.flashT = 0.3;
       this.shakeT = CONFIG.player.shake.duration;
       this.sound.hit();
@@ -1645,6 +1670,7 @@ export default class GameScene {
   showStreakToast(d) {
     const el = this.streakToastEl;
     if (!el || !d) return;
+    this._lastMilestoneAt = performance.now(); // music director: threat signal
     el.innerHTML =
       `<span class="streak-title">${esc(d.name ?? '???')} — ${esc(d.label ?? 'STREAK')}</span> (${Number(d.count) || 0})`;
     el.classList.add('visible');
