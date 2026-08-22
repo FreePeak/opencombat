@@ -114,3 +114,20 @@ test('finaleBossFor: exact finale wave only', () => {
   assert.equal(finaleBossFor(12, 0), null, 'endless mode has no boss');
   assert.equal(finaleBossFor(12, undefined), null);
 });
+
+test('applyElite stamps bossMaxHp so clients can render accurate bars', () => {
+  const enemy = makeEnemyLike(); // {hp,...} duck-typed like rooms' states
+  const affix = applyElite(enemy, 'Warlord', 4);
+  assert.equal(affix.name, 'Warlord');
+  assert.equal(enemy.bossMaxHp, 12, 'ceil(4 * 3) exposed for the HUD bar');
+});
+
+test('applyElite stamps bossMaxHp for regular elites too (future bars)', () => {
+  const enemy = makeEnemyLike();
+  applyElite(enemy, 'Swift', 5);
+  assert.equal(enemy.bossMaxHp, 5, 'ceil(5 * 1)');
+});
+
+function makeEnemyLike() {
+  return { hp: 0, elite: '', archetype: '', bossMaxHp: 0 };
+}

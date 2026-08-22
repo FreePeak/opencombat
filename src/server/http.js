@@ -23,7 +23,7 @@ import { createLiveReload } from './liveReload.js';
 // streak reward table derived from the same source of truth.
 import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp } from '../shared/sim/dailyRun.js';
 // Weekly Gauntlet public API: same shape as /api/daily, keyed by ISO week.
-import { utcWeekKey, weeklySeed, weeklyModifiers } from '../shared/sim/weeklyRun.js';
+import { utcWeekKey, weeklySeed, weeklyModifiers, weeklyObjectives } from '../shared/sim/weeklyRun.js';
 // Presence panel (PRD-presence.md): merged view of the live population registry.
 import { listPresence, presenceCount } from './presence.js';
 // OIDC login option (PRD-oidc-login.md): registers routes ONLY when the
@@ -379,6 +379,7 @@ export function buildHttpApp(app) {
           leaderboard.push({
             name: rec.name ?? file.replace(/\.json$/, ''),
             score: rec.weekly.bestScore,
+            objectivesDone: (rec.weekly.objectives ?? []).filter(o => o.done === true).length,
           });
         }
       } catch {}
@@ -387,6 +388,7 @@ export function buildHttpApp(app) {
     res.json({
       week,
       seed: weeklySeed(week),
+      objectives: weeklyObjectives(week).map(d => ({ id: d.id, description: d.description })),
       modifiers: {
         label: mods.label,
         description: mods.description,

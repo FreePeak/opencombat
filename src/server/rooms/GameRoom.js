@@ -63,7 +63,7 @@ import { utcDateStr, dailySeed, dailyModifiers, nextStreak, streakRewardXp } fro
 // Weekly Gauntlet (PRD-weekly-gauntlet.md): ISO-week-seeded runs that reuse
 // the entire daily pipeline below — only the seed/modifier source and the
 // finalize blob differ (no streak by design; forgiveness is the mechanic).
-import { utcWeekKey, weeklySeed, weeklyModifiers, weeklyRewardXp, mergeWeekly } from '../../shared/sim/weeklyRun.js';
+import { utcWeekKey, weeklySeed, weeklyModifiers, weeklyRewardXp, mergeWeekly, weeklyObjectives, evaluateWeeklyRun, mergeWeeklyObjectives } from '../../shared/sim/weeklyRun.js';
 // Per-player JSON persistence (WorldRoom pattern): load on finalize, save debounced.
 import { loadPlayer, savePlayerDebounced } from '../persistence.js';
 // Presence panel (PRD-presence.md): cross-room live population registry.
@@ -770,6 +770,14 @@ export default class GameRoom extends Room {
       const saved = loadPlayer(player.name);
       // Same-week keeps the max bestScore; a new week starts fresh.
       const merged = mergeWeekly(saved?.weekly ?? null, week, player.score);
+      // Objectives (ADDENDUM Cycle 17): evaluate THIS run against the week's
+      // 2 picks; per id keep done once true within the week (sticky), new
+      // week replaces wholesale.
+      const objectiveResults = evaluateWeeklyRun(weeklyObjectives(week), {
+        wave: this.state.wave,
+        score: player.score,
+      });
+      merged.objectives = mergeWeeklyObjectives(saved?.weekly ?? null, week, objectiveResults).objectives;
       // Reward keys off the MERGED record: a re-run that didn't beat this
       // week's best still pays the ladder tier of that best score.
       const rewardXp = weeklyRewardXp(merged.bestScore);

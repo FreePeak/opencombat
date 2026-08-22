@@ -73,3 +73,50 @@ export function mergeWeekly(prev, weekKey, score) {
   }
   return { week: weekKey, bestScore: score, lastPlayed: weekKey };
 }
+
+// Objective table (ADDENDUM Cycle 17): each week deterministically selects 2
+// DISTINCT entries, checked at every weekly finalize against the run's
+// {wave, score}. Boundaries are inclusive (>=).
+export const WEEKLY_OBJECTIVES = [
+  { id: 'wave_6', description: 'Reach wave 6', test: r => r.wave >= 6 },
+  { id: 'wave_10', description: 'Reach wave 10', test: r => r.wave >= 10 },
+  { id: 'score_800', description: 'Score 800 in one run', test: r => r.score >= 800 },
+  { id: 'score_2000', description: 'Score 2000 in one run', test: r => r.score >= 2000 },
+];
+
+// Pick this week's 2 distinct objectives via the same LCG weeklyModifiers
+// uses on ELITE_AFFIXES — splice from a copy so the shared table is never
+// mutated across calls.
+export function weeklyObjectives(weekKeyOrSeed) {
+  const seed =
+    typeof weekKeyOrSeed === 'number'
+      ? weekKeyOrSeed | 0
+      : weeklySeed(String(weekKeyOrSeed));
+  const pool = [...WEEKLY_OBJECTIVES];
+  const picked = [];
+  let s = seed >>> 0;
+  while (picked.length < 2 && pool.length > 0) {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    picked.push(pool.splice(s % pool.length, 1)[0]);
+  }
+  return picked;
+}
+
+// Evaluate a run against the week's objectives -> [{id, done}]. Pure; the
+// sticky "done once true" merge happens at finalize, not here.
+export function evaluateWeeklyRun(objectives, run) {
+  return objectives.map(o => ({ id: o.id, done: !!o.test(run) }));
+}
+
+// Sticky-merge objective results into a persisted record: same-week keeps
+// done once true per id; a new week replaces wholesale.
+export function mergeWeeklyObjectives(prev, weekKey, results) {
+  if (!prev || prev.week !== weekKey) {
+    return { week: weekKey, objectives: results.map(r => ({ ...r })) };
+  }
+  const prior = new Map((prev.objectives ?? []).map(o => [o.id, o.done]));
+  return {
+    week: weekKey,
+    objectives: results.map(r => ({ id: r.id, done: prior.get(r.id) === true || r.done })),
+  };
+}

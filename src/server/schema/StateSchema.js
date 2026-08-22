@@ -95,6 +95,7 @@ export class EnemyState extends Schema {
     this.anim = 'idle'; // 'idle' | 'run' | 'attack' | 'hit'
     this.elite = '';    // '' | affix name from shared/sim/elites.js
     this.archetype = ''; // '' | archetype tag from shared/sim/archetypes.js
+    this.bossMaxHp = 0; // stamped by applyElite — clients render accurate bars
   }
 }
 defineTypes(EnemyState, {
@@ -103,7 +104,8 @@ defineTypes(EnemyState, {
   hp: 'number',
   anim: 'string',
   elite: 'string',
-  archetype: 'string'
+  archetype: 'string',
+  bossMaxHp: 'number'
 });
 
 // One in-flight projectile (arrow / fireball / lightning bolt). The server

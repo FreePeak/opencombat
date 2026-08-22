@@ -68,5 +68,8 @@ export function applyElite(enemy, affixName, baseMaxHp) {
   if (!affix || !enemy) return null;
   enemy.elite = affix.name;
   enemy.hp = Math.ceil(baseMaxHp * affix.hpMul);
+  // Expose the stamp for client HUD (boss bar accuracy under daily-mode
+  // modifier scaling, where baseMaxHp != plain waveEnemyHp).
+  enemy.bossMaxHp = enemy.hp;
   return affix;
 }

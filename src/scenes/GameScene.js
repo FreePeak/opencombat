@@ -2149,8 +2149,11 @@ export default class GameScene {
       if (e.state?.elite === 'Warlord' && e.state.hp > 0) { boss = e; break; }
     }
     if (!boss) { el.classList.remove('visible'); return; }
-    // Max hp mirrors applyElite's stamp: ceil(waveEnemyHp(wave) * hpMul 3).
-    const maxHp = Math.ceil(waveEnemyHp(this.room.state.wave) * 3);
+    // Max hp comes from the server's own stamp — accurate under daily-mode
+    // modifier scaling where plain waveEnemyHp would understate it.
+    const maxHp = boss.state.bossMaxHp > 0
+      ? boss.state.bossMaxHp
+      : Math.ceil(waveEnemyHp(this.room.state.wave) * 3);
     const pct = Math.max(0, Math.min(1, boss.state.hp / maxHp));
     if (this.bossFillEl) this.bossFillEl.style.width = `${pct * 100}%`;
     el.classList.add('visible');
