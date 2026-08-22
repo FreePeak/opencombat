@@ -83,6 +83,17 @@ export function savePlayerDebounced(name, data) {
   timers.set(key, t);
 }
 
+/** Drop any queued debounced save for `name` (admin/GDPR delete support):
+ *  clears its timer + pending snapshot so a deleted player file cannot be
+ *  resurrected by an in-flight flush. */
+export function cancelPendingSave(name) {
+  const key = safeName(name);
+  const t = timers.get(key);
+  if (t) clearTimeout(t);
+  timers.delete(key);
+  pending.delete(key);
+}
+
 /** Immediate flush for shutdown/tests. */
 export function flushAll() {
   for (const [key, t] of timers) {

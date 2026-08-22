@@ -9,6 +9,7 @@
 // dispatcher, bypassing express middleware entirely.
 import path from 'node:path';
 import fs from 'node:fs';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { SERVER } from './config.js';
@@ -28,6 +29,10 @@ import { listPresence, presenceCount } from './presence.js';
 // OIDC login option (PRD-oidc-login.md): registers routes ONLY when the
 // OIDC_* env config is present — guest behavior is untouched otherwise.
 import { buildAuthRoutes } from './auth/oidc.js';
+// Admin API (PRD-admin-api.md): token-guarded GDPR surface over persistence
+// plus the append-only audit trail every admin action must record.
+import { appendAudit, readTail } from './auditLog.js';
+import { loadPlayer, cancelPendingSave } from './persistence.js';
 
 // XP rewarded per consecutive-day streak length (day 1..7, capped).
 const DAILY_REWARDS = [1, 2, 3, 4, 5, 6, 7].map(streakRewardXp);
@@ -70,6 +75,16 @@ const servedIndex = () => {
 
 const headerIp = (req) =>
   (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+
+// Admin token compare (PRD-admin-api.md): constant-time via timingSafeEqual
+// on sha256 digests — hashing equalizes lengths so the primitive never throws
+// on mismatched input sizes and leaks no length/timing signal. Exported for
+// unit testing.
+export function adminTokenMatches(provided, expected) {
+  const a = createHash('sha256').update(String(provided ?? '')).digest();
+  const b = createHash('sha256').update(String(expected ?? '')).digest();
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 const liveRooms = () => {
   let players = 0;
@@ -356,6 +371,74 @@ export function buildHttpApp(app) {
   // nothing) unless OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET are set.
   // Registered BEFORE the catch-all below.
   buildAuthRoutes(app);
+
+  // --- Admin API (PRD-admin-api.md): token-guarded GDPR surface over the
+  // persistence layer. ADMIN_TOKEN unset -> every /api/admin/* answers 404
+  // (feature off, zero route surface). Auth is `Authorization: Bearer <token>`
+  // compared constant-time on sha256 digests (see adminTokenMatches). The env
+  // var is read lazily PER REQUEST so deployments can flip it without a
+  // restart (and tests can toggle it mid-run). Registered BEFORE the
+  // catch-all below.
+  const adminGuard = (req, res, next) => {
+    if (!process.env.ADMIN_TOKEN) return res.status(404).end();
+    const provided = req.headers.authorization?.replace(/^Bearer /, '') ?? '';
+    if (!adminTokenMatches(provided, process.env.ADMIN_TOKEN)) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    next();
+  };
+  // Mirrors persistence.safeName (trim, 16 cap, FS-safe charset fallback).
+  const adminPlayerName = (raw) =>
+    String(raw ?? '').trim().slice(0, 16).replace(/[^a-zA-Z0-9_-]/g, '_') || 'player';
+
+  app.get('/api/admin/players', adminGuard, (_req, res) => {
+    const dir = path.resolve(root, SERVER.persistence?.dir || 'data/players');
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch {} // no data dir yet -> empty list
+    const players = [];
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        // Tolerate malformed/partial files: skip them, never fail the listing.
+        const rec = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+        players.push({
+          name: rec.name ?? file.replace(/\.json$/, ''),
+          level: rec.level,
+          career: { bestWave: rec.career?.bestWave, bestScore: rec.career?.bestScore },
+        });
+      } catch {}
+    }
+    res.json({ players });
+  });
+
+  app.get('/api/admin/players/:name', adminGuard, (req, res) => {
+    const name = adminPlayerName(req.params.name);
+    const record = loadPlayer(name); // full parsed record -> GDPR portability
+    appendAudit({ action: 'export', target: name, outcome: record ? 'ok' : 'fail' });
+    if (!record) return res.status(404).json({ error: 'not found' });
+    res.json(record);
+  });
+
+  app.delete('/api/admin/players/:name', adminGuard, (req, res) => {
+    const name = adminPlayerName(req.params.name);
+    // Cancel any queued debounced save FIRST so the in-flight writer cannot
+    // resurrect the file right after unlink (durable delete).
+    cancelPendingSave(name);
+    const file = path.join(path.resolve(root, SERVER.persistence?.dir || 'data/players'), `${name}.json`);
+    try {
+      fs.unlinkSync(file);
+    } catch (err) {
+      const missing = err?.code === 'ENOENT';
+      appendAudit({ action: 'delete', target: name, outcome: 'fail' }); // BEFORE responding
+      return res.status(missing ? 404 : 500).json({ error: missing ? 'not found' : 'delete failed' });
+    }
+    appendAudit({ action: 'delete', target: name, outcome: 'ok' }); // BEFORE responding
+    res.json({ deleted: name });
+  });
+
+  app.get('/api/admin/audit', adminGuard, (_req, res) => {
+    res.json({ entries: readTail(100) });
+  });
 
   // Everything else is not served.
   app.use((_req, res) => res.status(404).json({ error: 'not found' }));
