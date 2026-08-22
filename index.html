@@ -203,6 +203,20 @@
        localStorage career exists, same muted mono family as the subs. */
     #personal-best { margin-top: 6px; display: none; text-align: center;
       font: 11px var(--mono); color: var(--muted); letter-spacing: .06em; }
+    /* OIDC SSO option (PRD-oidc-login.md): feature-flagged sign-in link +
+       VERIFIED pill, both hidden until /api/me reports in (GameScene flips
+       them). Two-id selectors outrank the generic "#login button" pill
+       rule above; tokens reuse the info/gold badge family. */
+    #login #sso-login { display: none; margin-top: 12px; padding: 7px 20px;
+      border-radius: 999px; border: 1px solid var(--line-strong);
+      background: var(--bg-2); color: var(--info); cursor: pointer;
+      font: 600 11px var(--mono); letter-spacing: .08em;
+      box-shadow: none; transition: filter .12s; }
+    #login #sso-login:hover { filter: brightness(1.15); }
+    #verified-badge { display: none; vertical-align: middle; margin-left: 8px;
+      color: var(--gold); font: 600 11px var(--mono); letter-spacing: .08em;
+      border: 1px solid rgba(251, 191, 36, 0.45); border-radius: 999px;
+      padding: 2px 10px; }
 
     /* ============ daily gauntlet result banner ============ */
     #daily-results { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 23; /* above gameover(20)/upgrade(22): streak lines must stay readable on victory */
@@ -343,7 +357,7 @@
     <div class="card">
       <h1>opengame</h1>
       <p>multiplayer arena survival — open this page in two tabs to play together</p>
-      <input id="login-name" type="text" maxlength="16" placeholder="your name" autocomplete="off" />
+      <input id="login-name" type="text" maxlength="16" placeholder="your name" autocomplete="off" /><span id="verified-badge">VERIFIED ✓</span>
       <input id="login-server" type="text" placeholder="game server (e.g. word-word-word.trycloudflare.com)" autocomplete="off" spellcheck="false" />
       <div id="char-picker"></div>
       <div id="mode-picker"></div>
@@ -352,6 +366,8 @@
       <div id="personal-best"></div>
       <br/>
       <button id="login-btn">JOIN</button>
+      <br/>
+      <button id="sso-login" type="button">SIGN IN WITH SSO</button>
       <div id="login-error"></div>
     </div>
   </div>

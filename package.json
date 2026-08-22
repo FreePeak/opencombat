@@ -15,7 +15,8 @@
   "dependencies": {
     "@colyseus/sdk": "0.17.43",
     "colyseus": "0.17.10",
-    "express": "5.2.1"
+    "express": "5.2.1",
+    "openid-client": "^6.8.7"
   },
   "devDependencies": {
     "three": "^0.185.1"

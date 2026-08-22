@@ -183,6 +183,11 @@ export default class GameScene {
     this.loginServer = document.getElementById('login-server');
     this.loginError = document.getElementById('login-error');
     this.loginBtn = document.getElementById('login-btn');
+    // OIDC SSO (PRD-oidc-login.md): feature-gated sign-in link + VERIFIED
+    // pill on the login card — both hidden until /api/me reports feature-on.
+    this.ssoLoginEl = document.getElementById('sso-login');
+    this.ssoLoginEl?.addEventListener('click', () => this.startSsoLogin());
+    this.verifiedBadgeEl = document.getElementById('verified-badge');
     this.netBadge = document.getElementById('net-badge');
     // Phase 4: upgrade card overlay
     this.upgradeOverlay = document.getElementById('upgrade-overlay');
@@ -304,6 +309,11 @@ export default class GameScene {
     // screen. Recent Allies render once here and again after each record.
     this.renderRecentAllies();
     this.startPresencePoller();
+    // OIDC SSO (PRD-oidc-login.md): returning from the IdP (?login=ok)
+    // re-probes /api/me with the fresh cookie; every boot probes once so
+    // the sign-in link only appears while the feature is on.
+    await this.handleLoginReturn();
+    this.refreshOidcState();
   }
 
   /** Game-mode cards on the login screen (MODES drives it). The Daily and
@@ -410,6 +420,56 @@ export default class GameScene {
       this.weeklyInfo = null;
       sub.textContent = 'weekly: offline';
     }
+  }
+
+  // ===================== OIDC SSO (PRD-oidc-login.md) =====================
+
+  /** Probe GET /api/me once while the menu is up: verified:true -> show the
+   *  VERIFIED pill; any !ok (404 = feature off server-side) or a network
+   *  failure hides the badge AND the sign-in link — the menu keeps working
+   *  as pure guest play either way. Same ws->http base as the daily APIs. */
+  async refreshOidcState() {
+    if (!this.ssoLoginEl && !this.verifiedBadgeEl) return;
+    let featureOn = false;
+    let verified = false;
+    try {
+      const httpBase = CONFIG.serverUrl.replace(/^ws/i, 'http');
+      const res = await fetch(`${httpBase}/api/me`);
+      if (res.ok) {
+        featureOn = true;
+        verified = (await res.json())?.verified === true;
+      }
+    } catch { /* unreachable / static hosting: stay guest-only */ }
+    this.setVerifiedBadge(featureOn && verified);
+    this.setSsoLoginVisible(featureOn);
+  }
+
+  /** IdP round trip returns to /?login=ok: re-read /api/me now that the
+   *  session cookie is fresh, then strip ONLY the login param via
+   *  replaceState (?server= and ?touch=1 belong to other readers). */
+  async handleLoginReturn() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('login')) return;
+    if (params.get('login') === 'ok') await this.refreshOidcState();
+    params.delete('login');
+    const qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+  }
+
+  /** Navigate into the BFF's authorize redirect with the CURRENT name-input
+   *  value (the callback binds it to the account); empty falls back to the
+   *  same default the join path uses. */
+  startSsoLogin() {
+    const name = this.loginName.value.trim().slice(0, 16) || 'player';
+    location.href = `/auth/login/start?name=${encodeURIComponent(name)}`;
+  }
+
+  setVerifiedBadge(on) {
+    if (this.verifiedBadgeEl) this.verifiedBadgeEl.style.display = on ? 'inline-block' : 'none';
+  }
+
+  setSsoLoginVisible(on) {
+    if (this.ssoLoginEl) this.ssoLoginEl.style.display = on ? 'inline-block' : 'none';
   }
 
   // ===================== Presence panel (PRD-presence.md) =================

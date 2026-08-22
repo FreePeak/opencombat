@@ -25,6 +25,9 @@ import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp } from '../shared
 import { utcWeekKey, weeklySeed, weeklyModifiers } from '../shared/sim/weeklyRun.js';
 // Presence panel (PRD-presence.md): merged view of the live population registry.
 import { listPresence, presenceCount } from './presence.js';
+// OIDC login option (PRD-oidc-login.md): registers routes ONLY when the
+// OIDC_* env config is present — guest behavior is untouched otherwise.
+import { buildAuthRoutes } from './auth/oidc.js';
 
 // XP rewarded per consecutive-day streak length (day 1..7, capped).
 const DAILY_REWARDS = [1, 2, 3, 4, 5, 6, 7].map(streakRewardXp);
@@ -348,6 +351,11 @@ export function buildHttpApp(app) {
   app.get('/api/rooms', (_req, res) => {
     res.json({ rooms: listRooms() });
   });
+
+  // --- OIDC login (PRD-oidc-login.md): /auth/* + /api/me. No-op (registers
+  // nothing) unless OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET are set.
+  // Registered BEFORE the catch-all below.
+  buildAuthRoutes(app);
 
   // Everything else is not served.
   app.use((_req, res) => res.status(404).json({ error: 'not found' }));
