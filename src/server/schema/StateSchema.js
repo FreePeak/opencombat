@@ -91,6 +91,7 @@ export class EnemyState extends Schema {
     this.hp = 2;
     this.anim = 'idle'; // 'idle' | 'run' | 'attack' | 'hit'
     this.elite = '';    // '' | affix name from shared/sim/elites.js
+    this.archetype = ''; // '' | archetype tag from shared/sim/archetypes.js
   }
 }
 defineTypes(EnemyState, {
@@ -98,7 +99,8 @@ defineTypes(EnemyState, {
   rotY: 'number',
   hp: 'number',
   anim: 'string',
-  elite: 'string'
+  elite: 'string',
+  archetype: 'string'
 });
 
 // One in-flight projectile (arrow / fireball / lightning bolt). The server

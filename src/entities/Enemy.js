@@ -10,6 +10,7 @@ import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { CONFIG } from '../config.js';
 import { attackTimeScale, frameDamp } from '../anim/AnimUtils.js';
 import { ELITE_SCALE } from '../shared/sim/elites.js';
+import { ARCHETYPES } from '../shared/sim/archetypes.js';
 import { SERVER } from '../server/config.js';
 
 // Death: quick scale-down before the corpse disappears (purely cosmetic —
@@ -23,12 +24,21 @@ const ELITE_GLOW = 0x2b0000;
 const ELITE_BORDER = '#fbbf24'; // gold hp-bar border (var(--gold))
 const NORMAL_BORDER = '#555';
 
+// Archetype looks (PRD-enemy-archetypes.md): subtle tint + scale nudge so a
+// Rusher/Tank reads at a glance WITHOUT stealing the elite spotlight (elite
+// 1.8x red always wins; archetypes render only on non-elite slots).
+const ARCHETYPE_LOOK = {
+  Rusher: { scale: 0.9, tint: new THREE.Color(0.45, 0.85, 1.0), border: '#67e8f9' },
+  Tank:   { scale: 1.15, tint: new THREE.Color(0.55, 1.0, 0.6), border: '#86efac' },
+};
+
 export default class Enemy {
   constructor(scene, state, model, anims, scale = 1) {
     this.scene = scene;
     this.state = state; // live EnemyState ref, patched by colyseus
     this.baseScale = scale;
     this.elite = '';        // affix name currently rendered ('' = normal)
+    this.archetype = '';    // archetype tag currently rendered ('' = plain)
     this.eliteGlow = 0x000000; // emissive restored between hit flashes
     this._ownMats = false;  // true once materials were cloned for the tint
     this._origMats = null;
@@ -94,34 +104,48 @@ export default class Enemy {
     // Elite affixes (P2.6): state.elite non-empty = 1.8x scale, red tint,
     // gold hp-bar border. Slots are reused across waves so this is applied
     // AND reverted from update()'s poll — not just at construction.
-    this.applyEliteLook(state.elite);
+    this.applyLook(state.elite);
   }
 
-  /** Scale currently rendered: elites render at baseScale * ELITE_SCALE. */
+  /** Scale currently rendered: elites at baseScale * ELITE_SCALE, otherwise
+   *  the archetype nudge (Tank bigger / Rusher smaller), else plain base. */
   effScale() {
-    return this.baseScale * (this.elite ? ELITE_SCALE : 1);
+    if (this.elite) return this.baseScale * ELITE_SCALE;
+    return this.baseScale * (ARCHETYPE_LOOK[this.archetype]?.scale ?? 1);
   }
 
-  /** Apply/revert the elite look for affix `name` ('' = normal). Idempotent. */
-  applyEliteLook(name) {
-    name = name || '';
-    if (name === this.elite) return;
-    this.elite = name;
-    const elite = name !== '';
+  /** Apply/revert the look for affix `eliteName` + archetype tag ('' =
+   *  normal). Idempotent — called every frame from update()'s poll since
+   *  LocalRoom mutates state in place with no schema events. Elites take
+   *  precedence: an elite slot never carries an archetype (markArchetypes
+   *  skips slot 0), but if one ever did, the elite treatment wins. */
+  applyLook(eliteName, archetypeName) {
+    eliteName = eliteName || '';
+    archetypeName = archetypeName || '';
+    if (eliteName === this.elite && archetypeName === this.archetype) return;
+    const hadTint = this.elite !== '' || this.archetype !== '';
+    this.elite = eliteName;
+    this.archetype = eliteName ? '' : archetypeName;
+    const hasTint = this.elite !== '' || this.archetype !== '';
     this.root.scale.setScalar(this.effScale());
-    this.eliteGlow = elite ? ELITE_GLOW : 0x000000;
-    this.hpBar.div.style.borderColor = elite ? ELITE_BORDER : NORMAL_BORDER;
-    this._swapMaterials(elite);
+    this.eliteGlow = this.elite ? ELITE_GLOW : 0x000000;
+    this.hpBar.div.style.borderColor = this.elite ? ELITE_BORDER
+      : (ARCHETYPE_LOOK[this.archetype]?.border ?? NORMAL_BORDER);
+    if (hasTint || hadTint) {
+      const tint = this.elite ? ELITE_TINT
+        : ARCHETYPE_LOOK[this.archetype]?.tint ?? null;
+      this._swapMaterials(tint);
+    }
   }
 
-  /** Red-tint via per-enemy material clones. SkeletonUtils.clone SHARES
+  /** Tint via per-enemy material clones. SkeletonUtils.clone SHARES
    *  materials with the loaded GLB, so tinting them in place would repaint
    *  every normal enemy on screen; clones are owned here and disposed in
-   *  dispose() (revert puts the shared originals back). */
-  _swapMaterials(elite) {
+   *  dispose() (revert puts the shared originals back). `tint` null reverts. */
+  _swapMaterials(tint) {
     const mesh = this.root.children[0];
     if (!mesh) return;
-    if (elite && !this._ownMats) {
+    if (tint && !this._ownMats) {
       const orig = [];
       const own = [];
       let i = 0;
@@ -130,7 +154,7 @@ export default class Enemy {
         orig[i] = o.material;
         const cloneMat = (m) => {
           const c = m.clone();
-          c.color?.multiply(ELITE_TINT);
+          c.color?.multiply(tint);
           return c;
         };
         o.material = Array.isArray(o.material)
@@ -142,7 +166,7 @@ export default class Enemy {
       this._origMats = orig;
       this.materials = own.flat();
       this._ownMats = true;
-    } else if (!elite && this._ownMats) {
+    } else if (!tint && this._ownMats) {
       // Elite slot reused by a normal wave: restore shared originals.
       let i = 0;
       mesh.traverse((o) => {
@@ -213,10 +237,13 @@ export default class Enemy {
       this.lastHp = s.hp;
     }
 
-    // Elite affix patch: LocalRoom mutates state in place (no schema events),
-    // so both modes are covered by polling state.elite every frame. Slots
-    // reused across waves flip '' <-> affix and this re-applies/reverts.
-    if ((s.elite || '') !== this.elite) this.applyEliteLook(s.elite || '');
+    // Elite affix + archetype patch: LocalRoom mutates state in place (no
+    // schema events), so both modes are covered by polling both tags every
+    // frame. Slots reused across waves flip '' <-> tag and this re-applies.
+    if ((s.elite || '') !== this.elite ||
+        (s.archetype || '') !== this.archetype) {
+      this.applyLook(s.elite || '', s.archetype || '');
+    }
 
     if (this.dead) {
       // Corpse: finish the shrink, then hide everything.

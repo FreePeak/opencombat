@@ -31,6 +31,11 @@ import { attackFor } from '../../shared/classes.js';
 // spawns slot 0 as an ELITE carrying a named affix; both rooms consume the
 // same table so online/offline parity is structural, not duplicated logic.
 import { isEliteWave, affixForWave, applyElite, affixByName } from '../../shared/sim/elites.js';
+import { archetypeByName, markArchetypes } from '../../shared/sim/archetypes.js';
+// Kill streaks (PRD-kill-streaks.md): pure shared module — both rooms track
+// consecutive credited kills per player (2.5s window, reset on death/reset)
+// and announce ONLY at MILESTONES so online/offline payloads stay identical.
+import { newStreakState, registerKill, resetSid, resetAll } from '../../shared/sim/streaks.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
 // level-up queue -> card roll -> auto-pick -> manual pick. D5 enemy-hit
 // resolution + D4 burn DoT (combatBook) and D3 shop effects (shopEffects)
@@ -146,6 +151,9 @@ export default class GameRoom extends Room {
     // keyed by the dead elite's pool slot — armed by combatBook.onEliteKill,
     // drained each playing tick via combatBook.tickVolatile.
     this.volatilePending = new Map();
+    // Kill-streak scratch (PRD-kill-streaks.md): sid -> { count, lastAt },
+    // fed by creditStreak on every credited kill; LocalRoom mirrors it.
+    this.streaks = newStreakState();
     this.waveBaseHp = SERVER.enemy.hp; // per-wave base HP (elite maxHp derives from it)
     // Shared-sim context for D5/D4 combat bookkeeping: the room owns the
     // schema state + scratch maps + transport; only clock/hooks wire in.
@@ -296,6 +304,7 @@ export default class GameRoom extends Room {
         this.enemyStunUntil.delete(enemy);
         this.volatilePending.delete(enemy);
         enemy.elite = ''; // slots revive clean; re-marked below on elite waves
+        enemy.archetype = ''; // archetype tags are re-stamped by markArchetypes
       });
     let spawned = count;
     let effHp = hp;
@@ -327,6 +336,13 @@ export default class GameRoom extends Room {
         this.broadcast('eliteSpawn', { name: affix.name });
         this.logEvent('elite_spawn', { wave: n, name: affix.name });
       }
+    }
+    // ENEMY ARCHETYPES (PRD-enemy-archetypes.md): deterministic per-(wave,
+    // slot) tags on every live non-elite slot; LocalRoom mirrors exactly.
+    const archMarked = markArchetypes(this.state.enemies, n,
+      { liveCount: spawned, eliteWave: isEliteWave(n) });
+    if (archMarked > 0) {
+      this.logEvent('archetypes_marked', { wave: n, marked: archMarked });
     }
     this.state.wave = n;
     this.logEvent('wave_spawn', { wave: n, enemies: spawned, hp: effHp });
@@ -598,6 +614,7 @@ export default class GameRoom extends Room {
       onResetTransient: () => { this.pendingMelee = []; this.volatilePending.clear(); },
       onResetPowerUps: () => this.powerUpTimers.clear(),
     });
+    resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
     this.matchElapsed = 0;
     this.logEvent('match_reset');
     this.startCountdown();
@@ -792,12 +809,34 @@ export default class GameRoom extends Room {
       return false;
     }
     this.invulnUntil.set(sid, now + SERVER.player.invulnMs);
-    strikePlayer(victim, amount, srcX, srcZ, SERVER.player.knockback * 0.15, this.half);
+    const died = strikePlayer(victim, amount, srcX, srcZ,
+      SERVER.player.knockback * 0.15, this.half);
+    // Kill-streaks (PRD-kill-streaks.md): dying drops the victim's streak.
+    if (died) resetSid(this.streaks, sid);
     // Hit react: brief 'hit' anim override (300ms) so all clients see the
     // victim flinch — mirrors the enemy hit-stun pattern.
     victim.anim = 'hit';
     this.animUntil.set(sid, now + 300);
     return true;
+  }
+
+  /**
+   * Kill-streak bookkeeping (PRD-kill-streaks.md): called after EVERY enemy
+   * death credited to `sid` — melee/projectile/skill kills through hitEnemy,
+   * the bash strike path in castSkill. Announces ONLY at MILESTONES counts
+   * (everything else stays silent) as 'killStreak' { sid, name, count, label }
+   * with the POST-increment count. `now` is injectable so tests can control
+   * window timing; LocalRoom._creditStreak mirrors this byte-for-byte.
+   */
+  creditStreak(sid, now = Date.now()) {
+    const ms = registerKill(this.streaks, sid, now);
+    if (!ms) return;
+    this.broadcast('killStreak', {
+      sid,
+      name: this.state.players.get(sid)?.name ?? '',
+      count: this.streaks.get(sid)?.count ?? 0,
+      label: ms,
+    });
   }
 
   /**
@@ -817,8 +856,10 @@ export default class GameRoom extends Room {
       : (killer
         ? [...this.state.players.entries()].find(([, p]) => p === killer)?.[0]
         : null);
-    return combatBook.resolveEnemyHit(
-      this.simCombat, enemy, damage, srcX, srcZ, killerSid ?? null).killed;
+    const res = combatBook.resolveEnemyHit(
+      this.simCombat, enemy, damage, srcX, srcZ, killerSid ?? null);
+    if (res.killed && killerSid != null) this.creditStreak(killerSid);
+    return res.killed;
   }
 
   /**
@@ -913,6 +954,7 @@ export default class GameRoom extends Room {
               player.score += SERVER.enemy.killScore;
               this.grantXp(sid, SERVER.progression?.xpPerKill ?? 30);
               combatBook.onEliteKill(this.simCombat, enemy, sid); // elite burst + Volatile fuse
+              this.creditStreak(sid); // bash kills feed streaks like every other kill
               this.logEvent('enemy_killed', { wave: state.wave, by: player.name });
             } else {
               enemy.anim = 'hit';
@@ -1161,7 +1203,8 @@ export default class GameRoom extends Room {
           // Daily rooms multiply by today's enemySpeedMul (1 in waves mode);
           // elite affixes add their own speedMul (Swift +60%, shared/sim/elites.js).
           const spd = SERVER.enemy.speed * this.enemySpeedMul *
-            (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1);
+            (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1) *
+            (enemy.archetype ? archetypeByName(enemy.archetype)?.speedMul ?? 1 : 1);
           enemy.x += (target.x - enemy.x) / dist * spd * dt;
           enemy.z += (target.z - enemy.z) / dist * spd * dt;
           if (!animOverride) enemy.anim = 'run';

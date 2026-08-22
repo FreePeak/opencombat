@@ -15,6 +15,8 @@ import ParticlePool from '../effects/ParticlePool.js';
 import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
+import { MILESTONES } from '../shared/sim/streaks.js';
+import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
   joinWorld, joinLobby, sendQueue, consumeReservation } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
@@ -144,6 +146,9 @@ export default class GameScene {
     // Feedback timers.
     this.shakeT = 0;               // camera-shake seconds left
     this.flashT = 0;               // red-flash seconds left
+    // Combat juice (PRD-kill-streaks.md layer 2, render-only).
+    this.trauma = 0;               // trauma-shake accumulator 0..1
+    this.hitStopUntil = 0;         // FX freeze deadline (performance.now ms)
     this.lastHp = 100;
     this.lastScore = 0;
     this.lastEffects = new Map();  // effect name -> ms, for pickup detection
@@ -189,6 +194,9 @@ export default class GameScene {
     // Elite spawn toast (server 'eliteSpawn' broadcast / LocalRoom emit hook).
     this.eliteToastEl = document.getElementById('elite-toast');
     this.eliteToastEl?.addEventListener('click', () => this.hideEliteToast());
+    // Kill-streak milestone toast ('killStreak' broadcast / LocalRoom emit).
+    this.streakToastEl = document.getElementById('streak-toast');
+    this.streakToastEl?.addEventListener('click', () => this.hideStreakToast());
 
     // One overlay serves three ends: death (respawn), wave cleared (next
     // wave) and match end (again). Priority in that order on click.
@@ -532,6 +540,11 @@ export default class GameScene {
     // LocalRoom fans the same type out through its onMessage API (see its
     // _emitMessage), so ONE registration covers online + offline waves.
     this.room.onMessage('eliteSpawn', (d) => this.showEliteToast(d));
+    // Kill streaks (PRD-kill-streaks.md): both room types broadcast/emit
+    // 'killStreak' through this same message API at milestones only. Every
+    // client toasts + pitch-blips; the streaking player also gets extra
+    // trauma and a gold 1.5x number (see showStreakToast).
+    this.room.onMessage('killStreak', (d) => this.showStreakToast(d));
 
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
     // reconnection API). We just surface it to the player and keep a manual
@@ -705,7 +718,17 @@ export default class GameScene {
       this.particles.spawnBurst(pos, 0xffffff, 10, 3, 0.35);  // spark
       this.particles.spawnBurst(pos, 0xcc0000, 8, 4, 0.5);    // blood
     };
-    e.onDamage = (pos, amount) => this.floatTexts.spawn(pos.x, pos.y, pos.z, amount, '#ffd54f');
+    e.onDamage = (pos, amount) => {
+      this.floatTexts.spawn(pos.x, pos.y, pos.z, amount, '#ffd54f');
+      // Own melee hit-confirm juice (PRD layer 2): the server does not
+      // attribute hits, so treat a damage tick landing within melee reach
+      // of OUR character as our swing connecting. Render-only.
+      const me = this.local?.root.position;
+      if (me && Math.hypot(me.x - pos.x, me.z - pos.z) <= SERVER.player.attackRange + 0.6) {
+        this.addTrauma(0.15);
+        this.hitStopUntil = Math.max(this.hitStopUntil, performance.now() + 50);
+      }
+    };
     this.enemies.set(i, e);
   }
 
@@ -1075,6 +1098,16 @@ export default class GameScene {
         this.camera.position.x += (Math.random() - 0.5) * amp;
         this.camera.position.y += (Math.random() - 0.5) * amp;
       }
+      // Trauma shake (PRD layer 2): additive on top of the shakeT path
+      // above. Offset scales with trauma² (subtle until it stacks), decays
+      // at 1.5/s, clamped to [0,1] by addTrauma + decay here.
+      this.trauma = Math.max(0, Math.min(1, this.trauma - dt * 1.5));
+      if (this.trauma > 0) {
+        const t2 = this.trauma * this.trauma;
+        const nowMs = performance.now();
+        this.camera.position.x += Math.sin(nowMs * 0.02) * t2 * 0.6;
+        this.camera.position.y += Math.sin(nowMs * 0.017 + 2) * t2 * 0.4;
+      }
       this.camera.lookAt(target);
 
       this.updateMatchUi(dt);
@@ -1171,9 +1204,14 @@ export default class GameScene {
     }
 
     this.touchControls?.update();
-    this.particles.update(dtWorld);
-    this.skillFx.update(dtWorld);
-    this.floatTexts.update(dtWorld, this.camera, window.innerWidth, window.innerHeight);
+    // Hit-stop controller (PRD layer 2): while the freeze window is active,
+    // FX/anim time is 0 — but ONLY for the cosmetic pools below. State
+    // application, network messages, movement and state diffs above keep
+    // running at full speed, so multiplayer sync is never gated.
+    const fxScale = now < this.hitStopUntil ? 0 : 1;
+    this.particles.update(dtWorld * fxScale);
+    this.skillFx.update(dtWorld * fxScale);
+    this.floatTexts.update(dtWorld * fxScale, this.camera, window.innerWidth, window.innerHeight);
     this.updateNametags();
     this.updateLeaderboard();
 
@@ -1279,7 +1317,12 @@ export default class GameScene {
     this.flashEl.style.opacity = this.flashT > 0 ? (this.flashT / 0.3) * 0.35 : '0';
 
     // --- Pickup detection for sounds -------------------------------------
-    if (me.score > this.lastScore) this.sound.pickup();
+    if (me.score > this.lastScore) {
+      this.sound.pickup();
+      // Own kill/score juice (PRD layer 2): freeze-frame + trauma bump.
+      this.addTrauma(0.35);
+      this.hitStopUntil = Math.max(this.hitStopUntil, performance.now() + 110);
+    }
     this.lastScore = me.score;
     for (const [name, ms] of me.effects) {
       if (!this.lastEffects.has(name)) {
@@ -1472,6 +1515,55 @@ export default class GameScene {
   hideEliteToast() {
     clearTimeout(this._eliteToastTimer);
     this.eliteToastEl?.classList.remove('visible');
+  }
+
+  /** Kill-streak milestone toast (top-center, gold): "NAME — LABEL (count)".
+   *  Fired by the 'killStreak' message from BOTH room types (milestones
+   *  only). Everyone gets toast + pitch-rising blip; the streaking player
+   *  additionally gets a trauma bump and a gold 1.5x number overhead.
+   *  Auto-hides after 3.5s; clicking dismisses. Mirrors #elite-toast
+   *  styling (see #streak-toast in index.html). */
+  showStreakToast(d) {
+    const el = this.streakToastEl;
+    if (!el || !d) return;
+    el.innerHTML =
+      `<span class="streak-title">${esc(d.name ?? '???')} — ${esc(d.label ?? 'STREAK')}</span> (${Number(d.count) || 0})`;
+    el.classList.add('visible');
+    clearTimeout(this._streakToastTimer);
+    this._streakToastTimer = setTimeout(() => el.classList.remove('visible'), 3500);
+    // Pitch rises ~4% per milestone tier via the raw blip() primitive
+    // (SoundManager has no pitch param, but takes arbitrary frequencies).
+    const tierIdx = MILESTONES.findIndex((m) => m.count === d.count);
+    const tier = tierIdx >= 0 ? tierIdx + 1 : 1;
+    const f = 620 * Math.pow(1.04, tier);
+    this.sound.blip(f, f * 1.6, 0.16, 'triangle', 0.22);
+    this.sound.blip(f * 1.6, f * 2.1, 0.2, 'triangle', 0.16, 0.08);
+    // Streak is OURS: extra trauma + gold 1.5x floating text at the player.
+    if (d.sid != null && d.sid === this.room?.sessionId) {
+      this.addTrauma(0.35);
+      const p = this.local?.root.position;
+      if (p) this.spawnBigFloat(p.x, 3.0, p.z, String(d.label ?? '').toUpperCase(), '#ffd54a');
+    }
+  }
+
+  hideStreakToast() {
+    clearTimeout(this._streakToastTimer);
+    this.streakToastEl?.classList.remove('visible');
+  }
+
+  /** FloatingTextPool.spawn with a 1.5x font-size bump on the div just
+   *  handed out (the pool itself exposes no scale knob — PRD: milestone
+   *  numbers render 1.5x gold). */
+  spawnBigFloat(x, y, z, text, color) {
+    this.floatTexts.spawn(x, y, z, text, color);
+    const item = this.floatTexts.items[
+      (this.floatTexts.next + this.floatTexts.size - 1) % this.floatTexts.size];
+    item.div.style.fontSize = '24px'; // .float-text default 16px * 1.5
+  }
+
+  /** Trauma accumulator (PRD layer 2): additive input clamped to [0,1]. */
+  addTrauma(amount) {
+    this.trauma = Math.min(1, (this.trauma ?? 0) + amount);
   }
 }
 

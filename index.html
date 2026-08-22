@@ -165,6 +165,15 @@
     #elite-toast.visible { display: block; }
     #elite-toast .elite-title { color: var(--danger); letter-spacing: .1em; font-weight: 600; }
 
+    /* ============ kill streak toast ============ */
+    #streak-toast { position: fixed; top: 84px; left: 50%; transform: translateX(-50%); z-index: 16;
+      display: none; background: var(--panel); border: 1px solid rgba(251, 191, 36, 0.55);
+      border-radius: var(--radius-l); padding: 8px 18px; box-shadow: var(--shadow-1);
+      backdrop-filter: blur(8px); font: 12px var(--mono); letter-spacing: .08em;
+      color: var(--text); text-align: center; cursor: pointer; }
+    #streak-toast.visible { display: block; }
+    #streak-toast .streak-title { color: var(--gold); letter-spacing: .1em; font-weight: 600; }
+
     /* ============ touch controls ============ */
     #touch-controls { display: none; position: fixed; inset: 0; z-index: 14;
       pointer-events: none; -webkit-touch-callout: none;
@@ -227,6 +236,7 @@
   <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
   <div id="daily-results"></div>
   <div id="elite-toast"></div>
+  <div id="streak-toast"></div>
   <div id="countdown"></div>
   <div id="flash"></div>
 

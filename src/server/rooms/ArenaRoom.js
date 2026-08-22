@@ -27,6 +27,9 @@ import { xpForLevel, rollUpgrades, getUpgrade, aggregateBonuses,
          AUTO_PICK_MS } from '../../shared/progression.js';
 import { sanitizeMode, sanitizePve, sanitizeRoundsToWin, assignTeams, roundWinner, matchWinner,
          minPlayersForMode, maxPlayersForMode } from '../../shared/arena.js';
+// Kill streaks (PRD-kill-streaks.md): same pure module GameRoom/LocalRoom use —
+// PvP kills feed per-player streaks, announced ONLY at MILESTONES counts.
+import { newStreakState, registerKill, resetSid, resetAll } from '../../shared/sim/streaks.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
@@ -85,6 +88,7 @@ export default class ArenaRoom extends Room {
     this.pendingUntil = new Map(); // sid -> ms deadline for upgrade auto-pick
     this.pendingQueue = new Map(); // sid -> queued level-ups waiting for card pick
     this._teamAssignment = new Map(); // sid -> teamId (mirrors PlayerState.team)
+    this.streaks = newStreakState(); // sid -> { count, lastAt } (PRD-kill-streaks)
 
     this.half = SERVER.world.size / 2; // arena half-extent on X and Z
     this.matchElapsed = 0;          // seconds into the playing phase (timed mode)
@@ -574,6 +578,7 @@ export default class ArenaRoom extends Room {
       pu.active = true;
     }
     this.powerUpTimers.clear();
+    resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
     this.matchElapsed = 0;
     // Re-assign teams (handles roster changes)
     this.assignArenaTeams();
@@ -741,6 +746,22 @@ export default class ArenaRoom extends Room {
     return a.team === v.team;
   }
 
+  /**
+   * Kill-streak bookkeeping (PRD-kill-streaks.md): PvP kills credited to
+   * `sid` announce ONLY at MILESTONES counts, same 'killStreak' payload as
+   * GameRoom/LocalRoom. `now` is injectable for tests.
+   */
+  creditStreak(sid, now = Date.now()) {
+    const ms = registerKill(this.streaks, sid, now);
+    if (!ms) return;
+    this.broadcast('killStreak', {
+      sid,
+      name: this.state.players.get(sid)?.name ?? '',
+      count: this.streaks.get(sid)?.count ?? 0,
+      label: ms,
+    });
+  }
+
   /** Award a PvP kill to killerSid (score + XP + log). Called when victim dies to PvP. */
   awardPvpKill(killerSid, victimSid) {
     const killer = this.state.players.get(killerSid);
@@ -750,6 +771,10 @@ export default class ArenaRoom extends Room {
     killer.score += killScore;
     this.grantXp(killerSid, SERVER.progression?.xpPerKill ?? 30);
     this.logEvent('pvp_kill', { killer: killer.name, victim: victim.name, mode: this.arenaMode, team: killer.team, score: killScore });
+    // Kill-streaks (PRD-kill-streaks.md): the kill feeds the killer's streak;
+    // the victim's own streak dies with them.
+    this.creditStreak(killerSid);
+    resetSid(this.streaks, victimSid);
     // Victim stays dead (ghost) until respawn click — same as survival
   }
 
@@ -778,7 +803,10 @@ export default class ArenaRoom extends Room {
       return false;
     }
     this.invulnUntil.set(sid, now + SERVER.player.invulnMs);
-    strikePlayer(victim, amount, srcX, srcZ, SERVER.player.knockback * 0.15, this.half);
+    const died = strikePlayer(victim, amount, srcX, srcZ,
+      SERVER.player.knockback * 0.15, this.half);
+    // Kill-streaks (PRD-kill-streaks.md): dying drops the victim's streak.
+    if (died) resetSid(this.streaks, sid);
     // Hit react: brief 'hit' anim override (300ms) so all clients see the
     // victim flinch — mirrors the enemy hit-stun pattern.
     victim.anim = 'hit';

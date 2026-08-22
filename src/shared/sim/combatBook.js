@@ -39,6 +39,7 @@
 import { SERVER } from '../../server/config.js';
 import { strikeEnemy } from '../combat.js';
 import { affixByName } from './elites.js';
+import { archetypeByName } from './archetypes.js';
 
 /**
  * Apply one hit of `damage` to a LIVING enemy from (srcX, srcZ): knockback +
@@ -87,16 +88,20 @@ export function resolveEnemyHit(ctx, enemy, damage, srcX, srcZ, killerSid = null
 
 /**
  * Knockback magnitude to apply when striking `enemy`: knockback-immune elites
- * (Bulwark) take the HP drop but are never shoved. Callers wrap their base
- * knockback with this at every enemy-strike site (resolveEnemyHit here, plus
- * each room's bash cone). Non-elite math is untouched.
- * @returns {number} 0 for immune elites, otherwise `baseKnockback`.
+ * (Bulwark) take the HP drop but are never shoved; otherwise the base is
+ * scaled by the enemy's archetype (Tank x0.25, PRD-enemy-archetypes.md).
+ * Callers wrap their base knockback with this at every enemy-strike site
+ * (resolveEnemyHit here, plus each room's bash cone). Non-elite, non-archetype
+ * math is untouched.
+ * @returns {number} 0 for immune elites, else `baseKnockback` (x archetype mul).
  */
 export function knockbackAgainst(enemy, baseKnockback) {
-  if (baseKnockback > 0 && enemy?.elite && affixByName(enemy.elite)?.knockbackImmune) {
+  if (!(baseKnockback > 0)) return baseKnockback;
+  if (enemy?.elite && affixByName(enemy.elite)?.knockbackImmune) {
     return 0;
   }
-  return baseKnockback;
+  const arch = enemy?.archetype ? archetypeByName(enemy.archetype) : null;
+  return arch ? baseKnockback * arch.knockbackMul : baseKnockback;
 }
 
 /**

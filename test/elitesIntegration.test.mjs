@@ -71,9 +71,16 @@ let serverEliteHp;
   assert.equal(elites[0].elite, serverEliteName);
   assert.equal(elites[0].hp, serverEliteHp,
     `elite hp === ceil(base ${waveEnemyHp(5)} * hpMul ${affixByName(serverEliteName).hpMul})`);
-  // Everyone else spawned at plain wave-5 HP with no affix.
+  // Everyone else spawned with no affix; hp is the plain wave-5 base OR
+  // composed with its archetype multiplier (PRD-enemy-archetypes.md: elite
+  // slot stays archetype-free, non-elite slots compose ceil(base * hpMul)).
+  const baseHp5 = waveEnemyHp(5);
   assert.ok(sr.state.enemies.slice(1, Math.min(7, sr.state.enemies.length))
-    .every((e) => e.hp === waveEnemyHp(5)), 'non-elite slots keep base wave HP');
+    .every((e) => {
+      if (e.archetype === 'Rusher') return e.hp === Math.ceil(baseHp5 * 0.75);
+      if (e.archetype === 'Tank') return e.hp === Math.ceil(baseHp5 * 2);
+      return e.archetype === '' && e.hp === baseHp5;
+    }), 'non-elite slots keep archetype-composed wave HP');
 
   await waitFor(() => banner, 2000, 'eliteSpawn broadcast');
   assert.deepEqual(banner, { name: serverEliteName });

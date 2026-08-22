@@ -16,6 +16,7 @@ import {
   registerProjBurn,
   startBurnFromProjectile,
   tickBurns,
+  knockbackAgainst,
 } from '../src/shared/sim/combatBook.js';
 import { applyShopChoice } from '../src/shared/sim/shopEffects.js';
 import { getUpgrade, effectiveMaxHp } from '../src/shared/progression.js';
@@ -366,4 +367,33 @@ test('source contract: src/shared/sim/*.js imports no colyseus or StateSchema', 
     assert.doesNotMatch(src, /from\s+['"]colyseus['"]/, `${f}: no colyseus import`);
     assert.doesNotMatch(src, /StateSchema/, `${f}: no StateSchema import`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Enemy archetypes (PRD-enemy-archetypes.md): knockback routes through
+// knockbackAgainst at EVERY strike site (resolveEnemyHit + both bash cones),
+// so Tank's 0.25x multiplier lands everywhere by construction. Elite Bulwark
+// immunity keeps winning when composed with an archetype.
+// ---------------------------------------------------------------------------
+
+test('knockbackAgainst: Tank shrugs off most of the shove', () => {
+  const tank = { elite: '', archetype: 'Tank' };
+  assert.equal(knockbackAgainst(tank, SERVER.enemy.hitKnockback),
+    SERVER.enemy.hitKnockback * 0.25, 'tank takes 25% knockback');
+});
+
+test('knockbackAgainst: Rusher and plain chasers take full knockback', () => {
+  assert.equal(knockbackAgainst({ elite: '', archetype: 'Rusher' }, 0.5), 0.5);
+  assert.equal(knockbackAgainst({ elite: '', archetype: '' }, 0.5), 0.5);
+  assert.equal(knockbackAgainst({}, 0.5), 0.5);
+});
+
+test('knockbackAgainst: elite Bulwark immunity wins over any archetype', () => {
+  const bulwarkTank = { elite: 'Bulwark', archetype: 'Tank' };
+  assert.equal(knockbackAgainst(bulwarkTank, 0.5), 0,
+    'immune elite is never shoved, archetype or not');
+});
+
+test('knockbackAgainst: non-positive base passes through untouched', () => {
+  assert.equal(knockbackAgainst({ elite: '', archetype: 'Tank' }, 0), 0);
 });

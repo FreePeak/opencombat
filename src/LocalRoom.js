@@ -18,6 +18,7 @@ import { attackFor } from './shared/classes.js';
 // consumes — every Nth wave spawns slot 0 as an ELITE, affix chosen by wave
 // number so offline matches online without coordination.
 import { isEliteWave, affixForWave, applyElite, affixByName } from './shared/sim/elites.js';
+import { archetypeByName, markArchetypes } from './shared/sim/archetypes.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
 // server room uses; clock/emit hooks below keep offline behavior identical.
 // Slice 2 moved D5 enemy-hit + D4 burn DoT (combatBook) and D3 shop effects
@@ -28,6 +29,9 @@ import * as combatBook from './shared/sim/combatBook.js';
 import * as shopEffects from './shared/sim/shopEffects.js';
 import * as projectileLoop from './shared/sim/projectileLoop.js';
 import * as matchPhases from './shared/sim/matchPhases.js';
+// Kill streaks (PRD-kill-streaks.md): the same pure module GameRoom consumes
+// — consecutive credited kills per player, announced ONLY at milestones.
+import { newStreakState, registerKill, resetSid, resetAll } from './shared/sim/streaks.js';
 import {
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult,
@@ -82,6 +86,9 @@ export class LocalRoom {
     this._burnByProjId = new Map();   // projectile id -> firewave burn def
     this._activeBurns = new Map();    // enemy -> live burn state
     this._volatilePending = new Map(); // dead Volatile elite -> {at, damage, radius}
+    // Kill-streak scratch (PRD-kill-streaks.md): sid -> { count, lastAt },
+    // mirrors GameRoom.streaks so payloads stay byte-equal across modes.
+    this.streaks = newStreakState();
     this.simCombat = {
       state: this.state,
       half: SERVER.world.size / 2,
@@ -283,7 +290,7 @@ export class LocalRoom {
    *  slot 0 as the ELITE and announces it through the local message channel
    *  (the same path 'blocked' rides) so the client banner needs no new API. */
   _spawnWave(n) {
-    activateWave(
+    const { count } = activateWave(
       this.state.enemies, n, this.state.players,
       () => randomInCircle(this._rng, SERVER.world.size / 2 - 2),
       (enemy) => {
@@ -291,12 +298,16 @@ export class LocalRoom {
         this._enemyStunUntil.delete(enemy);
         this._volatilePending.delete(enemy);
         enemy.elite = ''; // slots revive clean; re-marked below on elite waves
+        enemy.archetype = ''; // archetype tags are re-stamped by markArchetypes
       });
     if (isEliteWave(n)) {
       const affix = applyElite(this.state.enemies[0], affixForWave(n),
         waveEnemyHp(n));
       if (affix) this._emitMessage('eliteSpawn', { name: affix.name });
     }
+    // ENEMY ARCHETYPES: same shared marker as GameRoom -> parity by construction.
+    markArchetypes(this.state.enemies, n,
+      { liveCount: count, eliteWave: isEliteWave(n) });
     this.state.wave = n;
   }
 
@@ -502,7 +513,8 @@ export class LocalRoom {
             // GameRoom's chase (no daily modifier exists offline).
             if (dist > 1e-3) {
               const spd = SERVER.enemy.speed *
-                (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1);
+                (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1) *
+                (enemy.archetype ? archetypeByName(enemy.archetype)?.speedMul ?? 1 : 1);
               enemy.x = clamp(enemy.x + (dx / dist) * spd * dt, -half, half);
               enemy.z = clamp(enemy.z + (dz / dist) * spd * dt, -half, half);
             }
@@ -596,6 +608,21 @@ export class LocalRoom {
     this._notifyStateChange();
   }
 
+  /** Kill-streak bookkeeping (PRD-kill-streaks.md) — exact mirror of
+   *  GameRoom.creditStreak on the local message channel: called after every
+   *  enemy death credited to `sid`, announces ONLY at MILESTONES counts with
+   *  an identical payload shape { sid, name, count, label }. */
+  _creditStreak(sid, now = performance.now()) {
+    const ms = registerKill(this.streaks, sid, now);
+    if (!ms) return;
+    this._emitMessage('killStreak', {
+      sid,
+      name: this.state.players.get(sid)?.name ?? '',
+      count: this.streaks.get(sid)?.count ?? 0,
+      label: ms,
+    });
+  }
+
   /** Shared enemy-hit resolution (thin delegate over
    *  shared/sim/combatBook.resolveEnemyHit, sid-based like GameRoom):
    *  knockback, HIT-STUN on survivors, stay-dead + kill score + XP on kills.
@@ -605,8 +632,10 @@ export class LocalRoom {
     const killerSid = typeof killer === 'string'
       ? killer
       : (killer && killer === this.state.players.get(this.sessionId)) ? this.sessionId : null;
-    return combatBook.resolveEnemyHit(
-      this.simCombat, enemy, damage, srcX, srcZ, killerSid).killed;
+    const res = combatBook.resolveEnemyHit(
+      this.simCombat, enemy, damage, srcX, srcZ, killerSid);
+    if (res.killed && killerSid != null) this._creditStreak(killerSid);
+    return res.killed;
   }
 
   _resolveMelee(attacker) {
@@ -653,6 +682,7 @@ export class LocalRoom {
                 if (caster === this.state.players.get(this.sessionId)) this._grantXp(SERVER.progression?.xpPerKill ?? 30);
               }
               combatBook.onEliteKill(this.simCombat, enemy, this.sessionId); // elite burst + Volatile fuse
+              this._creditStreak(this.sessionId); // bash kills feed streaks too
             } else {
               enemy.anim = 'hit';
               this._enemyAnimUntil.set(enemy, now + SERVER.enemy.hitAnimMs);
@@ -739,6 +769,8 @@ export class LocalRoom {
     player.animUntil = performance.now() + 300;
     if (player.hp <= 0) {
       player.anim = 'hit';
+      // Kill-streaks (PRD-kill-streaks.md): death drops the victim's streak.
+      resetSid(this.streaks, this.sessionId);
     }
     return true;
   }
@@ -799,6 +831,7 @@ export class LocalRoom {
           : randomInCircle(this._rng, SERVER.world.size / 2 - 2),
       onResetTransient: () => { this._pendingStrikes = []; this._volatilePending.clear(); },
     });
+    resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
     this._notifyStateChange();
   }
 
