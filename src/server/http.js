@@ -21,7 +21,7 @@ import { log } from './log.js';
 import { createLiveReload } from './liveReload.js';
 // Daily Gauntlet public API: date/seed/modifier math from the shared module,
 // streak reward table derived from the same source of truth.
-import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp } from '../shared/sim/dailyRun.js';
+import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp, dailyObjectives } from '../shared/sim/dailyRun.js';
 // Weekly Gauntlet public API: same shape as /api/daily, keyed by ISO week.
 import { utcWeekKey, weeklySeed, weeklyModifiers, weeklyObjectives } from '../shared/sim/weeklyRun.js';
 // Presence panel (PRD-presence.md): merged view of the live population registry.
@@ -339,6 +339,7 @@ export function buildHttpApp(app) {
           leaderboard.push({
             name: rec.name ?? file.replace(/\.json$/, ''),
             score: rec.daily.bestScore,
+            objectivesDone: (rec.daily.objectives ?? []).filter(o => o.done === true).length,
           });
         }
       } catch {}
@@ -347,6 +348,7 @@ export function buildHttpApp(app) {
     res.json({
       date,
       seed: dailySeed(date),
+      objectives: dailyObjectives(date).map(d => ({ id: d.id, description: d.description })),
       modifiers: {
         label: mods.label,
         description: mods.description,

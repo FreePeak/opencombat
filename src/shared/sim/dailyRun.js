@@ -93,3 +93,49 @@ export function nextStreak(lastPlayedDate, todayStr, currentStreak) {
 export function streakRewardXp(streak) {
   return Math.min(Math.max(1, Math.floor(streak)), 7) * 100;
 }
+
+// Objective table (PRD-daily-objectives.md, Cycle 18): each day deterministically
+// selects 2 DISTINCT entries, checked at every daily finalize against the run's
+// {wave, score}. Thresholds tuned for one sitting; boundaries are inclusive (>=).
+export const DAILY_OBJECTIVES = [
+  { id: 'wave_5', description: 'Reach wave 5', test: r => r.wave >= 5 },
+  { id: 'wave_8', description: 'Reach wave 8', test: r => r.wave >= 8 },
+  { id: 'score_500', description: 'Score 500 in one run', test: r => r.score >= 500 },
+  { id: 'score_1200', description: 'Score 1200 in one run', test: r => r.score >= 1200 },
+];
+
+// Pick today's 2 distinct objectives via the same LCG shape weeklyObjectives
+// uses — splice from a copy so the shared table is never mutated across calls.
+// Accepts a date string or raw numeric seed.
+export function dailyObjectives(dateStrOrSeed) {
+  const seed = typeof dateStrOrSeed === 'number'
+    ? dateStrOrSeed >>> 0
+    : dailySeed(String(dateStrOrSeed));
+  const pool = [...DAILY_OBJECTIVES];
+  const picked = [];
+  let s = seed >>> 0;
+  while (picked.length < 2 && pool.length > 0) {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    picked.push(pool.splice(s % pool.length, 1)[0]);
+  }
+  return picked;
+}
+
+// Evaluate a run against the day's objectives -> [{id, done}]. Pure; the
+// sticky "done once true" merge happens at finalize, not here.
+export function evaluateDailyRun(objectives, run) {
+  return objectives.map(o => ({ id: o.id, done: !!o.test(run) }));
+}
+
+// Sticky-merge objective results into a persisted daily record: same-day keeps
+// done once true per id; a new day replaces wholesale.
+export function mergeDailyObjectives(prev, dateStr, results) {
+  if (!prev || prev.date !== dateStr) {
+    return { date: dateStr, objectives: results.map(r => ({ ...r })) };
+  }
+  const prior = new Map((prev.objectives ?? []).map(o => [o.id, o.done]));
+  return {
+    date: dateStr,
+    objectives: results.map(r => ({ id: r.id, done: prior.get(r.id) === true || r.done })),
+  };
+}

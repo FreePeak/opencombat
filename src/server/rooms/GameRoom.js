@@ -59,7 +59,7 @@ import { aggregateBonuses,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult } from '../../shared/progression.js';
 // Daily Gauntlet (PRD-daily-gauntlet.md): pure date math from shared/sim —
 // same module the offline client uses, so server + local runs agree.
-import { utcDateStr, dailySeed, dailyModifiers, nextStreak, streakRewardXp } from '../../shared/sim/dailyRun.js';
+import { utcDateStr, dailySeed, dailyModifiers, nextStreak, streakRewardXp, dailyObjectives, evaluateDailyRun, mergeDailyObjectives } from '../../shared/sim/dailyRun.js';
 // Weekly Gauntlet (PRD-weekly-gauntlet.md): ISO-week-seeded runs that reuse
 // the entire daily pipeline below — only the seed/modifier source and the
 // finalize blob differ (no streak by design; forgiveness is the mechanic).
@@ -736,6 +736,16 @@ export default class GameRoom extends Room {
           bestScore: Math.max(prev?.date === today ? (prev.bestScore ?? 0) : 0, player.score),
           streak,
           lastPlayed: today,
+          // Objectives (PRD-daily-objectives.md, Cycle 18): evaluate THIS run
+          // against today's 2 picks; per id keep done once true within the day
+          // (sticky), new day replaces wholesale.
+          objectives: mergeDailyObjectives(
+            saved?.daily ?? null, today,
+            evaluateDailyRun(dailyObjectives(today), {
+              wave: this.state.wave,
+              score: player.score,
+            }),
+          ).objectives,
         },
       };
       this._unlockAchievements(player.name, mergedDaily);
