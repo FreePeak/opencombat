@@ -40,6 +40,10 @@ import { newStreakState, registerKill, resetSid, resetAll } from './shared/sim/s
 // hook — same pure engine over a session career accumulator (no persistence).
 import { evaluateAchievements } from './shared/sim/achievements.js';
 import { recordRun } from './shared/sim/careerStats.js';
+// Offline progression checkpoints (PRD-offline-progression.md Step B): endless
+// local play never fires endMatch, so each cleared wave folds into the session
+// career record via the same pure module as the storage layer (Step A).
+import { checkpointWave } from './shared/sim/localCareer.js';
 import {
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult,
@@ -68,6 +72,9 @@ export class LocalRoom {
     // no targetScore win, no finale victory arc. Death/respawn still applies.
     // Tests construct without the flag and keep legacy semantics.
     this.endless = options?.endless ?? false;
+    // Offline checkpoint wiring (Step B): the host assigns onCheckpoint(rec)
+    // to persist each cleared-wave record (GameScene -> localStorage).
+    this.onCheckpoint = null;
     this.state = new WorldState();
     this.sessionId = 'local-' + Math.random().toString(36).slice(2);
     this._callbacks = { stateChange: [], message: [], leave: [] };
@@ -106,6 +113,9 @@ export class LocalRoom {
     // playAgain replay re-evaluates WITHOUT re-toasting (newIds stays empty).
     this._localCareer = null;
     this._unlockedAchievements = [];
+    // Checkpoint-path unlock dedupe (Step B): ids granted through per-wave
+    // checkpoints so a long endless session toasts each id exactly once.
+    this._unlockedIds = new Set();
     this._orbCharges = new Map(); // orb -> stored kill-XP (PRD-orb-drops.md)
     this._shooterFireAt = new Map(); // enemy -> ms of next Shooter volley
     this.simCombat = {
@@ -636,6 +646,11 @@ export class LocalRoom {
         this.simPhases.intermissionBox.until = performance.now() + (SERVER.wave?.intermissionMs ?? 8000);
         this.state.intermissionUntil = this.simPhases.intermissionBox.until;
         this._shopPicks.clear();
+        // ENDLESS CHECKPOINTS (Step B): runs exactly ONCE per cleared wave —
+        // this block is reachable only while 'playing' and immediately flips
+        // the state away. Legacy/default rooms stay byte-identical: the whole
+        // hook no-ops without { endless: true } + an assigned onCheckpoint.
+        this._checkpointProgress();
         this._notifyStateChange();
         return;
       }
@@ -972,6 +987,44 @@ export class LocalRoom {
     if (newIds.length === 0) return;
     this._unlockedAchievements = unlocked;
     this._emitMessage('achievementsUnlocked', { ids: newIds });
+  }
+
+  /** Offline progression checkpoint (Step B, endless only): fold the cleared
+   *  wave into the session career record (same pure math as the storage
+   *  layer), evaluate achievements over it, then hand the record to the host
+   *  callback for persistence. No-op without { endless: true } or a listener. */
+  _checkpointProgress() {
+    if (!this.endless || !this.onCheckpoint) return;
+    let topScore = 0;
+    for (const p of this.state.players.values()) {
+      if (p.score > topScore) topScore = p.score;
+    }
+    this._localCareer = checkpointWave(this._localCareer, {
+      wave: this.state.wave,
+      score: topScore,
+    });
+    this._checkpointAchievements(this._localCareer);
+    this.onCheckpoint(this._localCareer);
+  }
+
+  /** Achievement pass over a fresh checkpoint — same pure engine and
+   *  'achievementsUnlocked' { ids } payload as _emitAchievements, deduped
+   *  against _unlockedIds so each id broadcasts exactly once per session
+   *  across many per-wave checkpoints (ONE batched emit per checkpoint). */
+  _checkpointAchievements(rec) {
+    const { newIds } = evaluateAchievements({
+      career: rec,
+      achievements: [...this._unlockedIds],
+    });
+    const freshBatch = [];
+    for (const id of newIds) {
+      if (!this._unlockedIds.has(id)) {
+        this._unlockedIds.add(id);
+        freshBatch.push(id);
+      }
+    }
+    if (freshBatch.length === 0) return;
+    this._emitMessage('achievementsUnlocked', { ids: freshBatch });
   }
 
   _endMatch(winner) {

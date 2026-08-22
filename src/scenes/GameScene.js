@@ -808,6 +808,7 @@ export default class GameScene {
     }
     if (this.spectateLeaveEl) this.spectateLeaveEl.style.display = 'none';
     this.loginEl.classList.add('visible');
+    this.refreshPersonalBest();
   }
 
   /** Swap the bounded-arena visuals for the open world (Phase 6): the

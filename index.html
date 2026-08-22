@@ -199,6 +199,10 @@
     /* Gauntlet cards: modifier line under the mode cards */
     #mode-daily-sub, #mode-weekly-sub { margin-top: 6px; min-height: 14px; text-align: center;
       font: 11px var(--mono); color: var(--muted); letter-spacing: .04em; }
+    /* Offline personal-best line (PRD-offline-progression): hidden until a
+       localStorage career exists, same muted mono family as the subs. */
+    #personal-best { margin-top: 6px; display: none; text-align: center;
+      font: 11px var(--mono); color: var(--muted); letter-spacing: .06em; }
 
     /* ============ daily gauntlet result banner ============ */
     #daily-results { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 23; /* above gameover(20)/upgrade(22): streak lines must stay readable on victory */
@@ -345,6 +349,7 @@
       <div id="mode-picker"></div>
       <div id="mode-daily-sub"></div>
       <div id="mode-weekly-sub"></div>
+      <div id="personal-best"></div>
       <br/>
       <button id="login-btn">JOIN</button>
       <div id="login-error"></div>
