@@ -786,7 +786,12 @@ export default class GameRoom extends Room {
     if (SERVER.wave.finaleWave > 0 && next > SERVER.wave.finaleWave) {
       this.state.victory = true;
       this.logEvent('match_victory', { waves: this.state.wave });
-      this.endMatch('');
+      // Challenge runs (daily/weekly): a WON gauntlet is a completed run —
+      // finalize FIRST (it ends the match itself); calling endMatch directly
+      // would freeze state into gameover and finalize's own guard would
+      // skip streak/blob recording entirely.
+      if (this.isChallenge) this.finalizeDailyRun();
+      else this.endMatch('');
       return;
     }
     this.pendingMelee = [];

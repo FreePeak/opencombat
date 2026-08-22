@@ -180,5 +180,64 @@ const rmPlayerFile = (name) => { try { fs.rmSync(playerFile(name)); } catch {} }
   _resetForTests();
 }
 
+// --- VICTORY finalize: winning the wave finale records the streak -------------
+{
+  rmPlayerFile('DailyWin');
+  const prevFinale = SERVER.wave.finaleWave;
+  SERVER.wave.finaleWave = 2; // two-wave run for speed
+  try {
+    const c = new Client(`ws://localhost:${port}`);
+    const r = await c.create('daily', { name: 'DailyWin', character: 0, mode: 'daily' }, WorldState);
+    await waitFor(() => r.state?.matchState === 'playing', 8000, 'daily victory match playing');
+    const sr = roomOf(r);
+    let sawResult = null;
+    r.onMessage('dailyResult', (d) => { sawResult = d; });
+
+    const me = sr.state.players.get(r.sessionId);
+    me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
+    const clearWave = async () => {
+      const alive = [...sr.state.enemies].filter((e) => e.hp > 0);
+      // Finale SURGE may field the whole pool: cone-safe adaptive fan.
+      const spacing = Math.min(0.3, 0.9 / Math.max(1, alive.length - 1));
+      alive.forEach((e, i) => {
+        e.hp = 1;
+        const ang = (i - (alive.length - 1) / 2) * spacing;
+        e.x = 1.8 * Math.cos(ang);
+        e.z = 1.8 * Math.sin(ang);
+        sr.enemyStunUntil.set(e, Date.now() + 5000);
+      });
+      r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+      await waitFor(() => sr.state.matchState === 'intermission', 3000,
+        'victory-run clear');
+      // Drain level-up cards (pause wall would block the next advance).
+      for (let i = 0; i < 12 && me.pendingChoices.length > 0; i++) {
+        r.send('chooseUpgrade', { choice: me.pendingChoices[0] });
+        await waitMs(80);
+      }
+    };
+
+    await clearWave();
+    r.send('nextWave');
+    await waitFor(() => sr.state.matchState === 'playing', 8000, 'victory wave 2 playing');
+    await clearWave();
+    r.send('nextWave'); // advancing past the finale -> co-op VICTORY
+    await waitFor(() => sr.state.matchState === 'gameover', 3000, 'daily victory gameover');
+    assert.equal(sr.state.victory, true, 'daily victory flag set');
+
+    // THE PIN: a won gauntlet IS a completed run — finalize must have fired.
+    await waitFor(() => sawResult, 3000, 'dailyResult broadcast on victory');
+    flushAll();
+    const blob = JSON.parse(fs.readFileSync(playerFile('DailyWin'), 'utf8'));
+    assert.ok(blob.daily, 'daily blob written on victory');
+    assert.equal(blob.daily.streak, 1, 'victory counts as a completed run');
+    assert.equal(blob.daily.lastPlayed, utcDateStr());
+    assert.ok((blob.career?.victories ?? 0) >= 1, 'career victories recorded too');
+    rmPlayerFile('DailyWin');
+    r.leave();
+  } finally {
+    SERVER.wave.finaleWave = prevFinale;
+  }
+}
+
 console.log('ok — daily.test.mjs: daily mode gate + modifier scaling + seeded layout parity, waves untouched, /api/daily shape, all-dead finalize + persistence + leaderboard');
 process.exit(0);
