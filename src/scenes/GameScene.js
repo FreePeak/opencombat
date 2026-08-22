@@ -771,8 +771,22 @@ export default class GameScene {
     // CAREER STATS (PRD-career-stats.md): results overlay appends the local
     // player's lifetime line from the end-of-match broadcast.
     this.careerBySid = {};
+    // Previous tier per sid persists across rooms within the session — a
+    // tier ABOVE the last seen one at results time fires an unlock toast.
+    this.lastTierSeen = {};
     this.room.onMessage('careerUpdate', ({ rows }) => {
-      for (const row of rows ?? []) this.careerBySid[row.sid] = row.career;
+      for (const row of rows ?? []) {
+        const prev = this.lastTierSeen[row.sid];
+        if (prev !== undefined && row.tier > prev &&
+            row.sid === this.room.sessionId) {
+          this.showEliteToast({
+            name: `COSMETIC TIER ${row.tier} UNLOCKED`,
+            boss: false,
+          });
+        }
+        this.lastTierSeen[row.sid] = row.tier;
+        this.careerBySid[row.sid] = row.career;
+      }
     });
     // Elite affixes (P2.6): hosted rooms broadcast 'eliteSpawn' {name} and
     // LocalRoom fans the same type out through its onMessage API (see its

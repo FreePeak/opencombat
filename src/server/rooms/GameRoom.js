@@ -629,7 +629,9 @@ export default class GameRoom extends Room {
         victory: !!this.state.victory,
       });
       savePlayerDebounced(player.name, { ...saved, career });
-      careerRows.push({ sid, name: player.name, career });
+      const tier = tierForCareer(career);
+      player.tier = tier; // live schema update for nametag accents
+      careerRows.push({ sid, name: player.name, career, tier });
     }
     if (careerRows.length > 0) this.broadcast('careerUpdate', { rows: careerRows });
     this.logEvent('match_over', { winnerSid: this.state.winnerId, winnerName: this.state.winnerName });
