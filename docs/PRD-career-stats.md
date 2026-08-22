@@ -72,3 +72,12 @@ identity binding persists an `oidcSub` FIELD on the existing per-name blob
 (no namespace split), so career/daily/weekly records keep their keyed-by-
 display-name semantics; same-name collision scenarios are pinned in
 oidc.test.mjs. Gate on the combined tree: 115 files ok, 204/204 tests.
+
+## Post-ship audit note #3 (CYCLE-AR, 2026-08-22)
+
+Verified-name join guard (PRD-name-guard.md) audited compose-clean with
+career stats: `sanitizeName`/`safeName` mirror untouched (blob keys stable),
+and the 4103 guard actively PROTECTS persisted career/daily/weekly blobs
+from guest-hijack overwrites of verified-bound names — a direct integrity
+upgrade for this feature's storage layer. Combined tree gate: 116 files ok,
+205/205 tests.
