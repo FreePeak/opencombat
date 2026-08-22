@@ -204,6 +204,16 @@ export default class GameScene {
     this.recentAlliesEl = document.getElementById('recent-allies');
     this._presenceInFlight = false;  // guard against overlapping fetches
     this._lastPresenceKey = '';      // last rendered payload signature
+    // Live matches panel (PRD-live-matches.md): rows under the Online Now
+    // list, own /api/rooms poller. One delegated click handler serves every
+    // re-rendered JOIN button (rows are rebuilt as innerHTML strings).
+    this.liveMatchesEl = document.getElementById('live-matches');
+    this._roomsInFlight = false;     // guard against overlapping fetches
+    this._lastRoomsKey = '';         // last rendered payload signature
+    this.liveMatchesEl?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.join-btn');
+      if (btn && !btn.disabled) this.joinMatch(btn.dataset.mode);
+    });
     this.isArenaSession = false;     // are we in an arena (PvP) room?
 
     // One overlay serves three ends: death (respawn), wave cleared (next
@@ -327,6 +337,10 @@ export default class GameScene {
   startPresencePoller() {
     this.pollPresence(); // first paint without waiting a full interval
     this._presenceTimer = setInterval(() => this.pollPresence(), 5000);
+    // PRD-live-matches.md: LIVE MATCHES rides the same family and timing —
+    // its own 5s fetch of /api/rooms against the same http base.
+    this.pollRooms();
+    this._roomsTimer = setInterval(() => this.pollRooms(), 5000);
   }
 
   async pollPresence() {
@@ -362,6 +376,79 @@ export default class GameScene {
     this.onlineListEl.innerHTML = data.players.map((p) =>
       `<li class="presence-row"><span class="dot mode-${esc(p?.mode ?? 'idle')}"></span>${esc(p?.name ?? '???')}</li>`
     ).join('');
+  }
+
+  /** PRD-live-matches.md: poll GET /api/rooms every 5s against the same
+   *  host as the presence/daily APIs. Overlap-guarded like pollPresence;
+   *  any failure silently clears the section — a stale listing misleads
+   *  more than an empty one. */
+  async pollRooms() {
+    if (!this.liveMatchesEl || this._roomsInFlight) return;
+    this._roomsInFlight = true;
+    try {
+      // CONFIG.serverUrl is ws(s)://… — same ws->http derivation as above.
+      const httpBase = CONFIG.serverUrl.replace(/^ws/i, 'http');
+      const res = await fetch(`${httpBase}/api/rooms`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this.renderRooms(Array.isArray(data?.rooms) ? data.rooms : null);
+    } catch {
+      this.renderRooms(null);
+    } finally {
+      this._roomsInFlight = false;
+    }
+  }
+
+  /** Render [{ roomId, mode, players, phase, canJoin }] into #live-matches.
+   *  Cheap: the DOM is only touched when the payload actually changed.
+   *  Joinable rows get a JOIN button (handled by one delegated listener on
+   *  the UL); everything else renders muted with meta only. The server
+   *  already sorts rooms by players desc — the order is kept as-is. */
+  renderRooms(rooms) {
+    if (!this.liveMatchesEl) return;
+    const key = rooms ? JSON.stringify(rooms) : 'offline';
+    if (key === this._lastRoomsKey) return;
+    this._lastRoomsKey = key;
+    if (!rooms) { this.liveMatchesEl.innerHTML = ''; return; }
+    if (rooms.length === 0) {
+      this.liveMatchesEl.innerHTML = '<li class="presence-offline">no live matches</li>';
+      return;
+    }
+    this.liveMatchesEl.innerHTML = rooms.map((r) => {
+      const meta = `${esc(r?.mode ?? '?')} · ${Number(r?.players) || 0}p`;
+      if (!r?.canJoin) {
+        return `<li class="match-row muted"><span class="match-meta">${meta}</span></li>`;
+      }
+      const mode = r.mode === 'daily' ? 'daily' : 'waves';
+      return `<li class="match-row"><span class="match-meta">${meta}</span>` +
+        `<button type="button" class="join-btn" data-mode="${esc(mode)}">JOIN</button></li>`;
+    }).join('');
+  }
+
+  /** One-click join from a LIVE MATCHES row (PRD-live-matches.md). Only
+   *  waves/daily rooms are ever listed as joinable; the room's family is
+   *  forced onto this.mode ('daily' stays daily, everything else maps to
+   *  waves), persisted like the login picker, and then the EXACT hosted
+   *  path onJoinClick uses takes over — same name/audio/model setup, same
+   *  typed-server probe, joinGame('game'|'daily') -> adoptRoom. That also
+   *  keeps the offline fallback intact: if the server dropped between the
+   *  listing and the click, waves/daily degrade to the browser-local solo
+   *  exactly like a normal login join would. */
+  async joinMatch(roomMode) {
+    if (this.joining || this.room) return; // mid-join or scene already connected
+    this.mode = roomMode === 'daily' ? 'daily' : 'waves';
+    try { localStorage.setItem('opengame.mode', this.mode); } catch {}
+    // Keep the picker in step so an error-path return shows the forced pick.
+    for (const el of document.getElementById('mode-picker')?.children ?? []) {
+      el.classList.toggle('selected', el.dataset?.mode === this.mode);
+    }
+    // Double-click guard: freeze every JOIN row now; onJoinClick flips
+    // this.joining synchronously, re-enabling happens once it settles.
+    for (const b of this.liveMatchesEl.querySelectorAll('.join-btn')) b.disabled = true;
+    await this.onJoinClick();
+    if (!this.room && this.loginEl.classList.contains('visible')) {
+      for (const b of this.liveMatchesEl.querySelectorAll('.join-btn')) b.disabled = false;
+    }
   }
 
   /** Recent Allies: localStorage memory of arena co-participants —
@@ -641,6 +728,12 @@ export default class GameScene {
     // Daily Gauntlet: run-finalize broadcast (daily rooms only). LocalRoom
     // never emits it — registering here is harmless there.
     this.room.onMessage('dailyResult', (d) => this.showDailyResults(d));
+    // CAREER STATS (PRD-career-stats.md): results overlay appends the local
+    // player's lifetime line from the end-of-match broadcast.
+    this.careerBySid = {};
+    this.room.onMessage('careerUpdate', ({ rows }) => {
+      for (const row of rows ?? []) this.careerBySid[row.sid] = row.career;
+    });
     // Elite affixes (P2.6): hosted rooms broadcast 'eliteSpawn' {name} and
     // LocalRoom fans the same type out through its onMessage API (see its
     // _emitMessage), so ONE registration covers online + offline waves.
@@ -1404,7 +1497,10 @@ export default class GameScene {
         const scores = [...state.players.values()]
           .sort((a, b) => b.score - a.score).slice(0, 3)
           .map((p) => `${p.name}: ${p.score}`).join('   ');
-        this.overlaySub.textContent = scores + '   — PLAY AGAIN →';
+        const mine = this.careerBySid?.[this.room.sessionId];
+        const careerLine = mine
+          ? `   · RUNS ${mine.runs} · WINS ${mine.victories} · BEST WAVE ${mine.bestWave}` : '';
+        this.overlaySub.textContent = scores + careerLine + '   — PLAY AGAIN →';
         this.overlay.classList.add('visible');
         this.deadShown = true; // match end supersedes the death overlay
       }

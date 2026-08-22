@@ -210,6 +210,11 @@ const parkOthers = (sr, keep = 0) => {
   const c2 = new Client(`ws://localhost:${port}`);
   const r2 = await c2.joinById(host.r.roomId, { name: 'Victim' }, WorldState);
   await waitMs(200);
+  // Late-join fairness (PRD-live-matches.md): mid-'playing' joins get a 3s
+  // spawn-protection window. Wait it out on SERVER truth or every swing is
+  // silently absorbed.
+  await waitFor(() => (sr.invulnUntil.get(r2.sessionId) || 0) <= Date.now(),
+    5000, 'victim late-join grace elapsed');
   const B = sr.state.players.get(r2.sessionId);
   B.x = 1.5; B.z = 0; B.rotY = -Math.PI / 2;
 

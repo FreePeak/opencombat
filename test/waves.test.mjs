@@ -18,6 +18,9 @@ import { buildHttpApp } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
 import { waveEnemyCount, waveEnemyHp } from '../src/shared/waves.js';
 import { archetypeForSlot, SHOOTER_PREFERRED_RANGE } from '../src/shared/sim/archetypes.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { flushAll, _dirForTests } from '../src/server/persistence.js';
 import { LocalRoom } from '../src/LocalRoom.js';
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -385,7 +388,7 @@ const drainUpgradeCards = async (sr, ...clients) => {
 {
   const prevFinale = SERVER.wave.finaleWave;
   SERVER.wave.finaleWave = 2; // shrink the run for test speed
-  try {
+  try { try { fs.unlinkSync(path.join(_dirForTests(), 'Finale.json')); } catch {}
     const host = await newRoom('Finale');
     const sr = roomOf(host.r);
     try {
@@ -416,6 +419,14 @@ const drainUpgradeCards = async (sr, ...clients) => {
       await waitFor(() => sr.state.matchState === 'gameover', 3000, 'victory gameover');
       assert.equal(sr.state.victory, true, 'AC1: victory flag set');
       // AC3: playAgain restores a fresh endless=false run.
+      // AC1: the ending was recorded into per-player persistence.
+      flushAll();
+      const pf = path.join(_dirForTests(), 'Finale.json');
+      const saved = JSON.parse(fs.readFileSync(pf, 'utf8'));
+      assert.equal(saved.career.runs, 1);
+      assert.equal(saved.career.victories, 1);
+      assert.equal(saved.career.bestWave, 2);
+      try { fs.unlinkSync(pf); } catch {}
       host.r.send('playAgain');
       await waitFor(() => sr.state.matchState === 'playing', 8000, 'playing after victory replay');
       assert.equal(sr.state.victory, false, 'victory reset on replay');

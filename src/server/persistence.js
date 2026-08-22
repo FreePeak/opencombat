@@ -33,18 +33,27 @@ const timers = new Map();
 // Pending in-memory snapshots waiting to flush: name -> data
 const pending = new Map();
 
-/** Load persisted data for `name` if it exists, else null. */
+/** Load persisted data for `name` if it exists, else null.
+ *  PENDING OVERLAY (PRD-career-stats.md): a queued debounced save is
+ *  visible to subsequent loads in the same tick — two back-to-back
+ *  read-merge-save cycles (career inside endMatch, daily blob right after)
+ *  must not clobber each other. Newest wins per key; file data survives
+ *  under keys the pending snapshot doesn't carry. */
 export function loadPlayer(name) {
-  const file = fileFor(name);
+  const key = safeName(name);
+  const file = fileFor(key);
+  let data = null;
   try {
-    if (!fs.existsSync(file)) return null;
-    const raw = fs.readFileSync(file, 'utf8');
-    const data = JSON.parse(raw);
-    return data;
+    if (fs.existsSync(file)) {
+      data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    }
   } catch (err) {
     warn('persistence_load_failed', { name, error: err?.message });
-    return null;
+    data = null;
   }
+  const snap = pending.get(key);
+  if (snap) data = { ...(data ?? {}), ...snap };
+  return data;
 }
 
 /** Queue a debounced save for `name` with snapshot `data` (level/xp/upgrades etc). */

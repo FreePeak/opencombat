@@ -36,6 +36,7 @@ import { archetypeByName, markArchetypes,
   SHOOTER_KITE_SPEED_MUL } from '../../shared/sim/archetypes.js';
 import * as orbDrops from '../../shared/sim/orbDrops.js';
 import { pullOrbs } from '../../shared/sim/magnetPull.js';
+import { recordRun } from '../../shared/sim/careerStats.js';
 // Kill streaks (PRD-kill-streaks.md): pure shared module — both rooms track
 // consecutive credited kills per player (2.5s window, reset on death/reset)
 // and announce ONLY at MILESTONES so online/offline payloads stay identical.
@@ -426,6 +427,11 @@ export default class GameRoom extends Room {
     this.attackAt.set(client.sessionId, 0);
     this.skillAt.set(client.sessionId, 0);
     this.invulnUntil.set(client.sessionId, 0);
+    // Late-join fairness (PRD-live-matches.md): arriving mid-match grants a
+    // longer spawn-protection window than the standard 1s spawn grace.
+    if (this.state.matchState === 'playing') {
+      this.invulnUntil.set(client.sessionId, Date.now() + 3000);
+    }
     this.animUntil.set(client.sessionId, 0);
     this.msgTimes.set(client.sessionId, []);
     clearTimeout(this.graceTimers.get(client.sessionId));
@@ -566,6 +572,21 @@ export default class GameRoom extends Room {
     this.state.winnerId = winnerSid || '';
     const w = winnerSid ? this.state.players.get(winnerSid) : undefined;
     this.state.winnerName = w ? w.name : '';
+    // CAREER STATS (PRD-career-stats.md): EVERY ending records — victory,
+    // death, timed, daily finalize. Pending-overlay in persistence keeps
+    // this safe against the daily blob's immediate re-read/merge.
+    const careerRows = [];
+    for (const [sid, player] of this.state.players) {
+      const saved = loadPlayer(player.name) ?? {};
+      const career = recordRun(saved.career ?? null, {
+        wave: this.state.wave,
+        score: player.score,
+        victory: !!this.state.victory,
+      });
+      savePlayerDebounced(player.name, { ...saved, career });
+      careerRows.push({ sid, name: player.name, career });
+    }
+    if (careerRows.length > 0) this.broadcast('careerUpdate', { rows: careerRows });
     this.logEvent('match_over', { winnerSid: this.state.winnerId, winnerName: this.state.winnerName });
   }
 
