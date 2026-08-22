@@ -224,10 +224,15 @@ respawns elsewhere after `powerUps.respawnSeconds`.
 - **Finale** — clearing wave `wave.finaleWave` (default 12; 0 = endless)
   ends the run as a co-op VICTORY over the Warlord boss with a full-pool
   SURGE last stand; daily/weekly gauntlets finalize streaks on victory too.
-- **Career stats** — runs/wins/bestWave persist per player name and show on
-  the results overlay.
+- **Career stats & achievements** — runs/wins/bestWave persist per player
+  (server-side per name; localStorage in the offline fallback), cosmetic
+  nametag tiers unlock at best-wave 6/9/12, ten achievement predicates
+  evaluate on every ending, and results overlay + toasts surface it all.
 - **Daily & Weekly Gauntlets** — date/week-seeded modifiers, streak rewards,
-  leaderboards (`/api/daily`, `/api/weekly`).
+  leaderboards (`/api/daily`, `/api/weekly`); winning the finale finalizes
+  your streak.
+- **Offline endless checkpoints** — the browser-local sim saves per-wave
+  career progress incrementally, so refreshes never lose a run.
 
 ## Combat
 
