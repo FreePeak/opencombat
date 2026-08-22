@@ -106,6 +106,11 @@ deletes forget them.
   player.daily (separate key from career) — no interaction with endMatch
   careerUpdate; their new test file exits cleanly this cycle. Combined gate:
   122 files, 212/212. Compose-clean.
+- 2.2 persistence adapter + Postgres (0149927): `data JSONB` stores the
+  WHOLE blob — career/achievements/oidcSub/daily.objectives survive
+  losslessly; facade PRELOADS rows into pgCache at boot so the synchronous
+  read path (and this feature's pending-overlay) is unchanged under both
+  drivers. Compose-clean by explicit design.
 - 2.23 combat radar (df77347): consumes synced x/z both rooms publish —
   works online + offline; no career interaction; elite/boss blip styling is
   their backlog. Compose-clean.
