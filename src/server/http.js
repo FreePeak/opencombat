@@ -348,7 +348,9 @@ export function buildHttpApp(app) {
     res.json({
       date,
       seed: dailySeed(date),
-      objectives: dailyObjectives(date).map(d => ({ id: d.id, description: d.description })),
+      objectives: dailyObjectives(date).map(d => ({
+        id: d.id, description: d.description, target: { kind: d.kind, value: d.value },
+      })),
       modifiers: {
         label: mods.label,
         description: mods.description,
@@ -390,7 +392,9 @@ export function buildHttpApp(app) {
     res.json({
       week,
       seed: weeklySeed(week),
-      objectives: weeklyObjectives(week).map(d => ({ id: d.id, description: d.description })),
+      objectives: weeklyObjectives(week).map(d => ({
+        id: d.id, description: d.description, target: { kind: d.kind, value: d.value },
+      })),
       modifiers: {
         label: mods.label,
         description: mods.description,

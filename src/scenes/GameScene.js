@@ -35,6 +35,7 @@ import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { CombatRadar } from '../ui/CombatRadar.js';
 import { buildShareCard, shareText } from '../shared/sim/shareCard.js';
+import { objectiveProgress } from '../shared/sim/objectivesHud.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -397,6 +398,10 @@ export default class GameScene {
       const label = data?.modifiers?.label ?? 'unknown modifiers';
       const mine = (data?.leaderboard ?? []).find((r) => r && r.name === this.name);
       sub.textContent = `today: ${label}` + (mine ? ` · your best ${mine.score}` : '');
+      // Objectives (PRD-objective-hud.md): surface today's goals right on the
+      // card so players know what to chase before joining.
+      const goals = (data?.objectives ?? []).map((o) => o?.description).filter(Boolean);
+      if (goals.length) sub.textContent += ` · goals: ${goals.join(' / ')}`;
     } catch {
       this.dailyInfo = null;
       sub.textContent = 'daily: offline';
@@ -419,6 +424,9 @@ export default class GameScene {
       const label = data?.modifiers?.label ?? 'unknown modifiers';
       const mine = (data?.leaderboard ?? []).find((r) => r && r.name === this.name);
       sub.textContent = `this week: ${label}` + (mine ? ` · your best ${mine.score}` : '');
+      // Objectives (PRD-objective-hud.md): same treatment as the daily card.
+      const goals = (data?.objectives ?? []).map((o) => o?.description).filter(Boolean);
+      if (goals.length) sub.textContent += ` · goals: ${goals.join(' / ')}`;
     } catch {
       this.weeklyInfo = null;
       sub.textContent = 'weekly: offline';
@@ -1655,6 +1663,29 @@ export default class GameScene {
         }
       }
 
+      // Objectives chip (PRD-objective-hud.md): challenge modes only — live
+      // check marks from synced wave/score against /api/{daily,weekly} targets
+      // (fetched at menu time; predicates never cross the wire).
+      if (!this.worldMode && !this.spectating && this.local) {
+        const ms2 = this.room?.state?.matchState;
+        if (ms2 === 'playing' || ms2 === 'intermission' || ms2 === 'paused') {
+          const defs = this.mode === 'daily' ? this.dailyInfo?.objectives
+            : this.mode === 'weekly' ? this.weeklyInfo?.objectives : null;
+          if (defs?.length) {
+            this._updateObjectivesChip(defs, {
+              wave: this.room.state.wave ?? 0,
+              score: [...this.room.state.players.values()]
+                .find((p) => p.name === this.name)?.score
+                ?? this.room.state.players.get(this.room.sessionId)?.score ?? 0,
+            });
+          } else {
+            this._hideObjectivesChip();
+          }
+        } else {
+          this._hideObjectivesChip();
+        }
+      }
+
       // --- Camera rig: lerp behind the player, look at them -------------
       const target = this.local.root.position;
       const cfg = CONFIG.player.camera;
@@ -2231,6 +2262,32 @@ export default class GameScene {
 
   _hideShareButton() {
     if (this.shareBtn) this.shareBtn.style.display = 'none';
+  }
+
+  /** Objectives chip (PRD-objective-hud.md): compact top-center HUD list of
+   *  today's/this week's 2 objectives with live check/cross marks. Lazily
+   *  created; hidden whenever not in a live challenge match. */
+  _updateObjectivesChip(defs, run) {
+    if (!this.objectivesChip) {
+      const el = document.createElement('div');
+      el.id = 'objectives-chip';
+      el.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);' +
+        'z-index:11;background:#0b0e14cc;padding:4px 12px;border-radius:8px;' +
+        'font:12px/1.5 monospace;color:#cfd8ea;text-align:left;pointer-events:none;';
+      document.body.appendChild(el);
+      this.objectivesChip = el;
+    }
+    const marks = objectiveProgress(defs.map((d) => d.target ?? {}), run)
+      .map((r) => ({ id: r.id, done: r.done }));
+    this.objectivesChip.innerHTML = defs.map((d, i) => {
+      const done = marks[i]?.done;
+      return `<div>${done ? '[x]' : '[ ]'} ${d.description ?? d.id}</div>`;
+    }).join('');
+    this.objectivesChip.style.display = '';
+  }
+
+  _hideObjectivesChip() {
+    if (this.objectivesChip) this.objectivesChip.style.display = 'none';
   }
 
   hideEliteToast() {

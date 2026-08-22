@@ -98,10 +98,10 @@ export function streakRewardXp(streak) {
 // selects 2 DISTINCT entries, checked at every daily finalize against the run's
 // {wave, score}. Thresholds tuned for one sitting; boundaries are inclusive (>=).
 export const DAILY_OBJECTIVES = [
-  { id: 'wave_5', description: 'Reach wave 5', test: r => r.wave >= 5 },
-  { id: 'wave_8', description: 'Reach wave 8', test: r => r.wave >= 8 },
-  { id: 'score_500', description: 'Score 500 in one run', test: r => r.score >= 500 },
-  { id: 'score_1200', description: 'Score 1200 in one run', test: r => r.score >= 1200 },
+  { id: 'wave_5', description: 'Reach wave 5', kind: 'wave', value: 5, test: r => r.wave >= 5 },
+  { id: 'wave_8', description: 'Reach wave 8', kind: 'wave', value: 8, test: r => r.wave >= 8 },
+  { id: 'score_500', description: 'Score 500 in one run', kind: 'score', value: 500, test: r => r.score >= 500 },
+  { id: 'score_1200', description: 'Score 1200 in one run', kind: 'score', value: 1200, test: r => r.score >= 1200 },
 ];
 
 // Pick today's 2 distinct objectives via the same LCG shape weeklyObjectives

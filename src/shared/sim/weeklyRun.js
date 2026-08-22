@@ -78,10 +78,10 @@ export function mergeWeekly(prev, weekKey, score) {
 // DISTINCT entries, checked at every weekly finalize against the run's
 // {wave, score}. Boundaries are inclusive (>=).
 export const WEEKLY_OBJECTIVES = [
-  { id: 'wave_6', description: 'Reach wave 6', test: r => r.wave >= 6 },
-  { id: 'wave_10', description: 'Reach wave 10', test: r => r.wave >= 10 },
-  { id: 'score_800', description: 'Score 800 in one run', test: r => r.score >= 800 },
-  { id: 'score_2000', description: 'Score 2000 in one run', test: r => r.score >= 2000 },
+  { id: 'wave_6', description: 'Reach wave 6', kind: 'wave', value: 6, test: r => r.wave >= 6 },
+  { id: 'wave_10', description: 'Reach wave 10', kind: 'wave', value: 10, test: r => r.wave >= 10 },
+  { id: 'score_800', description: 'Score 800 in one run', kind: 'score', value: 800, test: r => r.score >= 800 },
+  { id: 'score_2000', description: 'Score 2000 in one run', kind: 'score', value: 2000, test: r => r.score >= 2000 },
 ];
 
 // Pick this week's 2 distinct objectives via the same LCG weeklyModifiers
