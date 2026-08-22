@@ -102,3 +102,7 @@ deletes forget them.
 - Cycle-17 objective-based weeklies (9d5b417, docs): run.wave predicate
   composes with the finale arc (a wave-12 victory satisfies wave_10); R15's
   finalize-first victory ordering covers weekly mode via dispatch.
+- 2.22 objective-based dailies (05a49fe): objectives merge into
+  player.daily (separate key from career) — no interaction with endMatch
+  careerUpdate; their new test file exits cleanly this cycle. Combined gate:
+  122 files, 212/212. Compose-clean.
