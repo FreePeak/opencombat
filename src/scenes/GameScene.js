@@ -778,9 +778,9 @@ export default class GameScene {
     // CAREER STATS (PRD-career-stats.md): results overlay appends the local
     // player's lifetime line from the end-of-match broadcast.
     this.careerBySid = {};
-    // Previous tier per sid persists across rooms within the session — a
-    // tier ABOVE the last seen one at results time fires an unlock toast.
-    this.lastTierSeen = {};
+    // Previous tier per sid — hydrated from localStorage so FIRST-session
+    // unlocks toast too, and re-saved on every observation (fail-soft).
+    this.lastTierSeen = { ...(JSON.parse(localStorage.getItem('ashfall-lasttier') ?? 'null') ?? {}) };
     this.room.onMessage('careerUpdate', ({ rows }) => {
       for (const row of rows ?? []) {
         const prev = this.lastTierSeen[row.sid];
@@ -792,6 +792,9 @@ export default class GameScene {
           });
         }
         this.lastTierSeen[row.sid] = row.tier;
+        try {
+          localStorage.setItem('ashfall-lasttier', JSON.stringify(this.lastTierSeen));
+        } catch {}
         this.careerBySid[row.sid] = row.career;
       }
     });
@@ -1589,6 +1592,9 @@ export default class GameScene {
               this.showEliteToast({ name: `COSMETIC TIER ${tier} UNLOCKED`, boss: false });
             }
             this.lastTierSeen.offline = tier;
+            try {
+              localStorage.setItem('ashfall-lasttier', JSON.stringify(this.lastTierSeen));
+            } catch {}
             this.careerBySid[this.room.sessionId] = career;
           } catch { /* storage unavailable — gameplay continues */ }
         }
