@@ -188,9 +188,13 @@ export function tickVolatile(ctx, now) {
   }
 }
 
-/** Record a firewave projectile's burn payload keyed by proj.id (D4). */
-export function registerProjBurn(ctx, projId, burnDef) {
-  ctx.burnByProjId.set(projId, burnDef);
+/** Record a firewave projectile's burn payload keyed by proj.id (D4).
+ *  `killerSid` (optional, the projectile's ownerSid) enables BURN-KILL
+ *  ATTRIBUTION: fatal ticks credit the source instead of silently cleaning
+ *  up. */
+export function registerProjBurn(ctx, projId, burnDef, killerSid = null) {
+  ctx.burnByProjId.set(projId,
+    killerSid != null ? { ...burnDef, killerSid } : burnDef);
 }
 
 /**
@@ -227,7 +231,21 @@ export function tickBurns(ctx, now) {
     if (enemy.hp <= 0) { ctx.activeBurns.delete(enemy); continue; }
     const elapsed = now - burn.lastTickMs;
     if (elapsed >= burn.tickMs) {
+      const dies = enemy.hp > 0 && burn.damage >= enemy.hp;
       enemy.hp = Math.max(0, enemy.hp - burn.damage);
+      // BURN-KILL ATTRIBUTION (CYCLE-U): a fatal tick from a SOURCED burn
+      // credits exactly like resolveEnemyHit — score, payKillXp (dropOrb
+      // routing + elite doubling), streak hook, kill log and elite burst
+      // (a Volatile slain by fire still explodes). Unsourced burns stay
+      // silent legacy cleanups.
+      if (dies && burn.killerSid != null && ctx.players.has(burn.killerSid)) {
+        const killer = ctx.players.get(burn.killerSid);
+        killer.score += SERVER.enemy.killScore;
+        payKillXp(ctx, enemy, burn.killerSid);
+        ctx.creditKill?.(burn.killerSid);
+        ctx.log?.('enemy_killed', { wave: ctx.state.wave, by: killer?.name });
+        onEliteKill(ctx, enemy, burn.killerSid);
+      }
       burn.lastTickMs = now;
       burn.remainingMs -= elapsed;
     }

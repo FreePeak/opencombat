@@ -36,6 +36,10 @@ import * as matchPhases from './shared/sim/matchPhases.js';
 // Kill streaks (PRD-kill-streaks.md): the same pure module GameRoom consumes
 // — consecutive credited kills per player, announced ONLY at milestones.
 import { newStreakState, registerKill, resetSid, resetAll } from './shared/sim/streaks.js';
+// Achievements (PRD-achievements.md): offline mirror of GameRoom's finalize
+// hook — same pure engine over a session career accumulator (no persistence).
+import { evaluateAchievements } from './shared/sim/achievements.js';
+import { recordRun } from './shared/sim/careerStats.js';
 import {
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult,
@@ -97,6 +101,11 @@ export class LocalRoom {
     // Kill-streak scratch (PRD-kill-streaks.md): sid -> { count, lastAt },
     // mirrors GameRoom.streaks so payloads stay byte-equal across modes.
     this.streaks = newStreakState();
+    // Achievements scratch (PRD-achievements.md): the session career record
+    // stands in for the server's persisted blob; unlocked ids are kept so a
+    // playAgain replay re-evaluates WITHOUT re-toasting (newIds stays empty).
+    this._localCareer = null;
+    this._unlockedAchievements = [];
     this._orbCharges = new Map(); // orb -> stored kill-XP (PRD-orb-drops.md)
     this._shooterFireAt = new Map(); // enemy -> ms of next Shooter volley
     this.simCombat = {
@@ -111,6 +120,7 @@ export class LocalRoom {
       now: () => performance.now(),
       dropOrb: (x, z, amount) =>
         orbDrops.chargeForKill(this.state.orbs, this._orbCharges, x, z, amount),
+      creditKill: (sid) => this._creditStreak(sid), // burn kills feed streaks too
       grantXp: (_sid, amount) =>
         leveling.grantXp(this.simLeveling, this.sessionId, amount), // single local player
       damagePlayer: (_sid, victim, amount, srcX, srcZ) =>
@@ -803,7 +813,8 @@ export class LocalRoom {
         this.state.projectiles.push(proj);
         // Firewave burn DoT: track per-projectile so the hit handler can apply it
         if (pDef.effects && pDef.effects.burn) {
-          combatBook.registerProjBurn(this.simCombat, proj.id, pDef.effects.burn);
+          combatBook.registerProjBurn(this.simCombat, proj.id, pDef.effects.burn,
+            proj.ownerSid); // BURN-KILL ATTRIBUTION (CYCLE-U)
         }
       }
     }
@@ -904,6 +915,7 @@ export class LocalRoom {
       this.state.countdown = 0;
       this._matchEnded = true;
       this._notifyStateChange();
+      this._emitAchievements(); // victory finalize bypasses _endMatch
       return;
     }
     this._pendingStrikes = [];
@@ -941,12 +953,34 @@ export class LocalRoom {
     this._notifyStateChange();
   }
 
+  /** Mirror of GameRoom's achievement finalize hook (PRD-achievements.md):
+   *  offline has no per-player persistence, so the blob merges THIS run's
+   *  ending into the session career record right before evaluating (a wave-12
+   *  death unlocks wave_12 in the same finalize) and new ids emit on the
+   *  local message channel with the SAME payload shape { ids }. */
+  _emitAchievements(winner = null) {
+    const me = winner ?? this.state.players.get(this.sessionId);
+    this._localCareer = recordRun(this._localCareer, {
+      wave: this.state.wave,
+      score: me?.score ?? 0,
+      victory: !!this.state.victory,
+    });
+    const { unlocked, newIds } = evaluateAchievements({
+      career: this._localCareer,
+      achievements: this._unlockedAchievements,
+    });
+    if (newIds.length === 0) return;
+    this._unlockedAchievements = unlocked;
+    this._emitMessage('achievementsUnlocked', { ids: newIds });
+  }
+
   _endMatch(winner) {
     this.state.matchState = 'gameover';
     this.state.winnerId = this.sessionId;
     this.state.winnerName = winner.name;
     this._matchEnded = true;
     this._notifyStateChange();
+    this._emitAchievements(winner);
   }
 
   _notifyStateChange() {

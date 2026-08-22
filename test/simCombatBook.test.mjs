@@ -458,3 +458,59 @@ test('payKillXp: null killer never pays anything', () => {
   assert.equal(called, 0);
   assert.equal(h.xpGrants.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// BURN-KILL ATTRIBUTION (CYCLE-U fairness fix): a firewave DoT that KILLS
+// credits its source — score, kill XP (dropOrb-routed when wired), elite
+// doubling/burst, kill log and streak hook. Burns without a recorded source
+// stay silent exactly as before.
+// ---------------------------------------------------------------------------
+
+test('fatal burn tick credits the recorded source', () => {
+  const h = makeHarness();
+  const enemy = makeEnemy(2);
+  h.ctx.activeBurns.set(enemy, {
+    damage: 3, remainingMs: 100, tickMs: 10,
+    lastTickMs: h.time(), killerSid: 'sid-1',
+  });
+  h.advance(10);
+  tickBurns(h.ctx, h.time());
+  assert.equal(enemy.hp, 0, 'fatal tick still clamps at 0');
+  assert.equal(h.player.score, SERVER.enemy.killScore, 'killScore awarded');
+  assert.deepEqual(h.xpGrants,
+    [{ sid: 'sid-1', amount: SERVER.progression?.xpPerKill ?? 30 }],
+    'kill XP paid to the burner');
+  const evt = h.events.find((e) => e.event === 'enemy_killed');
+  assert.ok(evt, 'enemy_killed logged');
+  assert.equal(evt.fields.by, 'Tester');
+});
+
+test('fatal burn on an ELITE doubles the drop and arms Volatile', () => {
+  const h = makeHarness();
+  if (!h.ctx.volatilePending) h.ctx.volatilePending = new Map();
+  const elite = makeEnemy(2);
+  elite.elite = 'Volatile';
+  const drops = [];
+  h.ctx.dropOrb = (x, z, amount) => { drops.push(amount); return true; };
+  h.ctx.activeBurns.set(elite, {
+    damage: 3, remainingMs: 100, tickMs: 10,
+    lastTickMs: h.time(), killerSid: 'sid-1',
+  });
+  h.advance(10);
+  tickBurns(h.ctx, h.time());
+  assert.deepEqual(drops, [(SERVER.progression?.xpPerKill ?? 30) * 2],
+    'elite doubling composes through payKillXp');
+  assert.ok(h.ctx.volatilePending.has(elite), 'Volatile fuse armed');
+  assert.ok(h.events.some((e) => e.event === 'elite_killed'), 'elite burst logged');
+});
+
+test('burns without a recorded source stay silent on fatal ticks', () => {
+  const h = makeHarness();
+  const enemy = makeEnemy(2);
+  h.ctx.activeBurns.set(enemy, { damage: 3, remainingMs: 100, tickMs: 10, lastTickMs: h.time() });
+  h.advance(10);
+  tickBurns(h.ctx, h.time());
+  assert.equal(enemy.hp, 0);
+  assert.equal(h.player.score, 0, 'no score without attribution');
+  assert.deepEqual(h.xpGrants, [], 'legacy behavior preserved');
+});

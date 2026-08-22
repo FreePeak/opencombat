@@ -41,6 +41,9 @@ import { recordRun, tierForCareer } from '../../shared/sim/careerStats.js';
 // consecutive credited kills per player (2.5s window, reset on death/reset)
 // and announce ONLY at MILESTONES so online/offline payloads stay identical.
 import { newStreakState, registerKill, resetSid, resetAll } from '../../shared/sim/streaks.js';
+// Achievements (PRD-achievements.md): pure predicate engine over the already-
+// persisted blob — every finalize site evaluates AFTER this run's merges.
+import { evaluateAchievements } from '../../shared/sim/achievements.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
 // level-up queue -> card roll -> auto-pick -> manual pick. D5 enemy-hit
 // resolution + D4 burn DoT (combatBook) and D3 shop effects (shopEffects)
@@ -201,6 +204,7 @@ export default class GameRoom extends Room {
       now: () => Date.now(),
       dropOrb: (x, z, amount) =>
         orbDrops.chargeForKill(this.state.orbs, this.orbCharges, x, z, amount),
+      creditKill: (sid) => this.creditStreak(sid), // burn kills feed streaks too
       grantXp: (sid, amount) => leveling.grantXp(this.simLeveling, sid, amount),
       damagePlayer: (sid, victim, amount, srcX, srcZ) =>
         this.damagePlayer(sid, victim, amount, srcX, srcZ),
@@ -608,6 +612,21 @@ export default class GameRoom extends Room {
     this.logEvent('match_start');
   }
 
+  /** ACHIEVEMENTS finalize hook (PRD-achievements.md): call at every
+   *  persisted-record merge site AFTER this run's career/daily/weekly merges
+   *  but before/at savePlayerDebounced — evaluates the JUST-MERGED blob (so a
+   *  wave-12 death unlocks wave_12 in the same finalize), persists the full
+   *  unlocked list into the blob the caller saves, and broadcasts ONE
+   *  'achievementsUnlocked' { ids } per new batch. Re-finalizing an already-
+   *  persisted record yields empty newIds and stays silent (no dupes). */
+  _unlockAchievements(playerName, blob) {
+    const { unlocked, newIds } = evaluateAchievements(blob);
+    if (newIds.length === 0) return;
+    blob.achievements = unlocked;
+    this.broadcast('achievementsUnlocked', { ids: newIds });
+    this.logEvent('achievements_unlocked', { name: playerName, ids: newIds });
+  }
+
   /** End the match: pick the winner, broadcast, freeze the simulation. */
   endMatch(winnerSid) {
     this.state.matchState = 'gameover';
@@ -628,7 +647,10 @@ export default class GameRoom extends Room {
         score: player.score,
         victory: !!this.state.victory,
       });
-      savePlayerDebounced(player.name, { ...saved, career });
+      // Achievements see THIS run's merged career (hook before/at save).
+      const merged = { ...saved, career };
+      this._unlockAchievements(player.name, merged);
+      savePlayerDebounced(player.name, merged);
       const tier = tierForCareer(career);
       player.tier = tier; // live schema update for nametag accents
       careerRows.push({ sid, name: player.name, career, tier });
@@ -674,7 +696,8 @@ export default class GameRoom extends Room {
       // Grant into the LIVE player (Scholar-aware, may roll level-ups),
       // then persist live level/xp over the saved record like WorldRoom.
       leveling.grantXp(this.simLeveling, sid, rewardXp);
-      savePlayerDebounced(player.name, {
+      // Achievements see THIS run's merged daily record (hook before/at save).
+      const mergedDaily = {
         ...(saved ?? {}),
         name: player.name,
         character: player.character,
@@ -689,7 +712,9 @@ export default class GameRoom extends Room {
           streak,
           lastPlayed: today,
         },
-      });
+      };
+      this._unlockAchievements(player.name, mergedDaily);
+      savePlayerDebounced(player.name, mergedDaily);
       results.push({ sid, name: player.name, score: player.score, streak, rewardXp });
     }
     this.broadcast('dailyResult', { results });
@@ -726,7 +751,8 @@ export default class GameRoom extends Room {
       // Grant into the LIVE player (Scholar-aware, may roll level-ups),
       // then persist live level/xp over the saved record like WorldRoom.
       leveling.grantXp(this.simLeveling, sid, rewardXp);
-      savePlayerDebounced(player.name, {
+      // Achievements see THIS run's merged weekly record (hook before/at save).
+      const mergedWeekly = {
         ...(saved ?? {}),
         name: player.name,
         character: player.character,
@@ -736,7 +762,9 @@ export default class GameRoom extends Room {
         upgrades: Object.fromEntries(player.upgrades.entries()),
         pendingChoices: [...player.pendingChoices],
         weekly: merged,
-      });
+      };
+      this._unlockAchievements(player.name, mergedWeekly);
+      savePlayerDebounced(player.name, mergedWeekly);
       results.push({
         sid, name: player.name, score: player.score,
         bestScore: merged.bestScore, rewardXp,
@@ -1147,7 +1175,8 @@ export default class GameRoom extends Room {
         this.state.projectiles.push(proj);
         // Firewave burn DoT: track per-projectile so the hit handler can apply it
         if (pDef.effects && pDef.effects.burn) {
-          combatBook.registerProjBurn(this.simCombat, proj.id, pDef.effects.burn);
+          combatBook.registerProjBurn(this.simCombat, proj.id, pDef.effects.burn,
+            proj.ownerSid); // BURN-KILL ATTRIBUTION (CYCLE-U)
         }
       }
     }
