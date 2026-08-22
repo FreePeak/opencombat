@@ -122,7 +122,8 @@ export const CONFIG = {
     colors: {
       speed: 0x00e5ff,          // cyan
       shield: 0x4dabff,         // blue
-      double: 0xffd700          // gold
+      double: 0xffd700,         // gold
+      magnet: 0x7c4dff          // violet
     },
     respawnSeconds: 15          // mirror of SERVER.powerUps.respawnSeconds
   },

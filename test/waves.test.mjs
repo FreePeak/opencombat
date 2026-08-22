@@ -345,6 +345,41 @@ const drainUpgradeCards = async (sr, ...clients) => {
   }
 }
 
+
+// --- Magnet power-up (PRD-magnet.md) ------------------------------------------
+{
+  const host = await newRoom('Magnet');
+  const sr = roomOf(host.r);
+  try {
+    const me = sr.state.players.get(host.r.sessionId);
+    // All four types spawn now.
+    assert.deepEqual([...new Set(sr.state.powerUps.map((pu) => pu.type))].sort(),
+      ['double', 'magnet', 'shield', 'speed'], 'all four power-up types in play');
+
+    // Direct-drive: grant the effect, park an orb 5u away, tick pickups.
+    me.effects.set('magnet', SERVER.powerUps.magnet.durationMs);
+    const orb = sr.state.orbs[0];
+    orb.x = me.x + 5;
+    orb.z = me.z;
+    const xpBefore = me.xp;
+    let ticks = 0;
+    while (me.xp === xpBefore && ticks++ < 200) sr.updatePickups(0.1);
+    assert.ok(me.xp > xpBefore, `orb converged and paid XP within budget (${ticks} ticks)`);
+    // AC2: beyond-radius orbs never moved — verify with a far orb snapshot.
+    const far = sr.state.orbs[1];
+    far.x = 500; far.z = 500;
+    sr.updatePickups(0.1);
+    assert.equal(far.x, 500, 'out-of-radius orb unaffected');
+    // AC4: expiry stops pulls.
+    me.effects.delete('magnet');
+    far.x = me.x + 5; far.z = me.z;
+    sr.updatePickups(0.5);
+    assert.equal(far.x, me.x + 5, 'no pull after effect expiry');
+  } finally {
+    host.r.leave();
+  }
+}
+
 await gameServer.gracefullyShutdown(false);
 httpServer.closeAllConnections();
 await new Promise((res) => httpServer.close(res));

@@ -124,12 +124,13 @@ export const SERVER = {
   // PlayerState.effects (effect name -> remaining ms). After pickup the
   // power-up hides and respawns elsewhere after respawnSeconds.
   powerUps: {
-    count: 3,                 // one of each type
+    count: 4,                 // one of each type
     respawnSeconds: 15,
     radius: 0.9,
     speed:  { durationMs: 5000,  multiplier: 2 },  // 2x move speed
     shield: { durationMs: 15000 },                 // blocks ONE enemy hit
-    double: { durationMs: 10000, multiplier: 2 }   // 2x orb score
+    double: { durationMs: 10000, multiplier: 2 },  // 2x orb score
+    magnet: { durationMs: 8000, pullRadius: 8, pullSpeed: 10 } // orbs drift in (PRD-magnet.md)
   },
 
   // Projectile config: ranged normal attacks (Phase 1). Each class that fires

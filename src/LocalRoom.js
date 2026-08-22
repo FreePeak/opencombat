@@ -22,6 +22,7 @@ import { archetypeByName, markArchetypes,
   SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
   SHOOTER_KITE_SPEED_MUL } from './shared/sim/archetypes.js';
 import * as orbDrops from './shared/sim/orbDrops.js';
+import { pullOrbs } from './shared/sim/magnetPull.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
 // server room uses; clock/emit hooks below keep offline behavior identical.
 // Slice 2 moved D5 enemy-hit + D4 burn DoT (combatBook) and D3 shop effects
@@ -241,7 +242,7 @@ export class LocalRoom {
     this._spawnWave(1);
 
     // Power-ups (one of each type)
-    const types = ['speed', 'shield', 'double'];
+    const types = ['speed', 'shield', 'double', 'magnet'];
     for (const type of types) {
       const pos = randomInCircle(this._rng, half - 2);
       const p = new PowerUpState(pos.x, pos.z, type);
@@ -597,6 +598,15 @@ export class LocalRoom {
       }
     }
 
+    // --- Magnet: same pre-pull as GameRoom (PRD-magnet.md parity) ---------
+    const magnetHolders = [];
+    for (const pl of players.values()) {
+      if (pl.hp > 0 && pl.effects.has('magnet')) magnetHolders.push(pl);
+    }
+    if (magnetHolders.length > 0) {
+      const mc = SERVER.powerUps.magnet;
+      pullOrbs(this.state.orbs, magnetHolders, mc.pullRadius, mc.pullSpeed, dt);
+    }
     // --- Orbs: pickup (playing + intermission) ----------------------------
     for (const orb of this.state.orbs) {
       for (const p of players.values()) {

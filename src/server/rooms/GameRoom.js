@@ -35,6 +35,7 @@ import { archetypeByName, markArchetypes,
   SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
   SHOOTER_KITE_SPEED_MUL } from '../../shared/sim/archetypes.js';
 import * as orbDrops from '../../shared/sim/orbDrops.js';
+import { pullOrbs } from '../../shared/sim/magnetPull.js';
 // Kill streaks (PRD-kill-streaks.md): pure shared module — both rooms track
 // consecutive credited kills per player (2.5s window, reset on death/reset)
 // and announce ONLY at MILESTONES so online/offline payloads stay identical.
@@ -360,7 +361,7 @@ export default class GameRoom extends Room {
   spawnPowerUps() {
     // One of each type, so all three are always in play.
     const types = Object.keys(SERVER.powerUps).filter((k) =>
-      ['speed', 'shield', 'double'].includes(k));
+      ['speed', 'shield', 'double', 'magnet'].includes(k));
     for (let i = 0; i < SERVER.powerUps.count; i++) {
       const p = this.randomPos();
       this.state.powerUps.push(new PowerUpState(p.x, p.z, types[i % types.length]));
@@ -1312,6 +1313,16 @@ export default class GameRoom extends Room {
   /** Orb + power-up pickups (shared by 'playing' and 'intermission'). */
   updatePickups(dt) {
     const state = this.state;
+    // --- Magnet: living holders drift nearby orbs toward themselves first,
+    // so pulled orbs can enter pickup radius and pay on this very tick.
+    const magnetHolders = [];
+    for (const pl of state.players.values()) {
+      if (pl.hp > 0 && pl.effects.has('magnet')) magnetHolders.push(pl);
+    }
+    if (magnetHolders.length > 0) {
+      const mc = SERVER.powerUps.magnet;
+      pullOrbs(state.orbs, magnetHolders, mc.pullRadius, mc.pullSpeed, dt);
+    }
     // --- Orbs: first LIVING player within radius collects (server decides)
     const orbScore = (player) =>
       SERVER.orb.score * (player.effects.has('double') ? SERVER.powerUps.double.multiplier : 1);
