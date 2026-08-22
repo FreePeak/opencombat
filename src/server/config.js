@@ -41,9 +41,14 @@ export const SERVER = {
   },
 
   // Persistence: per-player JSON files `data/players/<name>.json`, debounced 2s (Phase 6).
+  // PERSISTENCE_DRIVER=postgres swaps the backing store (PRD-postgres-adapter.md):
+  // rows live in a `players` table, preloaded into memory at boot so the rooms'
+  // synchronous read path is unchanged; writes stay debounced and flush to SQL.
   persistence: {
     dir: 'data/players',
     debounceMs: 2000,
+    driver: env.PERSISTENCE_DRIVER || 'json',
+    databaseUrl: env.DATABASE_URL || '',
   },
 
   // Match lifecycle: LOBBY -> COUNTDOWN -> PLAYING -> GAME_OVER.

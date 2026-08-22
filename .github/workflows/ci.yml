@@ -13,6 +13,25 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Postgres service (PRD-postgres-adapter.md): exercises the pg driver
+    # contract tests on every push; json default stays exercised by the
+    # whole rest of the suite.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oc
+          POSTGRES_DB: ocdata
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U oc"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://oc@localhost:54329/ocdata
     steps:
       - uses: actions/checkout@v4
 

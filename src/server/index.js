@@ -18,6 +18,9 @@ import ArenaRoom from './rooms/ArenaRoom.js';
 import LobbyRoom from './rooms/LobbyRoom.js';
 import WorldRoom from './rooms/WorldRoom.js';
 import { log } from './log.js';
+// Postgres driver (PRD-postgres-adapter.md): connect + migrate + preload BEFORE
+// the first room can serve a read.
+import { persistenceReady } from './persistence.js';
 
 const httpServer = http.createServer();
 // Raw request logger: sees every HTTP request, including /matchmake* which
@@ -44,6 +47,7 @@ gameServer.define('arena', ArenaRoom);
 gameServer.define('lobby', LobbyRoom);
 gameServer.define('world', WorldRoom);
 
+await persistenceReady();
 await gameServer.listen(SERVER.port);
 log('server_listening', { port: SERVER.port, publicUrl: SERVER.publicUrl || '(same-origin)', redis: SERVER.redis.url ? 'yes' : 'no' });
 

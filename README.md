@@ -55,6 +55,8 @@ All optional; the defaults run a single-process game on :2567.
 | `REDIS_URL` | *(empty)* | Redis URL → Colyseus `RedisPresence` (multi-process matchmaking). Empty = in-memory presence |
 | `TICK_MS` | `50` | Fixed simulation timestep |
 | `RATE_LIMIT_CAPACITY` | `10` | Per-IP join token-bucket burst size (refill 0.5 tokens/s) |
+| `PERSISTENCE_DRIVER` | `json` | `json` (default, `data/players/*.json`) or `postgres` (PRD-postgres-adapter.md: `players` table, preloaded into memory at boot so room code is unchanged; writes debounced + flushed to SQL) |
+| `DATABASE_URL` | *(empty)* | Postgres connection string; **required** when `PERSISTENCE_DRIVER=postgres` (boot fails fast without it) |
 
 ## Deployment notes
 
