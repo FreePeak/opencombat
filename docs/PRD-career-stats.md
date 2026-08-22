@@ -57,3 +57,10 @@ the first's unflushed data or it clobbers `career`. Fix included:
 - AC3: Daily finalize does not clobber career (pending-overlay pin).
 - AC4: Overlay shows the career line for the local player.
 - AC5: Full gate green + smoke + PROGRESS row.
+
+## Post-ship audit note (CYCLE-AF, 2026-08-22)
+
+Spectator mode (PRD-arena-spectate.md) verified compose-clean with career
+stats: spectators exist ONLY in ArenaRoom as presence rows (no PlayerState
+seat), while endMatch career recording lives exclusively in GameRoom where
+every join is a real player. No contamination path exists; no guard needed.
