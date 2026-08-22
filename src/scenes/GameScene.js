@@ -34,6 +34,7 @@ import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { CombatRadar } from '../ui/CombatRadar.js';
+import { buildShareCard, shareText } from '../shared/sim/shareCard.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -1890,6 +1891,17 @@ export default class GameScene {
         const careerLine = mine
           ? `   · RUNS ${mine.runs} · WINS ${mine.victories} · BEST WAVE ${mine.bestWave}` : '';
         this.overlaySub.textContent = scores + careerLine + '   — PLAY AGAIN →';
+        // SHARE (PRD-share-card.md): one-click copyable run summary on the
+        // match-over card only — the death/respawn overlay hides it.
+        const me2 = state.players.get(this.room.sessionId);
+        const card = buildShareCard({
+          mode: this.mode,
+          victory: !!state.victory,
+          wave: state.wave,
+          score: me2?.score ?? 0,
+          name: me2?.name,
+        });
+        this._showShareButton(card);
         this.overlay.classList.add('visible');
         this.deadShown = true; // match end supersedes the death overlay
       }
@@ -1911,6 +1923,7 @@ export default class GameScene {
       this.deadShown = true;
       this.overlayTitle.textContent = 'YOU DIED';
       this.overlaySub.textContent = 'click to respawn';
+      this._hideShareButton();
       this.overlay.classList.add('visible');
     }
     if (me.hp > 0 && this.deadShown && state.matchState !== 'gameover') {
@@ -2187,10 +2200,42 @@ export default class GameScene {
     el.classList.add('visible');
   }
 
+  /** SHARE pill (PRD-share-card.md): lazily-created button inside the
+   *  gameover card; copies the composed share text, acks with COPIED.
+   *  Clipboard-unavailable environments degrade to a no-op label. */
+  _showShareButton(card) {
+    if (!this.shareBtn) {
+      const cardEl = this.overlay?.querySelector('.card');
+      if (!cardEl) return;
+      const btn = document.createElement('button');
+      btn.id = 'share-run';
+      btn.textContent = 'SHARE';
+      btn.style.cssText = 'margin-top:10px;padding:6px 18px;font:inherit;' +
+        'background:#1d2330;color:#fff;border:1px solid #44a;cursor:pointer;';
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // the overlay itself restarts on click
+        try {
+          await navigator.clipboard.writeText(this._shareCardText ?? '');
+          btn.textContent = 'COPIED';
+        } catch { btn.textContent = 'COPY FAILED'; }
+        setTimeout(() => { btn.textContent = 'SHARE'; }, 1500);
+      });
+      cardEl.appendChild(btn);
+      this.shareBtn = btn;
+    }
+    // Stash the latest composition at show-time (click handler reads it).
+    this.shareBtn.textContent = 'SHARE';
+    this.shareBtn.style.display = '';
+    this._shareCardText = shareText(card);
+  }
+
+  _hideShareButton() {
+    if (this.shareBtn) this.shareBtn.style.display = 'none';
+  }
+
   hideEliteToast() {
     clearTimeout(this._eliteToastTimer);
-    this.eliteToastEl?.classList.remove('visible');
-  }
+    this.eliteToastEl?.classList.remove('visible');  }
 
   /** Kill-streak milestone toast (top-center, gold): "NAME — LABEL (count)".
    *  Fired by the 'killStreak' message from BOTH room types (milestones
