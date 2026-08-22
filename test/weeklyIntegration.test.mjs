@@ -108,6 +108,23 @@ const rmPlayerFile = (name) => { try { fs.rmSync(playerFile(name)); } catch {} }
   assert.ok(!('streak' in rec.weekly), 'weekly deliberately has NO streak');
   assert.equal(row.rewardXp, 150, 'floor tier of the flat ladder pays 150 XP');
 
+  // COMPOSITION (CYCLE-AN): the persisted blob feeds the achievements engine —
+  // weekly_1500 stays locked below threshold; a >=1500 best unlocks it.
+  {
+    const { evaluateAchievements } = await import('../src/shared/sim/achievements.js');
+    const below = evaluateAchievements(rec);
+    assert.ok(!below.unlocked.includes('weekly_1500'),
+      'floor-tier week does not unlock weekly_1500');
+    const above = evaluateAchievements({
+      ...rec,
+      weekly: { ...rec.weekly, bestScore: 2000 },
+    });
+    assert.ok(above.unlocked.includes('weekly_1500'),
+      'crossing 1500 unlocks weekly_1500');
+    assert.deepEqual(above.newIds, ['weekly_1500'],
+      'exactly the newly-satisfied id is new');
+  }
+
   // --- GET /api/weekly shape + leaderboard pickup -------------------------------
   const res = await fetch(`http://127.0.0.1:${port}/api/weekly`);
   assert.equal(res.status, 200, '/api/weekly responds 200');
