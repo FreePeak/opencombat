@@ -34,6 +34,9 @@ const gameServer = new Server({
 });
 
 gameServer.define('game', GameRoom);
+// Daily Gauntlet: same class, dedicated room name — daily runs never share
+// rooms with waves players (mode comes from the create options).
+gameServer.define('daily', GameRoom);
 gameServer.define('arena', ArenaRoom);
 gameServer.define('lobby', LobbyRoom);
 gameServer.define('world', WorldRoom);

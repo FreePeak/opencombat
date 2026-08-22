@@ -24,7 +24,7 @@ import { skillFor, resolveSkillHits, classStats } from '../../shared/skills.js';
 const statsOf = (player) => classStats(player.character);
 // D1 wave activation lives once in shared/waves.js (P1.3 slice 4 stretch):
 // the room injects its square sampler + anim/stun-map clears, keeps the log.
-import { activateWave } from '../../shared/waves.js';
+import { activateWave, spawnAwayFromPlayers } from '../../shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/combat.js';
 import { attackFor } from '../../shared/classes.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
@@ -40,12 +40,28 @@ import * as matchPhases from '../../shared/sim/matchPhases.js';
 import { aggregateBonuses,
          effectiveMaxHp, effectiveSpeedMult, effectiveAttackCdMult, effectiveSkillCdMult,
          effectiveSkill, effectiveMeleeDamage, effectiveRangedDamage, effectivePickupMult } from '../../shared/progression.js';
+// Daily Gauntlet (PRD-daily-gauntlet.md): pure date math from shared/sim —
+// same module the offline client uses, so server + local runs agree.
+import { utcDateStr, dailySeed, dailyModifiers, nextStreak, streakRewardXp } from '../../shared/sim/dailyRun.js';
+// Per-player JSON persistence (WorldRoom pattern): load on finalize, save debounced.
+import { loadPlayer, savePlayerDebounced } from '../persistence.js';
 
 // Simple string hash: same name -> same color, stable across joins.
 function nameHash(name) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return h;
+}
+
+// Deterministic RNG (LCG, same pattern as src/LocalRoom.js makeRng): the
+// Daily Gauntlet seeds it with the UTC date hash so every player on the same
+// day walks an identical layout.
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
 }
 
 export default class GameRoom extends Room {
@@ -57,12 +73,27 @@ export default class GameRoom extends Room {
   static instances = new Set();
   static stats = { lastTickMs: 0, inputTimes: [] };
 
-  onCreate() {
+  onCreate(options = {}) {
     GameRoom.instances.add(this);
     // Empty-room cleanup is ours (configurable TTL, documented in README);
     // disable Colyseus' 1s auto-dispose so a gameover room survives for
     // latecomers and the matchmaker reuse logic stays deterministic.
     this.autoDispose = false;
+
+    // Daily Gauntlet mode gate — everything below stays byte-for-byte
+    // identical for 'waves'. Daily rooms get today's modifiers plus a seeded
+    // LCG that replaces Math.random() inside randomPos() so same-day runs
+    // are reproducible (AC3/PRD section 2). Must be set BEFORE the spawns.
+    this.mode = options.mode === 'daily' ? 'daily' : 'waves';
+    this.enemySpeedMul = 1;
+    if (this.mode === 'daily') {
+      const today = utcDateStr();
+      this.dailyDate = today;
+      this.dailyMods = dailyModifiers(today);
+      this._rng = makeRng(dailySeed(today));
+      this.enemySpeedMul = this.dailyMods.enemySpeedMul;
+      this.logEvent('daily_room_create', { date: today, label: this.dailyMods.label });
+    }
 
     this.setState(new WorldState());
 
@@ -238,7 +269,10 @@ export default class GameRoom extends Room {
   /** Activate wave `n`: the first waveEnemyCount(n) pool slots come alive at
    *  waveEnemyHp(n), spawned away from players; the rest drop dead. Thin
    *  delegate over shared/waves.activateWave (P1.3 slice 4 stretch): the
-   *  square sampler + anim/stun-map clears are injected, wave_spawn stays. */
+   *  square sampler + anim/stun-map clears are injected, wave_spawn stays.
+   *  Daily rooms extend the sizing with today's modifiers: enemyCountBonus
+   *  extra slots and every live slot scaled by enemyHpMul (speed rides a
+   *  room-level multiplier applied in updatePlaying). */
   spawnWave(n) {
     const { count, hp } = activateWave(
       this.state.enemies, n, this.state.players, () => this.randomPos(),
@@ -246,8 +280,28 @@ export default class GameRoom extends Room {
         this.enemyAnimUntil.delete(enemy);
         this.enemyStunUntil.delete(enemy);
       });
+    let spawned = count;
+    let effHp = hp;
+    if (this.mode === 'daily') {
+      const mods = this.dailyMods;
+      effHp = Math.max(1, Math.round(hp * mods.enemyHpMul));
+      spawned = Math.min(count + Math.max(0, Math.floor(mods.enemyCountBonus)),
+        this.state.enemies.length);
+      // Bonus slots were left dead by activateWave — place them away from
+      // players like the base slots, then rescale everyone's HP.
+      const hazards = [...this.state.players.values()].filter((p) => p.hp > 0);
+      for (let i = count; i < spawned; i++) {
+        const p = spawnAwayFromPlayers(hazards, () => this.randomPos());
+        this.state.enemies[i].x = p.x;
+        this.state.enemies[i].z = p.z;
+      }
+      for (let i = 0; i < spawned; i++) {
+        this.state.enemies[i].hp = effHp;
+        this.state.enemies[i].anim = 'idle';
+      }
+    }
     this.state.wave = n;
-    this.logEvent('wave_spawn', { wave: n, enemies: count, hp });
+    this.logEvent('wave_spawn', { wave: n, enemies: spawned, hp: effHp });
   }
 
   spawnPowerUps() {
@@ -365,10 +419,13 @@ export default class GameRoom extends Room {
     this.logEvent('room_dispose');
   }
 
-  /** Uniform random position inside the arena, away from the walls. */
+  /** Uniform random position inside the arena, away from the walls.
+   *  Daily rooms sample from the date-seeded LCG instead of Math.random()
+   *  so layouts are reproducible for everyone playing that UTC day. */
   randomPos() {
     const m = this.half - 1.5;
-    return { x: -m + Math.random() * m * 2, z: -m + Math.random() * m * 2 };
+    const rand = this.mode === 'daily' ? this._rng : Math.random;
+    return { x: -m + rand() * m * 2, z: -m + rand() * m * 2 };
   }
 
   // -------------------------------------------------------------------------
@@ -437,6 +494,62 @@ export default class GameRoom extends Room {
     const w = winnerSid ? this.state.players.get(winnerSid) : undefined;
     this.state.winnerName = w ? w.name : '';
     this.logEvent('match_over', { winnerSid: this.state.winnerId, winnerName: this.state.winnerName });
+  }
+
+  /**
+   * Daily Gauntlet finalize (daily rooms only, fires once): everyone died
+   * simultaneously, so end the match through the normal endMatch path
+   * (top score among the fallen wins the board), then write each player's
+   * persisted daily record — WorldRoom's load/save pattern: read their
+   * data/players/<name>.json, merge today's { date, bestScore, streak,
+   * lastPlayed }, grant the streak XP reward through leveling.grantXp into
+   * the live level/xp and persist debounced. Broadcasts 'dailyResult' with
+   * one row per player.
+   */
+  finalizeDailyRun() {
+    if (this.mode !== 'daily' || this.state.matchState === 'gameover') return;
+    let topSid = null;
+    let best = -1;
+    for (const [sid, p] of this.state.players) {
+      if (p.score > best) { best = p.score; topSid = sid; }
+    }
+    this.endMatch(topSid);
+
+    const today = utcDateStr();
+    const results = [];
+    for (const [sid, player] of this.state.players) {
+      const saved = loadPlayer(player.name);
+      const prev = saved?.daily ?? null;
+      // Same-day re-run keeps the recorded streak unchanged (caller-owned,
+      // per dailyRun contract); anything else goes through the shared math:
+      // never played / gap -> 1, exact yesterday -> 2.
+      const streak = (prev && prev.lastPlayed === today)
+        ? Math.max(1, prev.streak ?? 1)
+        : nextStreak(prev?.lastPlayed ?? null, today, prev?.streak ?? 0);
+      const rewardXp = streakRewardXp(streak);
+      // Grant into the LIVE player (Scholar-aware, may roll level-ups),
+      // then persist live level/xp over the saved record like WorldRoom.
+      leveling.grantXp(this.simLeveling, sid, rewardXp);
+      savePlayerDebounced(player.name, {
+        ...(saved ?? {}),
+        name: player.name,
+        character: player.character,
+        level: player.level,
+        xp: player.xp,
+        score: player.score,
+        upgrades: Object.fromEntries(player.upgrades.entries()),
+        pendingChoices: [...player.pendingChoices],
+        daily: {
+          date: today,
+          bestScore: Math.max(prev?.date === today ? (prev.bestScore ?? 0) : 0, player.score),
+          streak,
+          lastPlayed: today,
+        },
+      });
+      results.push({ sid, name: player.name, score: player.score, streak, rewardXp });
+    }
+    this.broadcast('dailyResult', { results });
+    this.logEvent('daily_finalize', { date: today, players: results.length });
   }
 
   /** Reset the match in place (play again / auto-restart), keep room + players.
@@ -1007,8 +1120,10 @@ export default class GameRoom extends Room {
         enemy.rotY = Math.atan2(target.x - enemy.x, target.z - enemy.z);
         if (dist > SERVER.enemy.contactRange) {
           // Chase: step toward the target, staying server-authoritative.
-          enemy.x += (target.x - enemy.x) / dist * SERVER.enemy.speed * dt;
-          enemy.z += (target.z - enemy.z) / dist * SERVER.enemy.speed * dt;
+          // Daily rooms multiply by today's enemySpeedMul (1 in waves mode).
+          const spd = SERVER.enemy.speed * this.enemySpeedMul;
+          enemy.x += (target.x - enemy.x) / dist * spd * dt;
+          enemy.z += (target.z - enemy.z) / dist * spd * dt;
           if (!animOverride) enemy.anim = 'run';
         } else if (now >= this.invulnUntil.get(targetSid)) {
           // Contact damage, resolved through damagePlayer: a successful BLOCK
@@ -1023,6 +1138,17 @@ export default class GameRoom extends Room {
       } else if (!animOverride) {
         enemy.anim = 'idle';
       }
+    }
+
+    // --- DAILY GAUNTLET run-end (daily rooms only) -----------------------
+    // Every connected player dead SIMULTANEOUSLY -> the run is over: end the
+    // match through the normal endMatch path, then finalize each player's
+    // persisted daily record. Checked before the wave-clear gate so a
+    // simultaneous wipe is never mistaken for an intermission.
+    if (this.mode === 'daily' && state.players.size > 0 &&
+        [...state.players.values()].every((p) => p.hp <= 0)) {
+      this.finalizeDailyRun();
+      return;
     }
 
     // --- Wave cleared: every enemy dead -> intermission ------------------

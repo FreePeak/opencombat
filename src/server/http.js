@@ -18,6 +18,12 @@ import LobbyRoom from './rooms/LobbyRoom.js';
 import WorldRoom from './rooms/WorldRoom.js';
 import { log } from './log.js';
 import { createLiveReload } from './liveReload.js';
+// Daily Gauntlet public API: date/seed/modifier math from the shared module,
+// streak reward table derived from the same source of truth.
+import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp } from '../shared/sim/dailyRun.js';
+
+// XP rewarded per consecutive-day streak length (day 1..7, capped).
+const DAILY_REWARDS = [1, 2, 3, 4, 5, 6, 7].map(streakRewardXp);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -180,6 +186,45 @@ export function buildHttpApp(app) {
     }
     next();
   }, express.static(path.join(root, 'src'), { maxAge: 0, etag: true }));
+
+  // --- Daily Gauntlet (PRD-daily-gauntlet.md): today's modifiers, streak
+  // reward table and the day's leaderboard, scanned synchronously from the
+  // per-player JSON files. Registered BEFORE the catch-all below.
+  app.get('/api/daily', (_req, res) => {
+    const date = utcDateStr();
+    const mods = dailyModifiers(date);
+    const leaderboard = [];
+    const dir = path.resolve(root, SERVER.persistence?.dir || 'data/players');
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch {} // no data dir yet -> empty board
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        // Tolerate malformed/partial files: skip them, never fail the API.
+        const rec = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+        if (rec?.daily?.date === date) {
+          leaderboard.push({
+            name: rec.name ?? file.replace(/\.json$/, ''),
+            score: rec.daily.bestScore,
+          });
+        }
+      } catch {}
+    }
+    leaderboard.sort((a, b) => b.score - a.score);
+    res.json({
+      date,
+      seed: dailySeed(date),
+      modifiers: {
+        label: mods.label,
+        description: mods.description,
+        enemyHpMul: mods.enemyHpMul,
+        enemySpeedMul: mods.enemySpeedMul,
+        enemyCountBonus: mods.enemyCountBonus,
+      },
+      rewards: DAILY_REWARDS,
+      leaderboard: leaderboard.slice(0, 10),
+    });
+  });
 
   // Everything else is not served.
   app.use((_req, res) => res.status(404).json({ error: 'not found' }));

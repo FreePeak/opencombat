@@ -29,12 +29,14 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 /** Login-screen game modes. `offline` = can fall back to the browser-local
- * solo simulation when no server is reachable (PvP needs opponents and the
- * open world needs the hosted chunked room — neither exists offline). */
+ *  solo simulation when no server is reachable (PvP needs opponents and the
+ *  open world needs the hosted chunked room — neither exists offline).
+ *  Daily degrades to local waves too (no streak recorded — accepted). */
 const MODES = [
   { key: 'waves', label: 'Waves', offline: true },
   { key: 'pvp', label: 'PvP Arena', offline: false },
-  { key: 'world', label: 'Open World', offline: false }
+  { key: 'world', label: 'Open World', offline: false },
+  { key: 'daily', label: 'Daily', offline: true }
 ];
 
 // Deterministic LCG: scatters props identically on every client so the
@@ -121,7 +123,7 @@ export default class GameScene {
     this.buildGround();
     this.props = [];
 
-    // Login-screen mode: 'waves' (default) | 'pvp' | 'world' — see MODES.
+    // Login-screen mode: 'waves' (default) | 'pvp' | 'world' | 'daily' — see MODES.
     this.mode = 'waves';
     this.worldMode = false;       // open-world visuals active (chunks + minimap)
     this.chunkManager = null;
@@ -181,6 +183,9 @@ export default class GameScene {
     this.shopTitle = document.getElementById('shop-title');
     this._shopPicked = false;
     this.pausedBadge = document.getElementById('paused-badge');
+    // Daily Gauntlet result banner (server 'dailyResult' broadcast).
+    this.dailyResultsEl = document.getElementById('daily-results');
+    this.dailyResultsEl?.addEventListener('click', () => this.hideDailyResults());
 
     // One overlay serves three ends: death (respawn), wave cleared (next
     // wave) and match end (again). Priority in that order on click.
@@ -242,7 +247,8 @@ export default class GameScene {
     this.loginServer.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.onJoinClick(); });
   }
 
-  /** Game-mode cards on the login screen (MODES drives it). */
+  /** Game-mode cards on the login screen (MODES drives it). The Daily card
+   *  also pulls today's modifier line from /api/daily. */
   buildModePicker() {
     const picker = document.getElementById('mode-picker');
     picker.innerHTML = '';
@@ -257,9 +263,36 @@ export default class GameScene {
         localStorage.setItem('opengame.mode', m.key);
         for (const el of picker.children) el.classList.remove('selected');
         btn.classList.add('selected');
+        if (m.key === 'daily') this.fetchDailyInfo();
       });
       picker.appendChild(btn);
     });
+    // Daily was the persisted choice: refresh today's line right away.
+    if (this.mode === 'daily') this.fetchDailyInfo();
+  }
+
+  /** Daily Gauntlet subtitle: today's modifier label (+ our best score when
+   *  the name is already on today's leaderboard). Any failure — static
+   *  hosting, tunnel down, non-JSON response — degrades to a quiet
+   *  'offline' note; joining still works via the LocalRoom waves fallback. */
+  async fetchDailyInfo() {
+    const sub = document.getElementById('mode-daily-sub');
+    if (!sub) return;
+    sub.textContent = 'daily: loading…';
+    try {
+      // CONFIG.serverUrl is ws(s)://…; the HTTP API lives at the same host.
+      const httpBase = CONFIG.serverUrl.replace(/^ws/i, 'http');
+      const res = await fetch(`${httpBase}/api/daily`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this.dailyInfo = data ?? null;
+      const label = data?.modifiers?.label ?? 'unknown modifiers';
+      const mine = (data?.leaderboard ?? []).find((r) => r && r.name === this.name);
+      sub.textContent = `today: ${label}` + (mine ? ` · your best ${mine.score}` : '');
+    } catch {
+      this.dailyInfo = null;
+      sub.textContent = 'daily: offline';
+    }
   }
 
   /** Character cards on the login screen (CONFIG.characters drives it). */
@@ -304,10 +337,10 @@ export default class GameScene {
         this.serverOnline = serverAvailable();
       }
       const online = await this.serverOnline;
-      if (!online && this.mode !== 'waves') {
+      if (!online && !MODES.find((m) => m.key === this.mode)?.offline) {
         // PvP needs opponents + matchmaking; the open world needs the hosted
         // chunked room. Neither exists in the browser-local solo simulation.
-        throw new Error('this mode needs the game server online — start it (npm run serve) or pick Waves, which also works offline');
+        throw new Error('this mode needs the game server online — start it (npm run serve) or pick Waves or Daily, which also work offline');
       }
       if (this.mode === 'pvp') {
         await this.joinPvpLobby(); // resolves once the arena room is adopted
@@ -315,10 +348,13 @@ export default class GameScene {
         this.enterWorldVisuals();
         this.adoptRoom(await joinWorld(this.name, this.character));
       } else if (online) {
-        this.adoptRoom(await joinGame(this.name, this.character));
+        // Waves and Daily share the hosted path — joinGame routes mode:'daily'
+        // to the seeded 'daily' room; waves keeps the classic arena room.
+        this.adoptRoom(await joinGame(this.name, this.character, this.mode));
       } else {
         // No server (static hosting, host offline): same wire-up, but the
-        // room is a browser-local simulation — single-player only.
+        // room is a browser-local simulation — single-player only. Daily
+        // degrades to plain local waves (no streak recorded — accepted).
         this.room = new LocalRoom();
         await this.room.join(this.name, this.character);
         this.setNetBadge(false);
@@ -486,6 +522,9 @@ export default class GameScene {
       const n = d?.picked ?? '';
       if (n) this.floatTexts.spawn(this.local?.root.position.x ?? 0, 2.6, this.local?.root.position.z ?? 0, `SHOP: ${n}`, '#4fc3f7');
     });
+    // Daily Gauntlet: run-finalize broadcast (daily rooms only). LocalRoom
+    // never emits it — registering here is harmless there.
+    this.room.onMessage('dailyResult', (d) => this.showDailyResults(d));
 
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
     // reconnection API). We just surface it to the player and keep a manual
@@ -530,7 +569,10 @@ export default class GameScene {
       // fall back to a fresh join so the player is never stuck.
       if (this.reconnectAttempts > 3) {
         try {
-          this.room = await joinGame(this.name, this.character);
+          // Fresh join after reconnect: daily players land back in the seeded
+          // daily room; every other mode keeps its previous behavior.
+          this.room = await joinGame(this.name, this.character,
+            this.mode === 'daily' ? 'daily' : undefined);
           this.reconnectEl.classList.remove('visible');
           this.wireRoom();
           console.log('[client] re-joined fresh');
@@ -1382,6 +1424,29 @@ export default class GameScene {
       })
       .join('');
     this.leaderboardEl.innerHTML = 'LEADERBOARD<br>' + rows;
+  }
+
+  /** Daily Gauntlet result banner (top-center): one row per finishing player
+   *  — name, score, streak multiplier, XP reward. Auto-hides after ~8s;
+   *  clicking it dismisses immediately. */
+  showDailyResults(payload) {
+    const el = this.dailyResultsEl;
+    if (!el || !payload) return;
+    const rows = (payload.results ?? [])
+      .map((r) => `${esc(r.name)} — score <b>${r.score}</b> · streak x${r.streak ?? 1} · <b>+${r.rewardXp ?? 0}</b> XP`)
+      .join('<br>');
+    el.innerHTML =
+      '<div class="title">DAILY GAUNTLET COMPLETE</div>' +
+      rows +
+      '<div style="margin-top:4px;">click to dismiss</div>';
+    el.classList.add('visible');
+    clearTimeout(this._dailyResultTimer);
+    this._dailyResultTimer = setTimeout(() => el.classList.remove('visible'), 8000);
+  }
+
+  hideDailyResults() {
+    clearTimeout(this._dailyResultTimer);
+    this.dailyResultsEl?.classList.remove('visible');
   }
 }
 

@@ -142,6 +142,19 @@
     #login button:hover { filter: brightness(1.08); }
     #login button:active { transform: translateY(1px); }
     #login-error { color: var(--danger); font-size: 13px; margin-top: 12px; display: none; }
+    /* Daily Gauntlet: today's modifier line under the mode cards */
+    #mode-daily-sub { margin-top: 6px; min-height: 14px; text-align: center;
+      font: 11px var(--mono); color: var(--muted); letter-spacing: .04em; }
+
+    /* ============ daily gauntlet result banner ============ */
+    #daily-results { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 16;
+      display: none; background: var(--panel); border: 1px solid rgba(251, 191, 36, 0.4);
+      border-radius: var(--radius-l); padding: 10px 18px; box-shadow: var(--shadow-1);
+      backdrop-filter: blur(8px); font: 12px/1.7 var(--mono); color: var(--muted);
+      text-align: center; cursor: pointer; }
+    #daily-results.visible { display: block; }
+    #daily-results b { color: var(--gold); font-weight: 600; }
+    #daily-results .title { color: var(--gold); letter-spacing: .06em; margin-bottom: 4px; }
 
     /* ============ touch controls ============ */
     #touch-controls { display: none; position: fixed; inset: 0; z-index: 14;
@@ -203,6 +216,7 @@
   </div>
   <div id="leaderboard"></div>
   <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
+  <div id="daily-results"></div>
   <div id="countdown"></div>
   <div id="flash"></div>
 
@@ -235,6 +249,7 @@
       <input id="login-server" type="text" placeholder="game server (e.g. word-word-word.trycloudflare.com)" autocomplete="off" spellcheck="false" />
       <div id="char-picker"></div>
       <div id="mode-picker"></div>
+      <div id="mode-daily-sub"></div>
       <br/>
       <button id="login-btn">JOIN</button>
       <div id="login-error"></div>

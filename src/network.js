@@ -53,13 +53,17 @@ export function serverAvailable(timeoutMs = 3000) {
   });
 }
 
-/** Connect and join (or create) the arena room, carrying the chosen name. */
-export async function joinGame(name, character) {
+/** Connect and join (or create) the arena room, carrying the chosen name.
+ *  mode 'daily' targets the seeded Daily Gauntlet room ('daily'); every
+ *  other value keeps the classic arena room ('game'). */
+export async function joinGame(name, character, mode = 'waves') {
   // rootSchema lets the client decode the binary state patches; without it
-  // room.state stays undefined (schema-based serialization). The name and
-  // the chosen character index ride the join options to the server, which
-  // sanitizes both into PlayerState.
-  return currentClient().joinOrCreate('game', { name, character }, WorldState);
+  // room.state stays undefined (schema-based serialization). The name, the
+  // chosen character index and the mode ride the join options to the server,
+  // which sanitizes them into PlayerState / match setup.
+  return currentClient().joinOrCreate(
+    mode === 'daily' ? 'daily' : 'game',
+    { name, character, mode }, WorldState);
 }
 
 /** Re-join a dropped connection using the colyseus reconnection token. */
