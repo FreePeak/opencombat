@@ -76,6 +76,8 @@ export default class SoundManager {
   // --- Game events -----------------------------------------------------------
   pickup() { this.blip(440, 880, 0.09, 'sine', 0.18); this.blip(660, 1320, 0.12, 'sine', 0.15, 0.07); }
   powerUp() { this.blip(330, 660, 0.1, 'triangle', 0.2); this.blip(495, 990, 0.14, 'triangle', 0.18, 0.09); }
+  /** Charged kill-orb collected (PRD-orb-drops.md): brighter C-major arp. */
+  charged() { this.blip(523, 1046, 0.1, 'sine', 0.2); this.blip(659, 1318, 0.12, 'sine', 0.17, 0.07); this.blip(784, 1568, 0.16, 'triangle', 0.15, 0.14); }
   swing() { this.noiseSweep(0.12, 0.12, 1200, 300, 'bandpass'); }
   hit() { this.blip(130, 60, 0.12, 'sine', 0.3); this.noiseSweep(0.08, 0.15, 400, 100, 'lowpass'); }
   enemyHit() { this.blip(190, 95, 0.09, 'square', 0.16); this.noiseSweep(0.06, 0.1, 900, 200, 'lowpass'); }

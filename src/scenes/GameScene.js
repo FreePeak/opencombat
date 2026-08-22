@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CONFIG, setServerUrl } from '../config.js';
 import { recordRun, tierForCareer } from '../shared/sim/careerStats.js';
+import { loadLocalCareer, saveLocalCareer } from '../shared/sim/localCareer.js';
 
 // Career unlock tiers (PRD-career-stats.md): cosmetic nametag accents.
 const TIER_COLORS = { 1: '#7c4dff', 2: '#ffd700', 3: '#ff5252' };
@@ -342,6 +343,29 @@ export default class GameScene {
     }
   }
 
+  /** Offline personal-best line on the login card (PRD-offline-progression).
+   *  rec=null hides the line; every storage touch is guarded so private-mode
+   *  browsers degrade to "no line" instead of breaking the menu. */
+  renderPersonalBest(rec) {
+    try {
+      const el = document.getElementById('personal-best');
+      if (!el) return;
+      if (!rec) { el.textContent = ''; el.style.display = 'none'; return; }
+      el.textContent = `BEST WAVE ${rec.bestWave} · BEST SCORE ${rec.bestScore}`;
+      el.style.display = 'block';
+    } catch { /* menu must survive even a hostile storage */ }
+  }
+
+  /** Re-read the offline career from localStorage and repaint the best line
+   *  — called wherever we hand control back to the menu. */
+  refreshPersonalBest() {
+    try {
+      this.renderPersonalBest(loadLocalCareer(window.localStorage));
+    } catch {
+      this.renderPersonalBest(null); // localStorage itself can throw
+    }
+  }
+
   /** Daily Gauntlet subtitle: today's modifier label (+ our best score when
    *  the name is already on today's leaderboard). Any failure — static
    *  hosting, tunnel down, non-JSON response — degrades to a quiet
@@ -625,6 +649,13 @@ export default class GameScene {
         // ENDLESS WAR: offline runs never end on score or finale arc.
         this.room = new LocalRoom({ endless: true });
         this.isLocalRun = true; // OFFLINE CAREER: fold endings into localStorage
+        // OFFLINE PROGRESSION (PRD-offline-progression.md): endless play never
+        // ends, so each cleared wave checkpoints {runs,bestWave,bestScore}
+        // straight into localStorage and repaints the login-card best line.
+        this.room.onCheckpoint = (rec) => {
+          try { saveLocalCareer(window.localStorage, rec); } catch { /* private mode */ }
+          this.renderPersonalBest(rec);
+        };
         await this.room.join(this.name, this.character);
         this.setNetBadge(false);
         this.wireRoom();
@@ -637,6 +668,7 @@ export default class GameScene {
       // Re-show the form: the error div lives inside the login card, which
       // was hidden for the join — an invisible error helps nobody.
       this.loginEl.classList.add('visible');
+      this.refreshPersonalBest();
     }
     this.joining = false;
   }
@@ -723,6 +755,7 @@ export default class GameScene {
       this.loginError.textContent = joinErrorMessage(err);
       this.loginError.style.display = 'block';
       this.loginEl.classList.add('visible');
+      this.refreshPersonalBest();
     }
     this.joining = false;
   }
@@ -1160,6 +1193,8 @@ export default class GameScene {
     const charged = (view.state?.charge ?? 0) > 0;
     const mat = view.mesh.material;
     if (!mat || mat._charged === charged) return;
+    // Charged -> plain means the orb was COLLECTED: pay a distinct chime.
+    if (mat._charged === true && !charged) this.sound?.charged?.();
     mat._charged = charged;
     mat.color.setHex(charged ? 0xffd700 : CONFIG.colors.orb);
     mat.emissive.setHex(charged ? 0x8a6d00 : 0x22aa22);
