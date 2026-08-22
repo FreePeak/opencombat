@@ -88,6 +88,31 @@ merge, README/ARCHITECTURE sync when public surface changes.
 Full detail lives in `docs/PROGRESS.md` (rows R3-R40 era) +
 `docs/vampire-survivors-research.md`. Highlights:
 
+**Session A — meta/social/platform track (docs/PROGRESS.md rows 2.5–2.21):**
+
+| System | Commit(s) |
+|---|---|
+| Daily Gauntlet (seeded daily challenge, streaks, /api/daily) | b08f14f |
+| Elite Affixes (Swift/Bulwark/Vampiric/Volatile every 5th wave) | 78a0c5e |
+| Kill Streaks + combat juice (milestone broadcasts, trauma shake, hit-stop) | joint 750844e |
+| Presence panel (/api/players, online-now UI, recent allies) | joint b40264f |
+| Adaptive Music Director (intensity tiers, quantized crossfades) | 77f1b99 |
+| Live Match Browser (/api/rooms, JOIN panel, late-join spawn protection) | joint → 74787e5 |
+| Weekly Gauntlet (ISO-week modifier stacks, /api/weekly) | ca95762 |
+| Achievements (predicate engine over persisted blob, unlock toasts) | 604cc26 |
+| **USER FIX: offline endless war** — LocalRoom({endless:true}) disables targetScore/finale ends; unlimited offline waves | 7bfd9d9 |
+| Arena Spectate (seatless joinById spectators, follow-cam, LEAVE pill) | 7ae1d7b |
+| OIDC login option (BFF auth-code+PKCE via openid-client, sub→player binding) | 726b4c6 |
+| Verified-name join guard (single-use join tickets, 4103 guest rejection) | 5db6c91 |
+| Admin API + GDPR rights (token-guarded export/delete + JSONL audit trail) | 3fe1a6a |
+| Air-gapped vendoring (VENDORED_ASSETS=1 self-hosted three/schema/sdk) | 31990b9 |
+| Stability soak evidence (3x suite + 2x e2e green, zero flakes) | eebb320 |
+| Waves spectate + spectator counts (/api/rooms spectators field, 👁N chip) | 701a267 |
+| Offline progression checkpoints (localStorage career + personal-best line) | 5ea1919 |
+| Objective-Based Weeklies (sticky within-week objective merge, /api/weekly objectives) | 58eb11c |
+
+**Session B — PvE content track (rows R3-R40 era):**
+
 | System | Commit(s) |
 |---|---|
 | VS genre research + ranked backlog | e4956e5 |
@@ -110,15 +135,21 @@ objective-based weeklies.
 
 ## 6. In-flight at handoff time
 
-**Objective-Based Weeklies** (peer session, PRD-weekly-gauntlet.md cycle-17
-addendum @ 9d5b417): implementation mid-flight — dirty files were
-`src/server/http.js`, `src/server/rooms/GameRoom.js`,
-`src/shared/sim/weeklyRun.js`, untracked `test/weeklyObjectives.test.mjs`
-(and a stray `test/wobj-debug.tmp.mjs`). My pre-staged audit: composes with
-the finale arc (`state.wave` predicate satisfies wave objectives; R15's
-finalize-first victory ordering covers weekly via dispatch) — logged at
-2523d7b. WHEN IT LANDS: run the full gate on the combined tree, extend
-`docs/PRD-career-stats.md`'s rolling audit log, then pick next work.
+**RESOLVED — nothing in flight.** Objective-Based Weeklies (the last
+mid-flight item) landed as 58eb11c: weeklyObjectives selection (2 distinct
+from a 4-row table), evaluateWeeklyRun, sticky within-week merge wired into
+GameRoom's weekly finalize, /api/weekly exposes `objectives` definitions and
+leaderboard rows carry `objectivesDone`. Targeted verification 18/18 green
+(weeklyObjectives + weekly + elites incl. peer bossMaxHp stamp). Full-suite
+certification on the combined tree was interrupted by concurrent-session
+contention — FIRST ACTION for the next session: `npm run check && npm test`
+and fix anything red before new work.
+
+Remaining roadmap after this landing:
+- **2.2 Postgres persistence adapter** (PlayerStore interface, needs a live
+  postgres — docker-compose.yml exists; the only unstarted Q2 item)
+- Backlog ideas not yet claimed: touch/mobile polish, minimap/world-mode
+  depth, objective DAILIES (mirror of weeklies), spectate delay/anti-stream-snipe
 
 Also verify CI after any landing: `gh run list --limit 3` (repo runs two
 jobs per push: `verify` = node ci → check → test → smoke; `e2e` = real
