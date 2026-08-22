@@ -9,17 +9,29 @@ import * as THREE from 'three';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { CONFIG } from '../config.js';
 import { attackTimeScale, frameDamp } from '../anim/AnimUtils.js';
+import { ELITE_SCALE } from '../shared/sim/elites.js';
 import { SERVER } from '../server/config.js';
 
 // Death: quick scale-down before the corpse disappears (purely cosmetic —
 // the room already considers the enemy dead at hp 0).
 const DEATH_SHRINK_S = 0.28;
 
+// Elite affix look (P2.6): red-shifted material multiply + faint ember glow
+// so elites read at distance even before the hp bar resolves.
+const ELITE_TINT = new THREE.Color(1.0, 0.35, 0.35);
+const ELITE_GLOW = 0x2b0000;
+const ELITE_BORDER = '#fbbf24'; // gold hp-bar border (var(--gold))
+const NORMAL_BORDER = '#555';
+
 export default class Enemy {
   constructor(scene, state, model, anims, scale = 1) {
     this.scene = scene;
     this.state = state; // live EnemyState ref, patched by colyseus
     this.baseScale = scale;
+    this.elite = '';        // affix name currently rendered ('' = normal)
+    this.eliteGlow = 0x000000; // emissive restored between hit flashes
+    this._ownMats = false;  // true once materials were cloned for the tint
+    this._origMats = null;
 
     this.root = new THREE.Group();
     this.root.scale.setScalar(scale);
@@ -78,6 +90,73 @@ export default class Enemy {
     // Add to the nametag layer (same layer as player nametags).
     document.getElementById('nametag-layer')?.appendChild(this.hpBar.div);
     this.v = new THREE.Vector3(); // reusable projection vector
+
+    // Elite affixes (P2.6): state.elite non-empty = 1.8x scale, red tint,
+    // gold hp-bar border. Slots are reused across waves so this is applied
+    // AND reverted from update()'s poll — not just at construction.
+    this.applyEliteLook(state.elite);
+  }
+
+  /** Scale currently rendered: elites render at baseScale * ELITE_SCALE. */
+  effScale() {
+    return this.baseScale * (this.elite ? ELITE_SCALE : 1);
+  }
+
+  /** Apply/revert the elite look for affix `name` ('' = normal). Idempotent. */
+  applyEliteLook(name) {
+    name = name || '';
+    if (name === this.elite) return;
+    this.elite = name;
+    const elite = name !== '';
+    this.root.scale.setScalar(this.effScale());
+    this.eliteGlow = elite ? ELITE_GLOW : 0x000000;
+    this.hpBar.div.style.borderColor = elite ? ELITE_BORDER : NORMAL_BORDER;
+    this._swapMaterials(elite);
+  }
+
+  /** Red-tint via per-enemy material clones. SkeletonUtils.clone SHARES
+   *  materials with the loaded GLB, so tinting them in place would repaint
+   *  every normal enemy on screen; clones are owned here and disposed in
+   *  dispose() (revert puts the shared originals back). */
+  _swapMaterials(elite) {
+    const mesh = this.root.children[0];
+    if (!mesh) return;
+    if (elite && !this._ownMats) {
+      const orig = [];
+      const own = [];
+      let i = 0;
+      mesh.traverse((o) => {
+        if (!o.isMesh) return;
+        orig[i] = o.material;
+        const cloneMat = (m) => {
+          const c = m.clone();
+          c.color?.multiply(ELITE_TINT);
+          return c;
+        };
+        o.material = Array.isArray(o.material)
+          ? o.material.map(cloneMat)
+          : cloneMat(o.material);
+        own[i] = o.material;
+        i++;
+      });
+      this._origMats = orig;
+      this.materials = own.flat();
+      this._ownMats = true;
+    } else if (!elite && this._ownMats) {
+      // Elite slot reused by a normal wave: restore shared originals.
+      let i = 0;
+      mesh.traverse((o) => {
+        if (!o.isMesh) return;
+        o.material = this._origMats[i++];
+      });
+      for (const m of this.materials) {
+        if (Array.isArray(m)) m.forEach((x) => x.dispose?.());
+        else m.dispose?.();
+      }
+      this.materials = [...this._origMats];
+      this._origMats = null;
+      this._ownMats = false;
+    }
   }
 
   playAnim(name) {
@@ -112,6 +191,13 @@ export default class Enemy {
       this.deathT = DEATH_SHRINK_S;
       this.onBurst?.({ x: this.root.position.x, y: 1.2, z: this.root.position.z }, 0xff6b6b);
       this.scene.sound?.death?.();
+      // Volatile elites explode shortly after death — the server owns the
+      // damage; this expanding ring (r=3 per the affix table) is only the
+      // fuse telegraph so players know to back off.
+      if (s.elite === 'Volatile') {
+        this.scene.skillFx?.ring?.(
+          { x: this.root.position.x, z: this.root.position.z }, 0xff7043, 3);
+      }
     } else if (s.hp > 0 && this.dead) {
       // Slot revived by a new wave: snap in at the spawn point — never
       // glide across the arena from the old corpse position.
@@ -119,7 +205,7 @@ export default class Enemy {
       this.maxHp = s.hp;
       this.hpBar.maxHp = this.maxHp;
       this.root.visible = true;
-      this.root.scale.setScalar(this.baseScale);
+      this.root.scale.setScalar(this.effScale());
       this.root.position.set(s.x, 0, s.z);
       this.root.rotation.y = s.rotY;
       this.current = null; // force the idle action to restart below
@@ -127,11 +213,16 @@ export default class Enemy {
       this.lastHp = s.hp;
     }
 
+    // Elite affix patch: LocalRoom mutates state in place (no schema events),
+    // so both modes are covered by polling state.elite every frame. Slots
+    // reused across waves flip '' <-> affix and this re-applies/reverts.
+    if ((s.elite || '') !== this.elite) this.applyEliteLook(s.elite || '');
+
     if (this.dead) {
       // Corpse: finish the shrink, then hide everything.
       if (this.deathT > 0) {
         this.deathT = Math.max(0, this.deathT - dt);
-        this.root.scale.setScalar(this.baseScale * (this.deathT / DEATH_SHRINK_S));
+        this.root.scale.setScalar(this.effScale() * (this.deathT / DEATH_SHRINK_S));
         if (this.deathT === 0) this.root.visible = false;
       }
       this.hpBar.div.style.display = 'none';
@@ -164,7 +255,8 @@ export default class Enemy {
     this.flashT = Math.max(0, this.flashT - dt);
     const flash = this.flashT > 0;
     for (const m of this.materials) {
-      m.emissive?.setHex(flash ? 0xffffff : 0x000000);
+      // Elites keep a faint ember glow between flashes instead of black.
+      m.emissive?.setHex(flash ? 0xffffff : this.eliteGlow);
     }
 
     this.playAnim(s.anim); // idle/run/attack/hit from the room
@@ -198,5 +290,14 @@ export default class Enemy {
   dispose() {
     this.root.parent?.remove(this.root);
     this.hpBar.div?.remove();
+    // Free the per-enemy clones created for the elite tint (shared model
+    // materials are owned by the scene's GLB and must NOT be disposed).
+    if (this._ownMats) {
+      for (const m of this.materials) {
+        if (Array.isArray(m)) m.forEach((x) => x.dispose?.());
+        else m.dispose?.();
+      }
+      this._ownMats = false;
+    }
   }
 }

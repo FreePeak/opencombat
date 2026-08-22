@@ -186,6 +186,9 @@ export default class GameScene {
     // Daily Gauntlet result banner (server 'dailyResult' broadcast).
     this.dailyResultsEl = document.getElementById('daily-results');
     this.dailyResultsEl?.addEventListener('click', () => this.hideDailyResults());
+    // Elite spawn toast (server 'eliteSpawn' broadcast / LocalRoom emit hook).
+    this.eliteToastEl = document.getElementById('elite-toast');
+    this.eliteToastEl?.addEventListener('click', () => this.hideEliteToast());
 
     // One overlay serves three ends: death (respawn), wave cleared (next
     // wave) and match end (again). Priority in that order on click.
@@ -525,6 +528,10 @@ export default class GameScene {
     // Daily Gauntlet: run-finalize broadcast (daily rooms only). LocalRoom
     // never emits it — registering here is harmless there.
     this.room.onMessage('dailyResult', (d) => this.showDailyResults(d));
+    // Elite affixes (P2.6): hosted rooms broadcast 'eliteSpawn' {name} and
+    // LocalRoom fans the same type out through its onMessage API (see its
+    // _emitMessage), so ONE registration covers online + offline waves.
+    this.room.onMessage('eliteSpawn', (d) => this.showEliteToast(d));
 
     // Upgrade F: the sdk reconnects dropped sockets automatically (colyseus
     // reconnection API). We just surface it to the player and keep a manual
@@ -1447,6 +1454,24 @@ export default class GameScene {
   hideDailyResults() {
     clearTimeout(this._dailyResultTimer);
     this.dailyResultsEl?.classList.remove('visible');
+  }
+
+  /** Elite spawn toast (top-center): "⚠ ELITE — SWIFT". Auto-hides after 4s;
+   *  clicking it dismisses immediately. Mirrors the daily-results banner
+   *  styling (see #elite-toast in index.html). */
+  showEliteToast(payload) {
+    const el = this.eliteToastEl;
+    if (!el) return;
+    el.innerHTML =
+      `<span class="elite-title">⚠ ELITE</span> — ${esc(payload?.name ?? 'UNKNOWN')}`;
+    el.classList.add('visible');
+    clearTimeout(this._eliteToastTimer);
+    this._eliteToastTimer = setTimeout(() => el.classList.remove('visible'), 4000);
+  }
+
+  hideEliteToast() {
+    clearTimeout(this._eliteToastTimer);
+    this.eliteToastEl?.classList.remove('visible');
   }
 }
 

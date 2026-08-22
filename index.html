@@ -156,6 +156,15 @@
     #daily-results b { color: var(--gold); font-weight: 600; }
     #daily-results .title { color: var(--gold); letter-spacing: .06em; margin-bottom: 4px; }
 
+    /* ============ elite spawn toast ============ */
+    #elite-toast { position: fixed; top: 46px; left: 50%; transform: translateX(-50%); z-index: 16;
+      display: none; background: var(--panel); border: 1px solid rgba(248, 113, 113, 0.5);
+      border-radius: var(--radius-l); padding: 8px 18px; box-shadow: var(--shadow-1);
+      backdrop-filter: blur(8px); font: 12px var(--mono); letter-spacing: .08em;
+      color: var(--text); text-align: center; cursor: pointer; }
+    #elite-toast.visible { display: block; }
+    #elite-toast .elite-title { color: var(--danger); letter-spacing: .1em; font-weight: 600; }
+
     /* ============ touch controls ============ */
     #touch-controls { display: none; position: fixed; inset: 0; z-index: 14;
       pointer-events: none; -webkit-touch-callout: none;
@@ -217,6 +226,7 @@
   <div id="leaderboard"></div>
   <div id="net-badge">OFFLINE — SOLO MODE (no game server)</div>
   <div id="daily-results"></div>
+  <div id="elite-toast"></div>
   <div id="countdown"></div>
   <div id="flash"></div>
 

@@ -24,9 +24,13 @@ import { skillFor, resolveSkillHits, classStats } from '../../shared/skills.js';
 const statsOf = (player) => classStats(player.character);
 // D1 wave activation lives once in shared/waves.js (P1.3 slice 4 stretch):
 // the room injects its square sampler + anim/stun-map clears, keeps the log.
-import { activateWave, spawnAwayFromPlayers } from '../../shared/waves.js';
+import { activateWave, waveEnemyHp, spawnAwayFromPlayers } from '../../shared/waves.js';
 import { blockedHit, meleeHits, strikeEnemy, strikePlayer } from '../../shared/combat.js';
 import { attackFor } from '../../shared/classes.js';
+// Elite affixes (PRD-elite-affixes.md): pure shared module — every Nth wave
+// spawns slot 0 as an ELITE carrying a named affix; both rooms consume the
+// same table so online/offline parity is structural, not duplicated logic.
+import { isEliteWave, affixForWave, applyElite, affixByName } from '../../shared/sim/elites.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1): XP grant ->
 // level-up queue -> card roll -> auto-pick -> manual pick. D5 enemy-hit
 // resolution + D4 burn DoT (combatBook) and D3 shop effects (shopEffects)
@@ -138,6 +142,11 @@ export default class GameRoom extends Room {
     // keyed by projectile id, live burns keyed by enemy.
     this._burnByProjId = new Map();
     this._activeBurns = new Map();
+    // Elite affix scratch (PRD-elite-affixes.md): pending Volatile explosions
+    // keyed by the dead elite's pool slot — armed by combatBook.onEliteKill,
+    // drained each playing tick via combatBook.tickVolatile.
+    this.volatilePending = new Map();
+    this.waveBaseHp = SERVER.enemy.hp; // per-wave base HP (elite maxHp derives from it)
     // Shared-sim context for D5/D4 combat bookkeeping: the room owns the
     // schema state + scratch maps + transport; only clock/hooks wire in.
     this.simCombat = {
@@ -148,8 +157,14 @@ export default class GameRoom extends Room {
       enemyStunUntil: this.enemyStunUntil,
       burnByProjId: this._burnByProjId,
       activeBurns: this._activeBurns,
+      volatilePending: this.volatilePending,
       now: () => Date.now(),
       grantXp: (sid, amount) => leveling.grantXp(this.simLeveling, sid, amount),
+      damagePlayer: (sid, victim, amount, srcX, srcZ) =>
+        this.damagePlayer(sid, victim, amount, srcX, srcZ),
+      // Elite maxHp is not a schema field: recompute from the wave's base HP
+      // scaled by the affix (the exact number applyElite wrote at spawn).
+      eliteMaxHp: (enemy) => Math.ceil(this.waveBaseHp * (affixByName(enemy.elite)?.hpMul ?? 1)),
       log: (event, fields) => this.logEvent(event, fields),
     };
     // Shared-sim context for the D6 projectile loop: the loop owns stepping,
@@ -279,6 +294,8 @@ export default class GameRoom extends Room {
       (enemy) => {
         this.enemyAnimUntil.delete(enemy);
         this.enemyStunUntil.delete(enemy);
+        this.volatilePending.delete(enemy);
+        enemy.elite = ''; // slots revive clean; re-marked below on elite waves
       });
     let spawned = count;
     let effHp = hp;
@@ -298,6 +315,17 @@ export default class GameRoom extends Room {
       for (let i = 0; i < spawned; i++) {
         this.state.enemies[i].hp = effHp;
         this.state.enemies[i].anim = 'idle';
+      }
+    }
+    this.waveBaseHp = effHp; // elite maxHp derives from the same base everyone got
+    // ELITE AFFIXES (PRD-elite-affixes.md): every ELITE_EVERY_N_WAVES-th wave
+    // marks slot 0 as the wave's ELITE (deterministic affix per wave number —
+    // LocalRoom mirrors this exactly). Broadcast lets clients show the banner.
+    if (isEliteWave(n)) {
+      const affix = applyElite(this.state.enemies[0], affixForWave(n), effHp);
+      if (affix) {
+        this.broadcast('eliteSpawn', { name: affix.name });
+        this.logEvent('elite_spawn', { wave: n, name: affix.name });
       }
     }
     this.state.wave = n;
@@ -567,7 +595,7 @@ export default class GameRoom extends Room {
         this.invulnUntil.set(sid, 0);
         this.animUntil.set(sid, 0);
       },
-      onResetTransient: () => { this.pendingMelee = []; },
+      onResetTransient: () => { this.pendingMelee = []; this.volatilePending.clear(); },
       onResetPowerUps: () => this.powerUpTimers.clear(),
     });
     this.matchElapsed = 0;
@@ -877,11 +905,14 @@ export default class GameRoom extends Room {
         if (!enemy) continue;
         const dmg = result.damagePerHit ? result.damagePerHit[result.hits.indexOf(i)] : def.damage;
         if (def.kind === 'bash') {
-          const { hit, killed } = strikeEnemy(enemy, dmg, player.x, player.z, def.knockback, this.half);
+          // Bulwark (knockbackImmune): takes the damage + stun, never the shove.
+          const { hit, killed } = strikeEnemy(enemy, dmg, player.x, player.z,
+            combatBook.knockbackAgainst(enemy, def.knockback), this.half);
           if (hit) {
             if (killed) {
               player.score += SERVER.enemy.killScore;
               this.grantXp(sid, SERVER.progression?.xpPerKill ?? 30);
+              combatBook.onEliteKill(this.simCombat, enemy, sid); // elite burst + Volatile fuse
               this.logEvent('enemy_killed', { wave: state.wave, by: player.name });
             } else {
               enemy.anim = 'hit';
@@ -1011,6 +1042,9 @@ export default class GameRoom extends Room {
         this.movePlayers(dtEff);
         this.updateEffects(dtEff * 1000);
         this.updatePickups(dtEff);
+        // A Volatile fuse armed on the wave's last kill still burns down here;
+        // the AoE itself is a no-op while intermission invulnerability holds.
+        combatBook.tickVolatile(this.simCombat, Date.now());
         this.checkWinConditions(dtEff);
         if (Date.now() >= this.intermissionBox.until) this.startNextWave();
         return;
@@ -1085,6 +1119,10 @@ export default class GameRoom extends Room {
     this.updatePickups(dt);
     this.updateProjectiles(dt);
 
+    // Elite affixes: drain due Volatile fuses (AoE through damagePlayer, then
+    // corpse release). Checked every playing tick like any other timer.
+    combatBook.tickVolatile(this.simCombat, now);
+
     // --- Enemies: chase the nearest LIVING player, hurt on contact -------
     let alive = 0;
     for (const enemy of state.enemies) {
@@ -1120,8 +1158,10 @@ export default class GameRoom extends Room {
         enemy.rotY = Math.atan2(target.x - enemy.x, target.z - enemy.z);
         if (dist > SERVER.enemy.contactRange) {
           // Chase: step toward the target, staying server-authoritative.
-          // Daily rooms multiply by today's enemySpeedMul (1 in waves mode).
-          const spd = SERVER.enemy.speed * this.enemySpeedMul;
+          // Daily rooms multiply by today's enemySpeedMul (1 in waves mode);
+          // elite affixes add their own speedMul (Swift +60%, shared/sim/elites.js).
+          const spd = SERVER.enemy.speed * this.enemySpeedMul *
+            (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1);
           enemy.x += (target.x - enemy.x) / dist * spd * dt;
           enemy.z += (target.z - enemy.z) / dist * spd * dt;
           if (!animOverride) enemy.anim = 'run';
@@ -1131,7 +1171,11 @@ export default class GameRoom extends Room {
           // absorbs one hit, otherwise the target takes damage + knockback.
           this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
           enemy.anim = 'attack'; // punch (swings even when blocked)
-          this.damagePlayer(targetSid, target, SERVER.enemy.contactDamage, enemy.x, enemy.z);
+          const victimHp = target.hp;
+          if (this.damagePlayer(targetSid, target, SERVER.enemy.contactDamage, enemy.x, enemy.z)) {
+            // Vampiric elites siphon back a share of the HP they drained.
+            combatBook.applyVampiricHeal(this.simCombat, enemy, victimHp - target.hp);
+          }
         } else if (!animOverride) {
           enemy.anim = 'idle'; // adjacent but the player is invulnerable
         }

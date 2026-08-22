@@ -90,13 +90,15 @@ export class EnemyState extends Schema {
     this.rotY = 0;
     this.hp = 2;
     this.anim = 'idle'; // 'idle' | 'run' | 'attack' | 'hit'
+    this.elite = '';    // '' | affix name from shared/sim/elites.js
   }
 }
 defineTypes(EnemyState, {
   x: 'number', z: 'number',
   rotY: 'number',
   hp: 'number',
-  anim: 'string'
+  anim: 'string',
+  elite: 'string'
 });
 
 // One in-flight projectile (arrow / fireball / lightning bolt). The server
