@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CONFIG, setServerUrl } from '../config.js';
+import { recordRun, tierForCareer } from '../shared/sim/careerStats.js';
 
 // Career unlock tiers (PRD-career-stats.md): cosmetic nametag accents.
 const TIER_COLORS = { 1: '#7c4dff', 2: '#ffd700', 3: '#ff5252' };
@@ -602,6 +603,7 @@ export default class GameScene {
         // degrades to plain local waves (no streak recorded — accepted).
         // ENDLESS WAR: offline runs never end on score or finale arc.
         this.room = new LocalRoom({ endless: true });
+        this.isLocalRun = true; // OFFLINE CAREER: fold endings into localStorage
         await this.room.join(this.name, this.character);
         this.setNetBadge(false);
         this.wireRoom();
@@ -1567,6 +1569,29 @@ export default class GameScene {
         this.deadShown = true; // suppress the death overlay underneath
       }
       if (state.matchState === 'gameover') {
+        // OFFLINE CAREER (PRD-career-stats.md): the Pages fallback folds its
+        // endings into a localStorage career so progression survives reloads.
+        // Pure shared math (recordRun/tierForCareer) keeps parity with the
+        // server path; private-mode storage failures fail soft.
+        if (this.isLocalRun) {
+          try {
+            const saved = JSON.parse(localStorage.getItem('ashfall-career') ?? 'null');
+            const meLocal = state.players.get(this.room.sessionId);
+            const career = recordRun(saved?.career ?? null, {
+              wave: state.wave,
+              score: meLocal?.score ?? 0,
+              victory: !!state.victory,
+            });
+            localStorage.setItem('ashfall-career', JSON.stringify({ ...saved, career }));
+            const tier = tierForCareer(career);
+            const prevTier = this.lastTierSeen.offline;
+            if (prevTier !== undefined && tier > prevTier) {
+              this.showEliteToast({ name: `COSMETIC TIER ${tier} UNLOCKED`, boss: false });
+            }
+            this.lastTierSeen.offline = tier;
+            this.careerBySid[this.room.sessionId] = career;
+          } catch { /* storage unavailable — gameplay continues */ }
+        }
         // WAVE FINALE (PRD-wave-finale.md): co-op victory reads differently
         // from a death/PvP ending — the run was WON.
         if (state.victory) this.sound.victory?.();
