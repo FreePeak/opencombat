@@ -106,3 +106,6 @@ deletes forget them.
   player.daily (separate key from career) — no interaction with endMatch
   careerUpdate; their new test file exits cleanly this cycle. Combined gate:
   122 files, 212/212. Compose-clean.
+- 2.23 combat radar (df77347): consumes synced x/z both rooms publish —
+  works online + offline; no career interaction; elite/boss blip styling is
+  their backlog. Compose-clean.
