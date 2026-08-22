@@ -19,11 +19,13 @@
 //   onHitPlayer(proj, sid, victim): room hook applying player damage. Called
 //                 at most once per projectile.
 //
-// Player-branch rule unified onto GameRoom's: OWNER projectiles can hit OTHER
-// living players only (sid filter + hp guard). LocalRoom's old inverted branch
-// (`!proj.ownerIsPlayer` hitting the local player) was unreachable dead code —
-// nothing spawns a non-owner-owned projectile in either sim — and is pinned by
-// test/simProjectileLoop.test.mjs so it cannot silently flip back.
+// Player-branch rules: OWNER projectiles can hit OTHER living players only
+// (sid filter + hp guard). ENEMY-owned projectiles (`!ownerIsPlayer`,
+// Shooter archetype, PRD-enemy-archetypes.md Shooter cycle) hit ANY living
+// player through ctx.onHitPlayer — the room's damagePlayer keeps block/
+// shield/invulnerability authoritative. This revives LocalRoom's old inverted
+// branch deliberately; the pin in test/simProjectileLoop.test.mjs now pins
+// the LIVE contract (hit once, corpses skipped, enemies immune).
 //
 // Schema objects are consumed duck-typed (ArraySchema splice during a reverse
 // index walk, MapSchema entries); construction of ProjectileState instances
@@ -85,6 +87,19 @@ export function stepProjectiles(ctx, dt) {
           ctx.onHitPlayer?.(proj, osid, victim);
           state.projectiles.splice(i, 1);
           removed = true;
+          break;
+        }
+      }
+    }
+
+    // Enemy-owned (Shooter): ANY living player is a valid target — no owner
+    // exclusion, corpses skipped. Enemies are NEVER targets of these.
+    if (!removed && !proj.ownerIsPlayer) {
+      for (const [osid, victim] of state.players) {
+        if (victim.hp <= 0) continue;
+        if (projectileHitsTarget(proj, victim, hitRadius)) {
+          ctx.onHitPlayer?.(proj, osid, victim);
+          state.projectiles.splice(i, 1);
           break;
         }
       }

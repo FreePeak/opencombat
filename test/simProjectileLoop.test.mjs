@@ -210,23 +210,55 @@ test('dead players are skipped by the player branch', () => {
   assert.ok(proj.ttl <= 0, 'flew on until ttl expiry');
 });
 
-test('non-owner projectile hits nobody — dead-code unification pinned', () => {
+test('enemy-owned projectile hits the living player in its flight path once', () => {
   const h = makeHarness();
-  // Obstacles sit inside the first ~12 units; the small ttl removes the
-  // projectile mid-flight before it could ever reach the arena edge.
-  h.state.enemies.push(makeEnemy(30, 4, 0));
-  h.state.players.set('a', makePlayer('a', 100, 8, 0));
+  h.state.enemies.push(makeEnemy(30, 4, 0)); // bystander: must NOT be a target
+  const victimA = makePlayer('a', 100, 8, 0);
+  h.state.players.set('a', victimA);
   h.state.players.set('b', makePlayer('b', 100, 10, 0));
-  const proj = makeProjectile({ id: 6, ownerSid: 'env', ownerIsPlayer: false, ttl: 300 });
+  const proj = makeProjectile({ id: 6, ownerSid: 'shooter', ownerIsPlayer: false, ttl: 300 });
+  h.state.projectiles.push(proj);
+
+  let steps = 0;
+  while (h.state.projectiles.includes(proj) && steps++ < 80) stepProjectiles(h.ctx, 0.05);
+
+  assert.deepEqual(h.enemyHits, [], 'enemy-owned projectiles cannot hit enemies');
+  assert.equal(h.playerHits.length, 1, 'exactly one player struck');
+  assert.equal(h.playerHits[0].sid, 'a');
+  assert.equal(h.playerHits[0].victim, victimA);
+  assert.equal(h.state.projectiles.includes(proj), false, 'removed after the hit');
+});
+
+test('enemy-owned shots skip corpse players and expire by ttl in the open', () => {
+  const h = makeHarness();
+  h.state.enemies.push(makeEnemy(30, 4, 0));
+  h.state.players.set('corpse', makePlayer('corpse', 0, 8, 0));
+  h.state.players.set('far', makePlayer('far', 100, 30, 30));
+  const proj = makeProjectile({ id: 7, ownerSid: 'shooter', ownerIsPlayer: false,
+    x: 5, z: 0, dirX: 1, dirZ: 0, speed: 40, ttl: 120 });
   h.state.projectiles.push(proj);
 
   let steps = 0;
   while (h.state.projectiles.length > 0 && steps++ < 80) stepProjectiles(h.ctx, 0.05);
 
-  assert.deepEqual(h.enemyHits, [], 'non-owner projectiles cannot hit enemies');
-  assert.deepEqual(h.playerHits, [], 'nor players (LR old !ownerIsPlayer branch unified away)');
-  assert.equal(h.state.projectiles.length, 0, 'only ttl expiry removes it');
-  assert.ok(proj.ttl <= 0);
+  assert.deepEqual(h.playerHits, [], 'corpses cannot be hit; far player out of path');
+  assert.equal(h.state.projectiles.length, 0, 'ttl expiry still removes it');
+});
+
+test('enemy-owned projectiles skip corpse players and expire by ttl in the open', () => {
+  const h = makeHarness();
+  h.state.enemies.push(makeEnemy(30, 4, 0));
+  h.state.players.set('corpse', makePlayer('corpse', 0, 8, 0)); // hp 0
+  h.state.players.set('far', makePlayer('far', 100, 30, 30));
+  const proj = makeProjectile({ id: 7, ownerSid: 'shooter', ownerIsPlayer: false,
+    x: 5, z: 0, dirX: 1, dirZ: 0, speed: 40, ttl: 120 });
+  h.state.projectiles.push(proj);
+
+  let steps = 0;
+  while (h.state.projectiles.length > 0 && steps++ < 80) stepProjectiles(h.ctx, 0.05);
+
+  assert.deepEqual(h.playerHits, [], 'corpses cannot be hit; far player out of path');
+  assert.equal(h.state.projectiles.length, 0, 'ttl expiry still removes it');
 });
 
 // ---------------------------------------------------------------------------

@@ -79,6 +79,7 @@ let serverEliteHp;
     .every((e) => {
       if (e.archetype === 'Rusher') return e.hp === Math.ceil(baseHp5 * 0.75);
       if (e.archetype === 'Tank') return e.hp === Math.ceil(baseHp5 * 2);
+      if (e.archetype === 'Shooter') return e.hp === baseHp5;
       return e.archetype === '' && e.hp === baseHp5;
     }), 'non-elite slots keep archetype-composed wave HP');
 

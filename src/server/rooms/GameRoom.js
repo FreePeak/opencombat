@@ -31,7 +31,9 @@ import { attackFor } from '../../shared/classes.js';
 // spawns slot 0 as an ELITE carrying a named affix; both rooms consume the
 // same table so online/offline parity is structural, not duplicated logic.
 import { isEliteWave, affixForWave, applyElite, affixByName } from '../../shared/sim/elites.js';
-import { archetypeByName, markArchetypes } from '../../shared/sim/archetypes.js';
+import { archetypeByName, markArchetypes,
+  SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
+  SHOOTER_KITE_SPEED_MUL } from '../../shared/sim/archetypes.js';
 import * as orbDrops from '../../shared/sim/orbDrops.js';
 // Kill streaks (PRD-kill-streaks.md): pure shared module — both rooms track
 // consecutive credited kills per player (2.5s window, reset on death/reset)
@@ -123,6 +125,7 @@ export default class GameRoom extends Room {
     this.pendingMelee = [];      // {sid, at} — impacts land mid-swing, not at press
     this.powerUpTimers = new Map(); // powerUp -> seconds until it respawns
     this.orbCharges = new Map();    // orb -> stored kill-XP (PRD-orb-drops.md)
+    this.shooterFireAt = new Map(); // enemy -> ms of next Shooter volley
     this._projectileId = 0;        // monotonic ID for projectile spawn
     this.pendingUntil = new Map(); // sid -> ms deadline for upgrade auto-pick
     this.pendingQueue = new Map(); // sid -> queued level-ups waiting for card pick
@@ -628,6 +631,7 @@ export default class GameRoom extends Room {
     });
     resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
     orbDrops.clearCharges(this.orbCharges); // fresh match = plain orbs
+    this.shooterFireAt.clear(); // fresh match = synced volleys restart
     this.matchElapsed = 0;
     this.logEvent('match_reset');
     this.startCountdown();
@@ -1211,7 +1215,46 @@ export default class GameRoom extends Room {
       if (target) {
         const dist = Math.sqrt(best);
         enemy.rotY = Math.atan2(target.x - enemy.x, target.z - enemy.z);
-        if (dist > SERVER.enemy.contactRange) {
+        const archEntry = enemy.archetype ? archetypeByName(enemy.archetype) : null;
+        if (archEntry?.name === 'Shooter') {
+          // Ranged pursuit: close beyond preferred range, kite when crowded,
+          // otherwise hold and fire on the shared cooldown (parity: LocalRoom
+          // mirrors byte-for-byte).
+          const spdBase = SERVER.enemy.speed * this.enemySpeedMul *
+            (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1) *
+            archEntry.speedMul;
+          const dxn = (target.x - enemy.x) / dist;
+          const dzn = (target.z - enemy.z) / dist;
+          let moved = false;
+          if (dist > SHOOTER_PREFERRED_RANGE) {
+            enemy.x += dxn * spdBase * dt;
+            enemy.z += dzn * spdBase * dt;
+            moved = true;
+          } else if (dist < SHOOTER_KITE_RANGE) {
+            enemy.x -= dxn * spdBase * SHOOTER_KITE_SPEED_MUL * dt;
+            enemy.z -= dzn * spdBase * SHOOTER_KITE_SPEED_MUL * dt;
+            moved = true;
+          }
+          enemy.x = Math.max(-this.half, Math.min(this.half, enemy.x));
+          enemy.z = Math.max(-this.half, Math.min(this.half, enemy.z));
+          if (!moved && !animOverride) enemy.anim = 'idle';
+          else if (moved && !animOverride) enemy.anim = 'run';
+          let due = this.shooterFireAt.get(enemy);
+          if (due === undefined) due = now + SHOOTER_FIRE_COOLDOWN_MS;
+          if (now >= due && dist <= SHOOTER_PREFERRED_RANGE + 1) {
+            const proj = new ProjectileState(this._projectileId++, '', 'arrow',
+              enemy.x, enemy.z, dxn, dzn);
+            proj.speed = SERVER.projectile.arrowSpeed;
+            proj.damage = SERVER.enemy.shotDamage;
+            proj.ttl = SERVER.projectile.arrowTtlMs;
+            proj.ownerIsPlayer = false;
+            this.state.projectiles.push(proj);
+            this.enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
+            enemy.anim = 'attack';
+            due = now + SHOOTER_FIRE_COOLDOWN_MS;
+          }
+          this.shooterFireAt.set(enemy, due);
+        } else if (dist > SERVER.enemy.contactRange) {
           // Chase: step toward the target, staying server-authoritative.
           // Daily rooms multiply by today's enemySpeedMul (1 in waves mode);
           // elite affixes add their own speedMul (Swift +60%, shared/sim/elites.js).

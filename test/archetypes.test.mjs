@@ -5,16 +5,28 @@ import assert from 'node:assert/strict';
 // The module must be pure (no imports) so GameRoom, LocalRoom and these tests
 // share ONE source of truth, mirroring the elites.js contract.
 
+const SERVER_ENEMY_CONTACT = () => 1.3; // contactRange sanity anchor
+
 import {
   ARCHETYPES,
   ARCHETYPE_FROM_WAVE,
+  SHOOTER_FROM_WAVE,
+  SHOOTER_PREFERRED_RANGE,
+  SHOOTER_FIRE_COOLDOWN_MS,
   archetypeForSlot,
   archetypeByName,
   markArchetypes,
 } from '../src/shared/sim/archetypes.js';
 
 test('ARCHETYPES table shape: PRD stat deltas', () => {
-  assert.ok(Array.isArray(ARCHETYPES) && ARCHETYPES.length === 2);
+  assert.ok(Array.isArray(ARCHETYPES) && ARCHETYPES.length === 3);
+  const shooter = ARCHETYPES.find((a) => a.name === 'Shooter');
+  assert.ok(shooter, 'shooter archetype exists');
+  assert.equal(shooter.hpMul, 1.0);
+  assert.equal(shooter.speedMul, 0.85);
+  assert.equal(SHOOTER_FROM_WAVE, 5);
+  assert.ok(SHOOTER_PREFERRED_RANGE > SERVER_ENEMY_CONTACT());
+  assert.ok(SHOOTER_FIRE_COOLDOWN_MS >= 2000);
   const byName = Object.fromEntries(ARCHETYPES.map((a) => [a.name, a]));
   assert.equal(byName.Rusher.hpMul, 0.75);
   assert.equal(byName.Rusher.speedMul, 1.4);
@@ -49,7 +61,10 @@ test('archetypeForSlot: deterministic pattern from wave 3', () => {
     for (let s = 0; s < 12; s++) {
       const a = archetypeForSlot(w, s);
       assert.equal(a, archetypeForSlot(w, s));
-      assert.ok(['', 'Rusher', 'Tank'].includes(a));
+      const allowed = w >= SHOOTER_FROM_WAVE
+        ? ['', 'Rusher', 'Tank', 'Shooter']
+        : ['', 'Rusher', 'Tank'];
+      assert.ok(allowed.includes(a));
     }
   }
 });
@@ -110,4 +125,29 @@ test('markArchetypes: resets stale tags when re-marking a revived pool', () => {
   assert.equal(enemies[0].archetype, '');
   assert.equal(enemies[1].archetype, '');
   assert.equal(enemies[2].archetype, 'Rusher');
+});
+
+test('archetypeForSlot: shooters appear from wave 5 at k===3', () => {
+  // waves below SHOOTER_FROM_WAVE never roll shooters even when k===3.
+  assert.equal(archetypeForSlot(3, 0), '');   // k=3 but wave 3
+  assert.equal(archetypeForSlot(4, 4), '');   // k=3 but wave 4
+  // From wave 5: (w+s)%5===3 -> Shooter.
+  let seen = false;
+  for (let w = SHOOTER_FROM_WAVE; w <= 40; w++) {
+    for (let sl = 0; sl < 10; sl++) {
+      if ((w + sl) % 5 === 3) {
+        assert.equal(archetypeForSlot(w, sl), 'Shooter', `w${w} s${sl}`);
+        seen = true;
+      }
+    }
+  }
+  assert.ok(seen, 'selector actually produces shooters');
+});
+
+test('markArchetypes: shooter charges carry hpMul 1.0 (no hp inflation)', () => {
+  const enemies = Array.from({ length: 6 }, () => ({ hp: 4, archetype: '' }));
+  // Force a layout where some slot resolves to Shooter at wave 5.
+  markArchetypes(enemies, 7, { liveCount: 6 }); // (7+1)%5=3 -> slot1 Shooter
+  assert.equal(enemies[1].archetype, 'Shooter');
+  assert.equal(enemies[1].hp, 4, 'shooter hp unchanged');
 });

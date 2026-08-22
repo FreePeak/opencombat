@@ -18,7 +18,9 @@ import { attackFor } from './shared/classes.js';
 // consumes — every Nth wave spawns slot 0 as an ELITE, affix chosen by wave
 // number so offline matches online without coordination.
 import { isEliteWave, affixForWave, applyElite, affixByName } from './shared/sim/elites.js';
-import { archetypeByName, markArchetypes } from './shared/sim/archetypes.js';
+import { archetypeByName, markArchetypes,
+  SHOOTER_PREFERRED_RANGE, SHOOTER_KITE_RANGE, SHOOTER_FIRE_COOLDOWN_MS,
+  SHOOTER_KITE_SPEED_MUL } from './shared/sim/archetypes.js';
 import * as orbDrops from './shared/sim/orbDrops.js';
 // D2 leveling flow lives once in shared/sim (P1.3 slice 1) — same module the
 // server room uses; clock/emit hooks below keep offline behavior identical.
@@ -91,6 +93,7 @@ export class LocalRoom {
     // mirrors GameRoom.streaks so payloads stay byte-equal across modes.
     this.streaks = newStreakState();
     this._orbCharges = new Map(); // orb -> stored kill-XP (PRD-orb-drops.md)
+    this._shooterFireAt = new Map(); // enemy -> ms of next Shooter volley
     this.simCombat = {
       state: this.state,
       half: SERVER.world.size / 2,
@@ -511,8 +514,48 @@ export class LocalRoom {
           const dz = target.z - enemy.z;
           const dist = Math.hypot(dx, dz);
           enemy.rotY = Math.atan2(dx, dz);
+          const archEntry = enemy.archetype ? archetypeByName(enemy.archetype) : null;
           const targetInvuln = target._lastHit && (now - target._lastHit) < SERVER.player.invulnMs;
-          if (dist > SERVER.enemy.contactRange) {
+          if (archEntry?.name === 'Shooter') {
+            // Mirror of GameRoom's shooter branch — identical math, no daily
+            // modifier offline. Fires 'arrow' projectiles the shared loop
+            // resolves against living players (ownerIsPlayer=false).
+            const spdBase = SERVER.enemy.speed *
+              (enemy.elite ? affixByName(enemy.elite)?.speedMul ?? 1 : 1) *
+              archEntry.speedMul;
+            const dxn = dx / dist;
+            const dzn = dz / dist;
+            let moved = false;
+            if (dist > SHOOTER_PREFERRED_RANGE) {
+              enemy.x += dxn * spdBase * dt;
+              enemy.z += dzn * spdBase * dt;
+              moved = true;
+            } else if (dist < SHOOTER_KITE_RANGE) {
+              enemy.x -= dxn * spdBase * SHOOTER_KITE_SPEED_MUL * dt;
+              enemy.z -= dzn * spdBase * SHOOTER_KITE_SPEED_MUL * dt;
+              moved = true;
+            }
+            const half = SERVER.world.size / 2;
+            enemy.x = clamp(enemy.x, -half, half);
+            enemy.z = clamp(enemy.z, -half, half);
+            if (!moved && !animOverride) enemy.anim = 'idle';
+            else if (moved && !animOverride) enemy.anim = 'run';
+            let due = this._shooterFireAt.get(enemy);
+            if (due === undefined) due = now + SHOOTER_FIRE_COOLDOWN_MS;
+            if (now >= due && dist <= SHOOTER_PREFERRED_RANGE + 1) {
+              const proj = new ProjectileState(this._projectileId++, '', 'arrow',
+                enemy.x, enemy.z, dxn, dzn);
+              proj.speed = SERVER.projectile.arrowSpeed;
+              proj.damage = SERVER.enemy.shotDamage;
+              proj.ttl = SERVER.projectile.arrowTtlMs;
+              proj.ownerIsPlayer = false;
+              this.state.projectiles.push(proj);
+              this._enemyAnimUntil.set(enemy, now + SERVER.enemy.attackAnimMs);
+              enemy.anim = 'attack';
+              due = now + SHOOTER_FIRE_COOLDOWN_MS;
+            }
+            this._shooterFireAt.set(enemy, due);
+          } else if (dist > SERVER.enemy.contactRange) {
             // Elite affixes add their speedMul (Swift +60%) — same math as
             // GameRoom's chase (no daily modifier exists offline).
             if (dist > 1e-3) {
@@ -841,6 +884,7 @@ export class LocalRoom {
     });
     resetAll(this.streaks); // fresh match = fresh streaks (PRD-kill-streaks.md)
     orbDrops.clearCharges(this._orbCharges); // fresh match = plain orbs
+    this._shooterFireAt.clear(); // fresh match = synced volleys restart
     this._notifyStateChange();
   }
 

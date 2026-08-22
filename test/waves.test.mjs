@@ -17,7 +17,7 @@ import { SERVER } from '../src/server/config.js';
 import { buildHttpApp } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
 import { waveEnemyCount, waveEnemyHp } from '../src/shared/waves.js';
-import { archetypeForSlot } from '../src/shared/sim/archetypes.js';
+import { archetypeForSlot, SHOOTER_PREFERRED_RANGE } from '../src/shared/sim/archetypes.js';
 import { LocalRoom } from '../src/LocalRoom.js';
 
 const waitMs = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -316,6 +316,35 @@ const drainUpgradeCards = async (sr, ...clients) => {
   }
 }
 
+
+// --- Shooter archetype (PRD-enemy-archetypes.md, Shooter cycle) --------------
+{
+  const host = await newRoom('Shooters');
+  const sr = roomOf(host.r);
+  try {
+    // Direct-drive like elitesIntegration: spawn wave 5 without grinding.
+    sr.spawnWave(5);
+    const shooters = [...sr.state.enemies].filter((e) => e.archetype === 'Shooter');
+    assert.ok(shooters.length >= 1, 'wave 5 fields at least one Shooter');
+
+    // Live fire: park the host inside band range of the first shooter.
+    const me = sr.state.players.get(host.r.sessionId);
+    const sh = shooters.find((e) => e.hp > 0);
+    me.x = sh.x + SHOOTER_PREFERRED_RANGE;
+    me.z = sh.z;
+    const before = sr.state.projectiles.length;
+    await waitFor(
+      () => [...sr.state.projectiles].some((pr) => !pr.ownerIsPlayer),
+      6000, 'shooter fired an enemy-owned arrow');
+    const shot = [...sr.state.projectiles].find((pr) => !pr.ownerIsPlayer);
+    assert.equal(shot.damage, SERVER.enemy.shotDamage, 'shot carries shotDamage');
+    assert.equal(shot.kind, 'arrow', 'client renders it via generic arrow config');
+    assert.ok(sr.state.projectiles.length >= before, 'pooled into state.projectiles');
+  } finally {
+    host.r.leave();
+  }
+}
+
 await gameServer.gracefullyShutdown(false);
 httpServer.closeAllConnections();
 await new Promise((res) => httpServer.close(res));
@@ -437,6 +466,32 @@ resetRateLimit();
   }
 
   room.leave();
+}
+
+// --- LOCAL parity: wave-5 shooter tag + live volley --------------------------
+{
+  const lroom = new LocalRoom();
+  await lroom.join('SoloShooter', 0);
+  lroom._running = false;
+  lroom._countdownTimer = 0;
+  lroom._step(0.05);
+  lroom._spawnWave(5);
+  assert.ok([...lroom.state.enemies].some((e) => e.archetype === 'Shooter'),
+    'LOCAL: wave-5 shooter tag matches the shared selector');
+  const lme = lroom.state.players.get(lroom.sessionId);
+  const lsh = [...lroom.state.enemies].find((e) => e.archetype === 'Shooter' && e.hp > 0);
+  lme.x = lsh.x + SHOOTER_PREFERRED_RANGE;
+  lme.z = lsh.z;
+  let steps = 0;
+  while (![...lroom.state.projectiles].some((pr2) => !pr2.ownerIsPlayer) &&
+         steps++ < 60) {
+    await waitMs(80);
+    lroom._step(0.05);
+  }
+  assert.ok(steps <= 60, 'LOCAL: shooter fired within budget');
+  const lshot = [...lroom.state.projectiles].find((pr2) => !pr2.ownerIsPlayer);
+  assert.equal(lshot.damage, SERVER.enemy.shotDamage, 'LOCAL: same shotDamage');
+  lroom.leave();
 }
 
 console.log('ok — waves.test.mjs: wave spawning/scaling, intermission gate + invulnerability, nextWave click flow, hit-stun freeze, play-again reset, local-sim parity, enemy archetypes');

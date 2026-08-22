@@ -111,6 +111,7 @@ export const SERVER = {
     speed: 4.5,               // chase speed, units/second
     contactRange: 1.3,        // how close before it damages the player
     contactDamage: 10,
+    shotDamage: 8,            // Shooter archetype arrow damage (PRD-enemy-archetypes.md)
     aggroRange: 60,           // chase anything in the arena
     hitStunMs: 450,           // HIT-STUN: a struck enemy stops acting (no
                               // chase, no contact damage) until this expires
