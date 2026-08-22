@@ -114,3 +114,7 @@ deletes forget them.
 - 2.23 combat radar (df77347): consumes synced x/z both rooms publish —
   works online + offline; no career interaction; elite/boss blip styling is
   their backlog. Compose-clean.
+- 2.24 results share card (b20871f): pure shareCard.js composer; daily
+  rows carry streak, weekly carry objectivesDone, victory headline matches
+  the finale banner text. Closes research backlog idea #3's deferred polish.
+  Compose-clean.
