@@ -121,3 +121,7 @@ deletes forget them.
 - Perf gate v2 (3915f65): peer hardened the raw-max assert to p99+250ms
   ceiling after observing a 102ms OS-preemption blip under parallel-suite
   contention; certified this cycle at median 0.35ms / p99 3.38ms. Compose-clean.
+- 2.25 objective HUD (44d4f63): client surfacing of challenge objectives
+  via pure objectivesHud evaluator; mode-gated chip/subtitles — no overlap
+  with career/tier/toast surfaces. Combined gate 230 tests (1 intentional
+  admin-skip), all green. Compose-clean.
