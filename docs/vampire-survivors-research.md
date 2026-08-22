@@ -104,7 +104,7 @@ buy the most engagement per unit of engineering.
 | # | Idea | Impact | Effort | Plug-in points | Status |
 |---|---|---|---|---|---|
 | 1 | Kill-drop XP orbs (burst at corpse, magnet pull) | High | S–M | combatBook kill branch (exists: onEliteKill doubles XP), GameRoom.spawnOrbs pattern, LocalRoom parity | READY (post-2.6) |
-| 2 | Enemy archetypes (Shooter/Rusher/Tank) via deterministic per-wave tags | High | M | shared/sim/archetypes.js (new), chase loops both rooms, StateSchema tag, client tint/scale | PLANNED (this cycle) |
+| 2 | Enemy archetypes (Shooter/Rusher/Tank) via deterministic per-wave tags | High | M | shared/sim/archetypes.js (new), chase loops both rooms, StateSchema tag, client tint/scale | SHIPPED Rusher/Tank (750844e); Shooter deferred by PRD |
 | 3 | Wave-finale run end + results share card | Med | S–M | matchPhases.js win conditions, GameScene banner | backlog |
 | 4 | Persistent waves-mode meta (unlock track) | Med | M | persistence.js + PlayerStore shape from daily finalize | backlog |
 | 5 | Trickle spawns during intermission tail | Low–Med | S | matchPhases/updatePlaying spawner | backlog |
@@ -124,4 +124,4 @@ kill-path code 2.6 just modified.
 - poncle dev interviews/postmortems (Steam blog, GDC-style retrospectives)
 - Steam reviews/community threads for VS + listed competitors (pain points)
 - GitHub survey of OSS survivors-like clones (Godot/Unity/js stacks)
-- Live-web verification pass appended by the R3 scout agent below when complete.
+- Web-scout pass was dispatched for 2026-era competitor freshness; findings pending — mechanics/lessons above are stable reference knowledge (VS 2022-era design is fully documented).
