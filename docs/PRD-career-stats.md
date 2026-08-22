@@ -81,3 +81,12 @@ and the 4103 guard actively PROTECTS persisted career/daily/weekly blobs
 from guest-hijack overwrites of verified-bound names — a direct integrity
 upgrade for this feature's storage layer. Combined tree gate: 116 files ok,
 205/205 tests.
+
+## Post-ship audit note #4 (CYCLE-AT, 2026-08-22)
+
+Admin/GDPR delete (PRD-admin-gdpr.md era) audited against this feature's
+pending-overlay: the delete route calls `cancelPendingSave(name)` BEFORE
+unlink ("durable delete"), closing the exact resurrection race an in-flight
+debounced career save could otherwise cause. Complementary halves of one
+durability guarantee — overlay makes loads see queued writes; cancel makes
+deletes forget them.
