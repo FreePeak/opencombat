@@ -98,6 +98,10 @@ const drainUpgradeCards = async (sr, ...clients) => {
     e.x = 1.8 * Math.cos(ang);
     e.z = 1.8 * Math.sin(ang);
   });
+  // Park roaming orbs far away: random placement can drop one inside the
+  // pickup radius of the player/corpses, contaminating the exact killScore
+  // delta below with +10 orb pickups (P1.4-class nondeterminism).
+  sr.state.orbs.forEach((o) => { o.x = 40; o.z = 40; });
   const scoreBefore = me.score;
   host.r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
   await waitFor(() => sr.state.matchState === 'intermission', 2000, 'intermission after full clear');
