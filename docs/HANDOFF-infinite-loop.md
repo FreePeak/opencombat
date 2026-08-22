@@ -1,6 +1,7 @@
 # HANDOFF: Infinite Product Loop — Session Continuation Guide
 
-Status: LIVING DOCUMENT · Updated 2026-08-22 after ~30 shipped cycles
+Status: LIVING DOCUMENT · Updated 2026-08-22 after ~36 shipped cycles
+(Sessions A/B/C; Q1/Q2 roadmap fully DONE as of cycle 23)
 Purpose: ANY new session (fresh start, watchdog respawn, or peer takeover)
 can resume the infinite product loop from exactly where this left off.
 Read this top-to-bottom before doing anything else.
@@ -111,6 +112,17 @@ Full detail lives in `docs/PROGRESS.md` (rows R3-R40 era) +
 | Offline progression checkpoints (localStorage career + personal-best line) | 5ea1919 |
 | Objective-Based Weeklies (sticky within-week objective merge, /api/weekly objectives) | 58eb11c |
 
+**Session C — 2026-08-22 continuation (rows 2.22–2.25, R43; all pushed + CI green + peer-audited):**
+
+| System | Commit(s) |
+|---|
+| Objective-Based Dailies (cycle-18 mirror of weeklies: dailyObjectives LCG picks, sticky .date merge, /api/daily objectives + leaderboard objectivesDone) | 05a49fe |
+| Combat Radar (pure projectRadar rim-clamp projection, match-mode HUD canvas) | df77347 |
+| Persistence adapter + Postgres driver (PERSISTENCE_DRIVER=postgres preloaded-cache design; sync room reads unchanged; CI postgres service) — LAST roadmap item, Q1/Q2 table now fully DONE | 0149927 |
+| Results Share Card (deterministic mode-aware composer, SHARE button clipboard copy on gameover) | b20871f |
+| R43 stability soak + perf-gate flake fix (raw max -> p99 + pathology ceiling; soak evidence in row) | 3915f65 |
+| Objective HUD (machine-readable {kind,value} targets over the wire, menu goal lines, live in-match [x]/[ ] chip for daily/weekly) | 44d4f63 |
+
 **Session B — PvE content track (rows R3-R40 era):**
 
 | System | Commit(s) |
@@ -135,25 +147,25 @@ objective-based weeklies.
 
 ## 6. In-flight at handoff time
 
-**RESOLVED — nothing in flight.** Objective-Based Weeklies (the last
-mid-flight item) landed as 58eb11c: weeklyObjectives selection (2 distinct
-from a 4-row table), evaluateWeeklyRun, sticky within-week merge wired into
-GameRoom's weekly finalize, /api/weekly exposes `objectives` definitions and
-leaderboard rows carry `objectivesDone`. Targeted verification 18/18 green
-(weeklyObjectives + weekly + elites incl. peer bossMaxHp stamp). Full-suite
-certification on the combined tree was interrupted by concurrent-session
-contention — FIRST ACTION for the next session: `npm run check && npm test`
-and fix anything red before new work.
+**RESOLVED — nothing in flight (updated after Session C, 2026-08-22).**
+The ENTIRE Q1/Q2 roadmap table in docs/PROGRESS.md is DONE, including the
+former last open item 2.2 (Postgres adapter, 0149927 — unblocked via local
+Homebrew Postgres on an ephemeral port + CI service container; docker not
+required). Cycles 18–23 landed clean and peer-audited compose-clean.
 
-Remaining roadmap after this landing:
-- **2.2 Postgres persistence adapter** (PlayerStore interface, needs a live
-  postgres — docker-compose.yml exists; the only unstarted Q2 item)
-- Backlog ideas not yet claimed: touch/mobile polish, minimap/world-mode
-  depth, objective DAILIES (mirror of weeklies), spectate delay/anti-stream-snipe
+Backlog ideas still unclaimed (all diminishing-returns — assess honestly
+before claiming):
+- Spectate delay / anti-stream-snipe (hard: Colyseus delta sync gives
+  spectators full state; a real delay needs server-side snapshot buffering)
+- Touch polish (TouchControls.js is COMPLETE — joystick/buttons/edge-detect,
+  no TODOs; only claim with a concrete reproducible gap)
+- World-mode depth (vague — needs a concrete PRD before it is a cycle)
+- Share-card image rendering (canvas PNG of the cycle-21 text card)
 
 Also verify CI after any landing: `gh run list --limit 3` (repo runs two
-jobs per push: `verify` = node ci → check → test → smoke; `e2e` = real
-Chromium browser flow).
+jobs per push: `verify` = node ci -> check -> test -> smoke, now WITH a
+postgres service container running the driver contract tests;
+`e2e` = real Chromium browser flow).
 
 ## 7. Hard-won pitfalls (DO NOT rediscover these)
 
