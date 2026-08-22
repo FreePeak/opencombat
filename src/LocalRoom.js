@@ -326,7 +326,7 @@ export class LocalRoom {
     if (lboss) {
       const lbossAffix = applyElite(this.state.enemies[0], lboss,
         waveEnemyHp(n));
-      if (lbossAffix) this._emitMessage('eliteSpawn', { name: lbossAffix.name });
+      if (lbossAffix) this._emitMessage('eliteSpawn', { name: lbossAffix.name, boss: true });
     } else if (isEliteWave(n)) {
       const affix = applyElite(this.state.enemies[0], affixForWave(n),
         waveEnemyHp(n));

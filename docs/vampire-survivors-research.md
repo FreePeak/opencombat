@@ -103,9 +103,9 @@ buy the most engagement per unit of engineering.
 
 | # | Idea | Impact | Effort | Plug-in points | Status |
 |---|---|---|---|---|---|
-| 1 | Kill-drop XP orbs (burst at corpse, magnet pull) | High | S–M | combatBook kill branch (exists: onEliteKill doubles XP), GameRoom.spawnOrbs pattern, LocalRoom parity | READY (post-2.6) |
+| 1 | Kill-drop XP orbs (burst at corpse, magnet pull) | High | S–M | combatBook kill branch, orb charge system, magnet power-up | SHIPPED (charged orbs b40264f; magnet 3d42bff) |
 | 2 | Enemy archetypes (Shooter/Rusher/Tank) via deterministic per-wave tags | High | M | shared/sim/archetypes.js (new), chase loops both rooms, StateSchema tag, client tint/scale | SHIPPED all three (750844e Rusher/Tank; Shooter cycle landed with projectileLoop enemy-owned branch) |
-| 3 | Wave-finale run end + results share card | Med | S–M | matchPhases.js win conditions, GameScene banner | backlog |
+| 3 | Wave-finale run end + results share card | Med | S–M | matchPhases win conditions, GameScene banner | SHIPPED core (finale+surge+boss 761d5c8/8268a8a); share card backlog |
 | 4 | Persistent waves-mode meta (unlock track) | Med | M | persistence.js + PlayerStore shape from daily finalize | backlog |
 | 5 | Trickle spawns during intermission tail | Low–Med | S | matchPhases/updatePlaying spawner | backlog |
 | 6 | Magnet power-up (pull all orbs) | Low–Med | S | SERVER.powerUps + pickup loop | backlog |

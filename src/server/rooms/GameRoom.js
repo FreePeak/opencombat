@@ -57,6 +57,10 @@ import { aggregateBonuses,
 // Daily Gauntlet (PRD-daily-gauntlet.md): pure date math from shared/sim —
 // same module the offline client uses, so server + local runs agree.
 import { utcDateStr, dailySeed, dailyModifiers, nextStreak, streakRewardXp } from '../../shared/sim/dailyRun.js';
+// Weekly Gauntlet (PRD-weekly-gauntlet.md): ISO-week-seeded runs that reuse
+// the entire daily pipeline below — only the seed/modifier source and the
+// finalize blob differ (no streak by design; forgiveness is the mechanic).
+import { utcWeekKey, weeklySeed, weeklyModifiers, weeklyRewardXp, mergeWeekly } from '../../shared/sim/weeklyRun.js';
 // Per-player JSON persistence (WorldRoom pattern): load on finalize, save debounced.
 import { loadPlayer, savePlayerDebounced } from '../persistence.js';
 // Presence panel (PRD-presence.md): cross-room live population registry.
@@ -89,6 +93,12 @@ export default class GameRoom extends Room {
   static instances = new Set();
   static stats = { lastTickMs: 0, inputTimes: [] };
 
+  /** Challenge rooms ('daily' | 'weekly') share every gate below: modifiers,
+   *  seeded layouts and run finalization never apply to plain 'waves'. */
+  get isChallenge() {
+    return this.mode === 'daily' || this.mode === 'weekly';
+  }
+
   onCreate(options = {}) {
     GameRoom.instances.add(this);
     // Empty-room cleanup is ours (configurable TTL, documented in README);
@@ -96,11 +106,14 @@ export default class GameRoom extends Room {
     // latecomers and the matchmaker reuse logic stays deterministic.
     this.autoDispose = false;
 
-    // Daily Gauntlet mode gate — everything below stays byte-for-byte
-    // identical for 'waves'. Daily rooms get today's modifiers plus a seeded
-    // LCG that replaces Math.random() inside randomPos() so same-day runs
-    // are reproducible (AC3/PRD section 2). Must be set BEFORE the spawns.
-    this.mode = options.mode === 'daily' ? 'daily' : 'waves';
+    // Challenge-mode gate — everything below stays byte-for-byte identical
+    // for 'waves'. Daily rooms get today's modifiers plus a seeded LCG that
+    // replaces Math.random() inside randomPos() so same-day runs are
+    // reproducible (AC3/PRD section 2). Weekly rooms mirror the whole path
+    // with the ISO week key as seed source and a STACKED modifier row
+    // (PRD-weekly-gauntlet.md). Must be set BEFORE the spawns.
+    this.mode = options.mode === 'weekly' ? 'weekly'
+      : options.mode === 'daily' ? 'daily' : 'waves';
     this.enemySpeedMul = 1;
     if (this.mode === 'daily') {
       const today = utcDateStr();
@@ -109,6 +122,16 @@ export default class GameRoom extends Room {
       this._rng = makeRng(dailySeed(today));
       this.enemySpeedMul = this.dailyMods.enemySpeedMul;
       this.logEvent('daily_room_create', { date: today, label: this.dailyMods.label });
+    } else if (this.mode === 'weekly') {
+      const week = utcWeekKey();
+      this.weeklyWeek = week;
+      // Same field the daily machinery reads everywhere below (spawnWave
+      // sizing/scaling, seeded randomPos) so weekly rides every existing
+      // challenge gate unchanged.
+      this.dailyMods = weeklyModifiers(week);
+      this._rng = makeRng(weeklySeed(week));
+      this.enemySpeedMul = this.dailyMods.enemySpeedMul;
+      this.logEvent('weekly_room_create', { week, label: this.dailyMods.label });
     }
 
     this.setState(new WorldState());
@@ -304,9 +327,9 @@ export default class GameRoom extends Room {
    *  waveEnemyHp(n), spawned away from players; the rest drop dead. Thin
    *  delegate over shared/waves.activateWave (P1.3 slice 4 stretch): the
    *  square sampler + anim/stun-map clears are injected, wave_spawn stays.
-   *  Daily rooms extend the sizing with today's modifiers: enemyCountBonus
-   *  extra slots and every live slot scaled by enemyHpMul (speed rides a
-   *  room-level multiplier applied in updatePlaying). */
+   *  Challenge rooms (daily/weekly) extend the sizing with their modifiers:
+   *  enemyCountBonus extra slots and every live slot scaled by enemyHpMul
+   *  (speed rides a room-level multiplier applied in updatePlaying). */
   spawnWave(n) {
     const { count, hp } = activateWave(
       this.state.enemies, n, this.state.players, () => this.randomPos(),
@@ -319,7 +342,7 @@ export default class GameRoom extends Room {
       });
     let spawned = count;
     let effHp = hp;
-    if (this.mode === 'daily') {
+    if (this.isChallenge) {
       const mods = this.dailyMods;
       effHp = Math.max(1, Math.round(hp * mods.enemyHpMul));
       spawned = Math.min(count + Math.max(0, Math.floor(mods.enemyCountBonus)),
@@ -364,7 +387,7 @@ export default class GameRoom extends Room {
     if (bossName) {
       const boss = applyElite(this.state.enemies[0], bossName, effHp);
       if (boss) {
-        this.broadcast('eliteSpawn', { name: boss.name });
+        this.broadcast('eliteSpawn', { name: boss.name, boss: true });
         this.logEvent('elite_spawn', { wave: n, name: boss.name, boss: true });
       }
     } else if (isEliteWave(n)) {
@@ -455,7 +478,7 @@ export default class GameRoom extends Room {
 
     // Presence panel (PRD-presence.md): one registry row per connected player.
     registerPresence(client.sessionId,
-      { name: player.name, mode: this.mode === 'daily' ? 'daily' : 'waves', roomId: this.roomId });
+      { name: player.name, mode: this.isChallenge ? this.mode : 'waves', roomId: this.roomId });
 
     // Match start (documented choice): the countdown begins as soon as the
     // minPlayers threshold is met — default 1, i.e. the first player.
@@ -515,11 +538,12 @@ export default class GameRoom extends Room {
   }
 
   /** Uniform random position inside the arena, away from the walls.
-   *  Daily rooms sample from the date-seeded LCG instead of Math.random()
-   *  so layouts are reproducible for everyone playing that UTC day. */
+   *  Challenge rooms (daily/weekly) sample from their period-seeded LCG
+   *  instead of Math.random() so layouts are reproducible for everyone
+   *  playing that day/week. */
   randomPos() {
     const m = this.half - 1.5;
-    const rand = this.mode === 'daily' ? this._rng : Math.random;
+    const rand = this.isChallenge ? this._rng : Math.random;
     return { x: -m + rand() * m * 2, z: -m + rand() * m * 2 };
   }
 
@@ -617,7 +641,10 @@ export default class GameRoom extends Room {
    * one row per player.
    */
   finalizeDailyRun() {
-    if (this.mode !== 'daily' || this.state.matchState === 'gameover') return;
+    if (!this.isChallenge || this.state.matchState === 'gameover') return;
+    // Weekly runs mirror this whole flow with a different persistence blob —
+    // dispatched here so the daily body below stays byte-for-byte identical.
+    if (this.mode === 'weekly') { this.finalizeWeeklyRun(); return; }
     let topSid = null;
     let best = -1;
     for (const [sid, p] of this.state.players) {
@@ -660,6 +687,56 @@ export default class GameRoom extends Room {
     }
     this.broadcast('dailyResult', { results });
     this.logEvent('daily_finalize', { date: today, players: results.length });
+  }
+
+  /**
+   * Weekly Gauntlet finalize (weekly rooms only, via finalizeDailyRun):
+   * mirrors the daily flow — endMatch picks the top score among the fallen,
+   * then each player's persisted weekly record merges through mergeWeekly
+   * ({ week, bestScore, lastPlayed }; deliberately NO streak — forgiveness
+   * is the mechanic) and XP pays out through the flat weeklyRewardXp ladder
+   * into the live level/xp like the daily streak reward. Broadcasts the SAME
+   * 'dailyResult' event name so clients reuse the banner path, tagged with
+   * kind:'weekly'.
+   */
+  finalizeWeeklyRun() {
+    let topSid = null;
+    let best = -1;
+    for (const [sid, p] of this.state.players) {
+      if (p.score > best) { best = p.score; topSid = sid; }
+    }
+    this.endMatch(topSid);
+
+    const week = utcWeekKey();
+    const results = [];
+    for (const [sid, player] of this.state.players) {
+      const saved = loadPlayer(player.name);
+      // Same-week keeps the max bestScore; a new week starts fresh.
+      const merged = mergeWeekly(saved?.weekly ?? null, week, player.score);
+      // Reward keys off the MERGED record: a re-run that didn't beat this
+      // week's best still pays the ladder tier of that best score.
+      const rewardXp = weeklyRewardXp(merged.bestScore);
+      // Grant into the LIVE player (Scholar-aware, may roll level-ups),
+      // then persist live level/xp over the saved record like WorldRoom.
+      leveling.grantXp(this.simLeveling, sid, rewardXp);
+      savePlayerDebounced(player.name, {
+        ...(saved ?? {}),
+        name: player.name,
+        character: player.character,
+        level: player.level,
+        xp: player.xp,
+        score: player.score,
+        upgrades: Object.fromEntries(player.upgrades.entries()),
+        pendingChoices: [...player.pendingChoices],
+        weekly: merged,
+      });
+      results.push({
+        sid, name: player.name, score: player.score,
+        bestScore: merged.bestScore, rewardXp,
+      });
+    }
+    this.broadcast('dailyResult', { results, kind: 'weekly' });
+    this.logEvent('weekly_finalize', { week, players: results.length });
   }
 
   /** Reset the match in place (play again / auto-restart), keep room + players.
@@ -1342,12 +1419,12 @@ export default class GameRoom extends Room {
       }
     }
 
-    // --- DAILY GAUNTLET run-end (daily rooms only) -----------------------
+    // --- CHALLENGE RUN END (daily/weekly rooms only) ---------------------
     // Every connected player dead SIMULTANEOUSLY -> the run is over: end the
     // match through the normal endMatch path, then finalize each player's
-    // persisted daily record. Checked before the wave-clear gate so a
+    // persisted daily/weekly record. Checked before the wave-clear gate so a
     // simultaneous wipe is never mistaken for an intermission.
-    if (this.mode === 'daily' && state.players.size > 0 &&
+    if (this.isChallenge && state.players.size > 0 &&
         [...state.players.values()].every((p) => p.hp <= 0)) {
       this.finalizeDailyRun();
       return;

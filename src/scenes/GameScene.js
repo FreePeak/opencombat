@@ -1769,11 +1769,17 @@ export default class GameScene {
   showEliteToast(payload) {
     const el = this.eliteToastEl;
     if (!el) return;
-    el.innerHTML =
-      `<span class="elite-title">⚠ ELITE</span> — ${esc(payload?.name ?? 'UNKNOWN')}`;
+    const isBoss = !!payload?.boss;
+    el.innerHTML = isBoss
+      ? `<span class="elite-title">☠ BOSS</span> — ${esc(payload?.name ?? 'UNKNOWN')} — SURVIVE THE SURGE`
+      : `<span class="elite-title">⚠ ELITE</span> — ${esc(payload?.name ?? 'UNKNOWN')}`;
+    el.style.borderColor = isBoss ? '#ff5252' : '';
     el.classList.add('visible');
     clearTimeout(this._eliteToastTimer);
-    this._eliteToastTimer = setTimeout(() => el.classList.remove('visible'), 4000);
+    this._eliteToastTimer = setTimeout(() => {
+      el.classList.remove('visible');
+      el.style.borderColor = '';
+    }, isBoss ? 6000 : 4000);
   }
 
   hideEliteToast() {
