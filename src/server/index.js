@@ -37,6 +37,9 @@ gameServer.define('game', GameRoom);
 // Daily Gauntlet: same class, dedicated room name — daily runs never share
 // rooms with waves players (mode comes from the create options).
 gameServer.define('daily', GameRoom);
+// Weekly Gauntlet: same class again — ISO-week-seeded stacked-modifier runs
+// (PRD-weekly-gauntlet.md) isolated from daily/waves rooms the same way.
+gameServer.define('weekly', GameRoom);
 gameServer.define('arena', ArenaRoom);
 gameServer.define('lobby', LobbyRoom);
 gameServer.define('world', WorldRoom);

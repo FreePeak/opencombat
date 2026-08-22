@@ -21,11 +21,17 @@ import { createLiveReload } from './liveReload.js';
 // Daily Gauntlet public API: date/seed/modifier math from the shared module,
 // streak reward table derived from the same source of truth.
 import { utcDateStr, dailySeed, dailyModifiers, streakRewardXp } from '../shared/sim/dailyRun.js';
+// Weekly Gauntlet public API: same shape as /api/daily, keyed by ISO week.
+import { utcWeekKey, weeklySeed, weeklyModifiers } from '../shared/sim/weeklyRun.js';
 // Presence panel (PRD-presence.md): merged view of the live population registry.
 import { listPresence, presenceCount } from './presence.js';
 
 // XP rewarded per consecutive-day streak length (day 1..7, capped).
 const DAILY_REWARDS = [1, 2, 3, 4, 5, 6, 7].map(streakRewardXp);
+
+// Weekly XP ladder tiers (weeklyRewardXp pays (tier+1)*150 for score
+// thresholds 0/500/1500/3000/5000 — tiers 1..5 below mirror that ladder).
+const WEEKLY_REWARDS = [1, 2, 3, 4, 5].map((tier) => tier * 150);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../..');
@@ -90,7 +96,7 @@ const listRooms = () => {
       const players = room.state.players.size;
       return {
         roomId: room.roomId,
-        mode: room.mode === 'daily' ? 'daily' : 'waves',
+        mode: room.mode === 'daily' || room.mode === 'weekly' ? room.mode : 'waves',
         players,
         phase: ['countdown', 'playing', 'intermission', 'gameover'].includes(ms) ? ms : 'lobby',
         canJoin: (ms === 'playing' || ms === 'intermission') && players < 8,
@@ -283,6 +289,46 @@ export function buildHttpApp(app) {
         enemyCountBonus: mods.enemyCountBonus,
       },
       rewards: DAILY_REWARDS,
+      leaderboard: leaderboard.slice(0, 10),
+    });
+  });
+
+  // --- Weekly Gauntlet (PRD-weekly-gauntlet.md): mirror of /api/daily keyed
+  // by ISO week — stacked modifiers, flat reward ladder and the week's
+  // leaderboard, scanned synchronously from the per-player JSON files.
+  // Registered BEFORE the catch-all below.
+  app.get('/api/weekly', (_req, res) => {
+    const week = utcWeekKey();
+    const mods = weeklyModifiers(week);
+    const leaderboard = [];
+    const dir = path.resolve(root, SERVER.persistence?.dir || 'data/players');
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch {} // no data dir yet -> empty board
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        // Tolerate malformed/partial files: skip them, never fail the API.
+        const rec = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+        if (rec?.weekly?.week === week) {
+          leaderboard.push({
+            name: rec.name ?? file.replace(/\.json$/, ''),
+            score: rec.weekly.bestScore,
+          });
+        }
+      } catch {}
+    }
+    leaderboard.sort((a, b) => b.score - a.score);
+    res.json({
+      week,
+      seed: weeklySeed(week),
+      modifiers: {
+        label: mods.label,
+        description: mods.description,
+        enemyHpMul: mods.enemyHpMul,
+        enemySpeedMul: mods.enemySpeedMul,
+        enemyCountBonus: mods.enemyCountBonus,
+      },
+      rewards: WEEKLY_REWARDS,
       leaderboard: leaderboard.slice(0, 10),
     });
   });

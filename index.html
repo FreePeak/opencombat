@@ -177,8 +177,8 @@
     #login button:hover { filter: brightness(1.08); }
     #login button:active { transform: translateY(1px); }
     #login-error { color: var(--danger); font-size: 13px; margin-top: 12px; display: none; }
-    /* Daily Gauntlet: today's modifier line under the mode cards */
-    #mode-daily-sub { margin-top: 6px; min-height: 14px; text-align: center;
+    /* Gauntlet cards: modifier line under the mode cards */
+    #mode-daily-sub, #mode-weekly-sub { margin-top: 6px; min-height: 14px; text-align: center;
       font: 11px var(--mono); color: var(--muted); letter-spacing: .04em; }
 
     /* ============ daily gauntlet result banner ============ */
@@ -313,6 +313,7 @@
       <div id="char-picker"></div>
       <div id="mode-picker"></div>
       <div id="mode-daily-sub"></div>
+      <div id="mode-weekly-sub"></div>
       <br/>
       <button id="login-btn">JOIN</button>
       <div id="login-error"></div>

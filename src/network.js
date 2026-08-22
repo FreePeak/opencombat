@@ -54,15 +54,16 @@ export function serverAvailable(timeoutMs = 3000) {
 }
 
 /** Connect and join (or create) the arena room, carrying the chosen name.
- *  mode 'daily' targets the seeded Daily Gauntlet room ('daily'); every
- *  other value keeps the classic arena room ('game'). */
+ *  mode 'daily' targets the seeded Daily Gauntlet room ('daily'), 'weekly'
+ *  the Weekly Gauntlet room ('weekly'); every other value keeps the classic
+ *  arena room ('game'). */
 export async function joinGame(name, character, mode = 'waves') {
   // rootSchema lets the client decode the binary state patches; without it
   // room.state stays undefined (schema-based serialization). The name, the
   // chosen character index and the mode ride the join options to the server,
   // which sanitizes them into PlayerState / match setup.
   return currentClient().joinOrCreate(
-    mode === 'daily' ? 'daily' : 'game',
+    mode === 'daily' ? 'daily' : mode === 'weekly' ? 'weekly' : 'game',
     { name, character, mode }, WorldState);
 }
 
