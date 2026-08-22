@@ -99,3 +99,6 @@ deletes forget them.
   PlayerState seat — first branch in onJoin), so endMatch's career loop
   cannot see them; peer's own test pins 'only the real player finalized'.
   Compose-clean with explicit coverage.
+- Cycle-17 objective-based weeklies (9d5b417, docs): run.wave predicate
+  composes with the finale arc (a wave-12 victory satisfies wave_10); R15's
+  finalize-first victory ordering covers weekly mode via dispatch.
