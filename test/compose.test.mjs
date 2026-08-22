@@ -61,6 +61,13 @@ const roomOf = (r) => [...GameRoom.instances].find((x) => x.roomId === r.roomId)
     assert.equal(charged.x, shooter.x);
     assert.equal(charged.z, shooter.z);
 
+    // Park every UNCHARGED roaming orb out of range: random placement can
+    // drop one inside pickup radius of the holder/convergence path, which
+    // would add stray +10 base payouts to the exact deltas below.
+    sr.state.orbs.forEach((o) => {
+      if (!sr.orbCharges.has(o)) { o.x = 40; o.z = 40; }
+    });
+
     // Link 2: magnet holder closes to within pull range, then converges
     // WITHOUT further walking (pull radius 8 < spawn-away distance 12).
     me.x = charged.x + 5;
@@ -84,7 +91,11 @@ const roomOf = (r) => [...GameRoom.instances].find((x) => x.roomId === r.roomId)
     const bossCharge = [...sr.orbCharges.values()][0];
     assert.equal(bossCharge, (SERVER.progression?.xpPerKill ?? 30) * 2,
       'elite kill charges DOUBLE into its corpse orb');
-    // Re-arm beside the elite corpse (spawns >=12u away) and sweep its drop.
+    // Re-arm beside the elite corpse (spawns >=12u away) and sweep its drop;
+    // park any newly-teleported uncharged orbs first (same noise guard).
+    sr.state.orbs.forEach((o) => {
+      if (!sr.orbCharges.has(o)) { o.x = 40; o.z = 40; }
+    });
     const [eliteOrb] = [...sr.orbCharges.keys()];
     me.x = eliteOrb.x + 3;
     me.z = eliteOrb.z;
