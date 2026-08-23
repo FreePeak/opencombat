@@ -165,3 +165,7 @@ deletes forget them.
 - FR-HUD-05 (331587a): display-only fix reusing the already-shared
   effectiveMaxHp — no sim/schema surface touched. Gate 264 pass / 0 fail.
   Compose-clean.
+- Block-guard arrow flake (31d05c1): test-harness isolation fix only.
+  Third CI contention flake this session given a red-proof + deterministic
+  harness fix (postgres contract and daily victory were the others).
+  Gate 264 pass / 0 fail. Compose-clean.
