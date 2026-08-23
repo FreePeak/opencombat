@@ -131,3 +131,6 @@ deletes forget them.
   pure in shareCard.js; GameScene renderer is draw-only over layout fields,
   no overlap with objectives chip or career surfaces. Combined gate 235 pass
   / 0 fail, smoke 8/8. Compose-clean.
+- FR-HUD-01 xp bar (eb5dde9): pure xpProgress beside xpForLevel; bar is a
+  client-only projection of synced {level,xp} — no sim/schema surface touched.
+  Combined gate 239 pass / 0 fail, smoke 8/8. Compose-clean.
