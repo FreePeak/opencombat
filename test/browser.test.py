@@ -353,8 +353,13 @@ def assert_hud_feedback(page, label):
         f"[{label}] wave chip label never driven (static placeholder?): {probe}"
     assert probe["waveW"] is not None and probe["waveW"].endswith("%"), \
         f"[{label}] wave chip fill never driven: {probe}"
-    assert probe["dangerOp"] == "0", \
-        f"[{label}] danger overlay must be transparent at full hp: {probe}"
+    # Danger vignette must stay transparent while hp is comfortably high.
+    # Race-proofed (CI 32655438130): the walk-to-combat phase can land hits
+    # before this probe, so only pin transparency above half class-max hp
+    # (knight base 150) — below that the vignette is CORRECTLY visible.
+    if probe["hp"] is not None and probe["hp"] > 80:
+        assert float(probe["dangerOp"] or 0) < 0.01, \
+            f"[{label}] danger overlay must be transparent at high hp: {probe}"
     assert probe["settingsPresent"], f"[{label}] fx settings strip missing"
     assert probe["vol"] is not None, f"[{label}] volume slider missing: {probe}"
 
