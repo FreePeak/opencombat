@@ -252,3 +252,14 @@ standing "you are dying" signal.
   opacity per frame = intensity * sine pulse. Client-only.
 AC pinned by test/lowHpFx.test.mjs (boundary at 30%, linear midpoint, clamp,
 dead/degenerate). Full gate green.
+
+## FR-HUD-03: wave-progress chip (cycle 26d)
+Run-arc legibility: the finale victory arc (R6/R7) was invisible mid-run —
+clients saw only "wave N" with no sense of distance to the Warlord.
+- `waveChip(wave, finaleWave)` pure in shared/waves.js -> {label, pct,
+  isFinale}; endless (finaleWave<=0) renders "WAVE N" with pct 0 and never
+  flags finale; beyond-finale clamps pct at 1.
+- #wave-chip under the xp bar (label + 3px track); red styling when
+  isFinale. Reads SERVER.wave.finaleWave directly — same static config both
+  rooms use, so online/offline agree by construction. No schema change.
+AC pinned by test/waveChip.test.mjs. Full gate green.

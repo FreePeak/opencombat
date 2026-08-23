@@ -46,6 +46,12 @@
     #xp-bar { width: 230px; height: 5px; margin-top: 4px; border-radius: 999px;
       background: rgba(255,255,255,0.07); overflow: hidden; }
     #xp-fill { height: 100%; width: 0%; background: #a78bfa; transition: width .15s ease-out; }
+    /* Wave-progress chip (FR-HUD-03): run-arc legibility toward the finale. */
+    #wave-chip { width: 230px; margin-top: 6px; font: 11px/1.4 monospace; color: var(--dim, #8a93a6); letter-spacing: .08em; }
+    #wave-chip .track { height: 3px; border-radius: 999px; background: rgba(255,255,255,0.07); overflow: hidden; margin-top: 2px; }
+    #wave-chip .fill { height: 100%; width: 0%; background: var(--accent); transition: width .3s ease-out; }
+    #wave-chip.finale { color: var(--danger); }
+    #wave-chip.finale .fill { background: var(--danger); }
     #cooldown-bar { width: 230px; height: 5px; margin-top: 6px; border-radius: 999px;
       background: rgba(255,255,255,0.07); overflow: hidden; }
     #cooldown-fill { height: 100%; width: 0%; background: var(--gold); transition: width .1s linear; }
@@ -319,6 +325,7 @@
     <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
     <div id="skill-cooldown-bar"><div id="skill-cooldown-fill"></div></div>
     <div id="xp-bar"><div id="xp-fill"></div></div>
+    <div id="wave-chip"><span id="wave-label">WAVE</span><div class="track"><div class="fill" id="wave-fill"></div></div></div>
     <div id="hud-text">connecting…</div>
   </div>
   <div id="leaderboard"></div>

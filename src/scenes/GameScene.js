@@ -22,7 +22,7 @@ import FloatingTextPool from '../effects/FloatingTextPool.js';
 import SkillFx from '../effects/SkillFx.js';
 import { resolveChainTargets, BASH_RANGE } from '../shared/skills.js';
 import { MILESTONES } from '../shared/sim/streaks.js';
-import { waveEnemyHp } from '../shared/waves.js';
+import { waveEnemyHp, waveChip } from '../shared/waves.js';
 import { achievementById, evaluateAchievements } from '../shared/sim/achievements.js';
 import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
@@ -174,6 +174,9 @@ export default class GameScene {
     // HUD handles (index.html).
     this.hudFill = document.getElementById('hp-fill');
     this.xpFill = document.getElementById('xp-fill'); // FR-HUD-01 xp bar
+    this.waveChipEl = document.getElementById('wave-chip'); // FR-HUD-03 run arc
+    this.waveLabel = document.getElementById('wave-label');
+    this.waveFill = document.getElementById('wave-fill');
     this.hudText = document.getElementById('hud-text');
     this.cooldownFill = document.getElementById('cooldown-fill');
     this.skillCooldownFill = document.getElementById('skill-cooldown-fill');
@@ -2105,6 +2108,12 @@ export default class GameScene {
     if (this.xpFill) {
       const p = xpProgress(me.level, me.xp);
       this.xpFill.style.width = `${Math.round(p.pct * 100)}%`;
+    }
+    if (this.waveChipEl && this.waveLabel && this.waveFill) {
+      const c = waveChip(state.wave, SERVER.wave.finaleWave);
+      this.waveLabel.textContent = c.label;
+      this.waveFill.style.width = `${Math.round(c.pct * 100)}%`;
+      this.waveChipEl.classList.toggle('finale', c.isFinale);
     }
     this.hudText.textContent =
       `Lv ${me.level} (${me.xp} XP)  wave ${state.wave}  score ${me.score}  players ${state.players.size}  target ${CONFIG.match.targetScore}` +

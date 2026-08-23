@@ -86,3 +86,21 @@ export function activateWave(enemies, n, players, samplePos, onSlotReset) {
   });
   return { count, hp };
 }
+
+// --- Wave-progress chip (FR-HUD-03) -----------------------------------------
+/**
+ * Pure run-arc evaluator for the HUD chip: how far the current wave sits on
+ * the path to the finale. `finaleWave <= 0` means endless — no fraction.
+ * @returns {{label, pct, isFinale}} pct in 0..1 (0 when endless)
+ */
+export function waveChip(wave, finaleWave) {
+  const w = Math.max(1, Math.floor(wave ?? 1));
+  const f = Math.floor(finaleWave ?? 0);
+  if (f <= 0) return { label: `WAVE ${w}`, pct: 0, isFinale: false };
+  const clamped = Math.min(w, f);
+  return {
+    label: `WAVE ${w}/${f}`,
+    pct: clamped / f,
+    isFinale: w === f,
+  };
+}
