@@ -12,7 +12,7 @@ import http from 'node:http';
 import { Server, WebSocketTransport } from 'colyseus';
 import { Client } from '@colyseus/sdk';
 import GameRoom from '../src/server/rooms/GameRoom.js';
-import { WorldState } from '../src/server/schema/StateSchema.js';
+import { WorldState, ProjectileState } from '../src/server/schema/StateSchema.js';
 import { SERVER } from '../src/server/config.js';
 import { buildHttpApp } from '../src/server/http.js';
 import { resetRateLimit } from '../src/server/ratelimit.js';
@@ -362,18 +362,33 @@ const drainUpgradeCards = async (sr, ...clients) => {
     sr.state.enemies.forEach((e) => {
       if (e !== sh) { e.x = 40; e.z = 40; sr.enemyStunUntil.set(e, Date.now() + 15000); }
     });
-    // Flake proof (CI 32654162989): the live-fire phase above leaves an arrow
-    // mid-flight; landing it BEFORE blocking engages costs hp and failed the
-    // zero-loss assert. Clear in-flight enemy shots so only post-arm volleys
-    // reach the guard.
+    // DETERMINISTIC GUARD (CI red proofs 32655438130 + 32655718169): the live
+    // shooter strafes to hold its band and drifts off the guard's facing axis
+    // under runner load, piercing the arc after the first blocked hit. Freeze
+    // the shooter too (stun gates move+fire), clear in-flight shots from the
+    // live-fire phase, and hand-drive ONE arrow down the exact facing line.
+    sr.enemyStunUntil.set(sh, Date.now() + 15000);
     for (let i = sr.state.projectiles.length - 1; i >= 0; i--) {
       if (!sr.state.projectiles[i].ownerIsPlayer) sr.state.projectiles.splice(i, 1);
     }
+    // The unguarded live-fire soak above can land a hit just before arming;
+    // its invuln window swallows the hand-driven arrow SILENTLY (no blocked
+    // msg, no hp change -> guaranteed timeout). Clear it — same lesson for
+    // stray shields (arena.test CI red proof).
+    sr.invulnUntil.set(host.r.sessionId, 0);
+    me.effects.delete('shield');
     me.rotY = Math.atan2(sh.x - me.x, sh.z - me.z); // face the shooter
     me.blocking = true;
     const hpAtBlock = me.hp;
-    // Soak until a volley demonstrably reaches the guard (impact -> blocked
-    // feedback) — volleys are periodic, so poll rather than sample.
+    const dist2me = Math.hypot(me.x - sh.x, me.z - sh.z);
+    const proj = new ProjectileState(sr._projectileId++, '', 'arrow',
+      sh.x, sh.z, (me.x - sh.x) / dist2me, (me.z - sh.z) / dist2me);
+    proj.speed = SERVER.projectile.arrowSpeed;
+    proj.damage = SERVER.enemy.shotDamage;
+    proj.ttl = SERVER.projectile.arrowTtlMs;
+    proj.ownerIsPlayer = false;
+    sr.state.projectiles.push(proj);
+    // Soak until THE arrow reaches the guard — nothing else can fire or move.
     await waitFor(() => blockedMsgs > 0, 6000,
       'shooter arrow reached the guard (blocked fired)');
     assert.equal(me.hp, hpAtBlock,
