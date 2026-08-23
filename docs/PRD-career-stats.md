@@ -162,3 +162,6 @@ deletes forget them.
 - FR-HUD-04 damage wedge (39f9fd4): evaluator pure; emission rides the
   existing targeted-send pattern (no schema change); rendering client-only.
   Gate 264 pass / 0 fail, smoke 8/8. Compose-clean.
+- FR-HUD-05 (331587a): display-only fix reusing the already-shared
+  effectiveMaxHp — no sim/schema surface touched. Gate 264 pass / 0 fail.
+  Compose-clean.
