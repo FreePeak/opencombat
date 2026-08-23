@@ -169,3 +169,5 @@ deletes forget them.
   Third CI contention flake this session given a red-proof + deterministic
   harness fix (postgres contract and daily victory were the others).
   Gate 264 pass / 0 fail. Compose-clean.
+- Block-guard rewrite (6d9fa12): supersedes 31d05c1's partial splice fix;
+  test-harness only. Gate 264 pass / 0 fail. Compose-clean.
