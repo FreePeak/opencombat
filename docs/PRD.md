@@ -240,3 +240,15 @@ Solution:
 Out of scope: server changes, reward animations.
 AC1 pct math pinned by node tests (exact values at known thresholds,
 clamping, monotonic). AC2 full gate green.
+
+## FR-HUD-02: low-HP danger vignette (cycle 26c)
+Genre-standard persistent danger cue: while the local player is critically
+hurt, an edge-only radial vignette pulses; the hit #flash alone gave no
+standing "you are dying" signal.
+- `lowHpFx(hp, maxHp)` pure in src/shared/sim/lowHpFx.js -> {on, intensity}:
+  arms AT 30% hp (intensity 0), ramps linearly to 1 at 5%, clamped; dead or
+  degenerate inputs return off — no divide-by-zero.
+- index.html #danger edge-only radial (z 11, below hit flash); GameScene sets
+  opacity per frame = intensity * sine pulse. Client-only.
+AC pinned by test/lowHpFx.test.mjs (boundary at 30%, linear midpoint, clamp,
+dead/degenerate). Full gate green.

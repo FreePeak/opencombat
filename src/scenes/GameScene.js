@@ -36,6 +36,7 @@ import { Minimap } from '../ui/Minimap.js';
 import { CombatRadar } from '../ui/CombatRadar.js';
 import { buildShareCard, shareText, layoutShareCard, chooseShareMode } from '../shared/sim/shareCard.js';
 import { objectiveProgress } from '../shared/sim/objectivesHud.js';
+import { lowHpFx } from '../shared/sim/lowHpFx.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -178,6 +179,7 @@ export default class GameScene {
     this.skillCooldownFill = document.getElementById('skill-cooldown-fill');
     this.countdownEl = document.getElementById('countdown');
     this.flashEl = document.getElementById('flash');
+    this.dangerEl = document.getElementById('danger'); // FR-HUD-02 low-hp vignette
     this.leaderboardEl = document.getElementById('leaderboard');
     this.overlay = document.getElementById('gameover');
     this.overlayTitle = document.getElementById('gameover-title');
@@ -1994,6 +1996,13 @@ export default class GameScene {
     this.lastHp = me.hp;
     this.flashT = Math.max(0, this.flashT - dt);
     this.flashEl.style.opacity = this.flashT > 0 ? (this.flashT / 0.3) * 0.35 : '0';
+    // Persistent low-HP danger vignette (FR-HUD-02): intensity from the pure
+    // evaluator; pulse via a cheap sine so it reads as alive without a timer.
+    if (this.dangerEl) {
+      const fx = lowHpFx(me.hp, me.maxHp ?? CONFIG.player.maxHp);
+      const pulse = fx.on ? 0.75 + 0.25 * Math.sin(performance.now() / 180) : 0;
+      this.dangerEl.style.opacity = String(fx.intensity * pulse);
+    }
 
     // --- Pickup detection for sounds -------------------------------------
     if (me.score > this.lastScore) {

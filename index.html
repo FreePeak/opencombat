@@ -129,6 +129,10 @@
       pointer-events: none; color: var(--text); font-family: var(--font); font-size: 128px; font-weight: 800;
       text-shadow: 0 6px 30px rgba(0,0,0,.8), 0 0 60px rgba(52, 211, 153, 0.25); }
     #flash { position: fixed; inset: 0; z-index: 12; background: var(--danger); opacity: 0; pointer-events: none; }
+    /* Low-HP danger vignette (FR-HUD-02): edge-only radial so the playfield
+       stays readable; opacity driven per-frame from shared/sim/lowHpFx. */
+    #danger { position: fixed; inset: 0; z-index: 11; opacity: 0; pointer-events: none;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(248,113,113,0.5) 100%); }
 
     /* ============ overlays ============ */
     #gameover, #reconnect, #upgrade-overlay, #shop-overlay, #login {
@@ -335,6 +339,7 @@
   <div id="achievement-toast"></div>
   <div id="countdown"></div>
   <div id="flash"></div>
+  <div id="danger"></div>
 
   <div id="gameover">
     <div class="card"><div id="gameover-title">GAME OVER</div><div class="sub" id="gameover-sub">click to respawn</div></div>
