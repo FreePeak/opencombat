@@ -137,3 +137,6 @@ deletes forget them.
 - FR-HUD-02 danger vignette (b85d26b): lowHpFx pure module, overlay is a
   client-only projection — zero sim/schema overlap. Gate 243 pass / 0 fail,
   smoke 8/8. Compose-clean.
+- FR-HUD-03 wave chip (a570ba1): pure waveChip in shared/waves.js; chip is a
+  static-config projection — no schema/room surface touched. Gate 247 pass /
+  0 fail, smoke 8/8. Compose-clean.
