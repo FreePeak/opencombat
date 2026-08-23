@@ -324,6 +324,30 @@ def hold_w_and_measure(page, seconds=1.5):
     return tags_before != tags_after, tags_before, tags_after
 
 
+def assert_hud_feedback(page, label):
+    """FR-HUD-01/02/03 + FR-UX-01: the four feedback surfaces exist and are
+    driven by GameScene (not just present in the DOM)."""
+    probe = page.evaluate("""() => ({
+        xpW: document.getElementById('xp-fill')?.style.width ?? null,
+        waveLabel: document.getElementById('wave-label')?.textContent ?? null,
+        waveW: document.getElementById('wave-fill')?.style.width ?? null,
+        dangerOp: document.getElementById('danger')?.style.opacity ?? null,
+        settingsPresent: !!document.getElementById('fx-settings'),
+        vol: document.querySelector('#fx-settings input[type=range]')?.value ?? null,
+    })""")
+    import re as _re
+    assert probe["xpW"] is not None and probe["xpW"].endswith("%"), \
+        f"[{label}] xp bar fill never driven: {probe}"
+    assert probe["waveLabel"] and _re.match(r"^WAVE \d", probe["waveLabel"]), \
+        f"[{label}] wave chip label never driven (static placeholder?): {probe}"
+    assert probe["waveW"] is not None and probe["waveW"].endswith("%"), \
+        f"[{label}] wave chip fill never driven: {probe}"
+    assert probe["dangerOp"] == "0", \
+        f"[{label}] danger overlay must be transparent at full hp: {probe}"
+    assert probe["settingsPresent"], f"[{label}] fx settings strip missing"
+    assert probe["vol"] is not None, f"[{label}] volume slider missing: {probe}"
+
+
 def flow_waves(browser):
     """Original smoke: default waves mode joins the 'game' room and plays."""
     errors, console = [], []
@@ -353,6 +377,7 @@ def flow_waves(browser):
     assert_ground(page, "waves")
     assert_pickups(page, "waves")
     assert_bloom(page, "waves")
+    assert_hud_feedback(page, "waves")
 
     page.close()
     bones_ok = bool(bones) and bones["total"] > 0 and bones["inClone"] == bones["total"]
