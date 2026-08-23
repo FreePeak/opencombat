@@ -263,3 +263,16 @@ clients saw only "wave N" with no sense of distance to the Warlord.
   isFinale. Reads SERVER.wave.finaleWave directly — same static config both
   rooms use, so online/offline agree by construction. No schema change.
 AC pinned by test/waveChip.test.mjs. Full gate green.
+
+## FR-UX-01: settings strip — volume + reduced FX (cycle 26e)
+M-mute was the only audio control and screen shake/particles were
+non-negotiable; accessibility and weak-device players had no lever.
+- `resolveFxSettings`/`loadFxSettings`/`saveFxSettings` pure in
+  shared/sim/fxSettings.js with injected storage (no localStorage in tests):
+  absent volume -> default 1, present junk -> 0, corrupt stored blob ->
+  defaults; reducedFx -> particleScale 0.35, shakeScale 0.
+- GameScene applies once at boot and wraps particles.spawnBurst so ALL burst
+  sites scale from one place; shake + trauma paths multiply by shakeScale.
+- Bottom-right strip: range slider + REDUCED FX checkbox, persists on input,
+  live-applies via sound.setVolume.
+AC pinned by test/fxSettings.test.mjs (5 tests). Full gate green.

@@ -37,6 +37,7 @@ import { CombatRadar } from '../ui/CombatRadar.js';
 import { buildShareCard, shareText, layoutShareCard, chooseShareMode } from '../shared/sim/shareCard.js';
 import { objectiveProgress } from '../shared/sim/objectivesHud.js';
 import { lowHpFx } from '../shared/sim/lowHpFx.js';
+import { resolveFxSettings, loadFxSettings, saveFxSettings } from '../shared/sim/fxSettings.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -126,6 +127,14 @@ export default class GameScene {
     // --- FX: pooled particles + floating numbers (Upgrade C/F) ----------
     this.sound = new SoundManager();
     this.particles = new ParticlePool(this.scene, 256);
+    // FX settings (FR-UX-01): load persisted prefs, apply once, and wrap the
+    // particle burst entry point so ALL spawn sites scale from one place.
+    this.fxSettings = resolveFxSettings(loadFxSettings(localStorage));
+    this.sound.setVolume(this.fxSettings.volume);
+    const rawBurst = this.particles.spawnBurst.bind(this.particles);
+    this.particles.spawnBurst = (pos, color, count, speed, life) =>
+      rawBurst(pos, color, Math.max(1, Math.round(count * this.fxSettings.particleScale)), speed, life);
+    this._buildSettingsStrip();
     this.floatTexts = new FloatingTextPool(document.getElementById('float-layer'), 24);
     this.skillFx = new SkillFx(this.scene); // Phase 3 cast visuals (slash/ring/arcs)
 
@@ -1716,7 +1725,7 @@ export default class GameScene {
       // Damage camera shake: small random offset, decaying over 0.3s.
       if (this.shakeT > 0) {
         this.shakeT = Math.max(0, this.shakeT - dt);
-        const amp = this.shakeT / CONFIG.player.shake.duration * CONFIG.player.shake.amplitude;
+        const amp = this.shakeT / CONFIG.player.shake.duration * CONFIG.player.shake.amplitude * this.fxSettings.shakeScale;
         this.camera.position.x += (Math.random() - 0.5) * amp;
         this.camera.position.y += (Math.random() - 0.5) * amp;
       }
@@ -1725,7 +1734,7 @@ export default class GameScene {
       // at 1.5/s, clamped to [0,1] by addTrauma + decay here.
       this.trauma = Math.max(0, Math.min(1, this.trauma - dt * 1.5));
       if (this.trauma > 0) {
-        const t2 = this.trauma * this.trauma;
+        const t2 = this.trauma * this.trauma * this.fxSettings.shakeScale;
         const nowMs = performance.now();
         this.camera.position.x += Math.sin(nowMs * 0.02) * t2 * 0.6;
         this.camera.position.y += Math.sin(nowMs * 0.017 + 2) * t2 * 0.4;
@@ -2253,6 +2262,39 @@ export default class GameScene {
     const pct = Math.max(0, Math.min(1, boss.state.hp / maxHp));
     if (this.bossFillEl) this.bossFillEl.style.width = `${pct * 100}%`;
     el.classList.add('visible');
+  }
+
+  /** Settings strip (FR-UX-01): compact bottom-right panel — volume slider +
+   *  reduced-FX toggle. Persists through saveFxSettings and re-applies live
+   *  (sound.setVolume immediately; shake/particle scales read per-frame). */
+  _buildSettingsStrip() {
+    const el = document.createElement('div');
+    el.id = 'fx-settings';
+    el.style.cssText = 'position:fixed;right:10px;bottom:10px;z-index:11;' +
+      'background:#0b0e14cc;padding:8px 10px;border-radius:8px;' +
+      'font:11px/1.6 monospace;color:#cfd8ea;pointer-events:auto;';
+    const vol = document.createElement('input');
+    vol.type = 'range'; vol.min = '0'; vol.max = '100'; vol.value = String(Math.round(this.fxSettings.volume * 100));
+    vol.style.width = '110px'; vol.style.verticalAlign = 'middle';
+    const red = document.createElement('label');
+    red.style.cssText = 'display:block;margin-top:2px;cursor:pointer;';
+    const box = document.createElement('input');
+    box.type = 'checkbox'; box.checked = this.fxSettings.reducedFx;
+    red.appendChild(box);
+    red.appendChild(document.createTextNode(' REDUCED FX'));
+    const apply = () => {
+      this.fxSettings = resolveFxSettings({
+        volume: Number(vol.value) / 100,
+        reducedFx: box.checked,
+      });
+      saveFxSettings(localStorage, this.fxSettings);
+      this.sound.setVolume(this.fxSettings.volume);
+    };
+    vol.addEventListener('input', apply);
+    box.addEventListener('change', apply);
+    el.appendChild(vol);
+    el.appendChild(red);
+    document.body.appendChild(el);
   }
 
   /** SHARE pill (PRD-share-card.md "Cycle: image rendering"): lazily-created
