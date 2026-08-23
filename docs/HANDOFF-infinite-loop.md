@@ -112,6 +112,15 @@ Full detail lives in `docs/PROGRESS.md` (rows R3-R40 era) +
 | Offline progression checkpoints (localStorage career + personal-best line) | 5ea1919 |
 | Objective-Based Weeklies (sticky within-week objective merge, /api/weekly objectives) | 58eb11c |
 
+**Session D — 2026-08-23 UX/feedback track (all pushed + CI green + audit-logged):**
+
+| System | Commit(s) |
+|---|
+| Share card image rendering (layoutShareCard + chooseShareMode pure, draw-only canvas renderer, native files -> ClipboardItem png -> text ladder) | 8ce8c44 |
+| XP progress bar (xpProgress pure beside xpForLevel, #xp-bar client projection) | eb5dde9 |
+| Low-HP danger vignette (lowHpFx pure arm-at-30% ramp, pulsing #danger overlay) | b85d26b |
+| Wave-progress chip (waveChip pure in waves.js, WAVE N/M track, red finale styling) | a570ba1 |
+
 **Session C — 2026-08-22 continuation (rows 2.22–2.25, R43; all pushed + CI green + peer-audited):**
 
 | System | Commit(s) |
