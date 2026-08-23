@@ -288,3 +288,15 @@ pickups and kills into one opaque number.
 - Surfaced on hudText ("kills N") and the share card ({label:'Kills'} only
   when provided — old cards byte-identical).
 AC pinned by test/killCounter.test.mjs. Full gate green.
+
+## FR-RET-02: wave-clear orb vacuum (cycle 26g)
+Leftover XP orbs rotted on the field at wave-clear — wasted value and a
+"did I miss something" anxiety during the breather.
+- During intermission, updatePickups in BOTH rooms treats every living
+  player as a full-map magnet (pullOrbs radius Infinity) using the shipped
+  magnet math; the existing proximity collection pays score/XP/charge as
+  orbs arrive. Playing-state behavior unchanged (control-pinned).
+- Identical wiring byte-for-byte in GameRoom + LocalRoom (parity by
+  construction); no schema/payload changes.
+AC pinned by waves.test vacuum block (playing control + convergence budget)
+and a magnetPull Infinity-radius unit pin. Full gate green.

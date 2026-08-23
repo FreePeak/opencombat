@@ -665,6 +665,16 @@ export class LocalRoom {
       const mc = SERVER.powerUps.magnet;
       pullOrbs(this.state.orbs, magnetHolders, mc.pullRadius, mc.pullSpeed, dt);
     }
+    // --- Wave-clear vacuum (FR-RET-02): during intermission every living
+    // player is a full-map magnet so leftover XP never rots on the field.
+    // Mirrors GameRoom.updatePickups byte-for-byte (parity by construction).
+    if (this.state.matchState === 'intermission') {
+      const holders = [];
+      for (const pl of players.values()) if (pl.hp > 0) holders.push(pl);
+      if (holders.length > 0) {
+        pullOrbs(this.state.orbs, holders, Infinity, SERVER.powerUps.magnet.pullSpeed, dt);
+      }
+    }
     // --- Orbs: pickup (playing + intermission) ----------------------------
     for (const orb of this.state.orbs) {
       for (const p of players.values()) {

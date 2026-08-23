@@ -53,3 +53,15 @@ test('pullOrbs: no holders / dead-weight inputs are safe no-ops', () => {
   assert.equal(pullOrbs([], [{ x: 0, z: 0 }], 8, 10, 0.1), 0);
   assert.equal(orb.x, 3);
 });
+
+test('FR-RET-02: infinite radius (wave-clear vacuum) pulls any distance, clamped', () => {
+  const far = { x: 500, z: 0 };
+  const holder = { x: 0, z: 0 };
+  pullOrbs([far], [holder], Infinity, 10, 0.1);
+  // moved toward the holder by exactly speed*dt (clamp-no-overshoot holds)
+  assert.ok(Math.abs(far.x - (500 - 1)) < 1e-9, `far orb drifted by one step (${far.x})`);
+  // overshoot guard still applies at the destination
+  const close = { x: 0.5, z: 0 };
+  pullOrbs([close], [holder], Infinity, 10, 0.1);
+  assert.equal(close.x, 0, 'close orb lands exactly on holder, never past');
+});

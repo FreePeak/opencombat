@@ -1551,6 +1551,15 @@ export default class GameRoom extends Room {
       const mc = SERVER.powerUps.magnet;
       pullOrbs(state.orbs, magnetHolders, mc.pullRadius, mc.pullSpeed, dt);
     }
+    // --- Wave-clear vacuum (FR-RET-02): during intermission every living
+    // player is a full-map magnet so leftover XP never rots on the field.
+    if (state.matchState === 'intermission') {
+      const holders = [];
+      for (const pl of state.players.values()) if (pl.hp > 0) holders.push(pl);
+      if (holders.length > 0) {
+        pullOrbs(state.orbs, holders, Infinity, SERVER.powerUps.magnet.pullSpeed, dt);
+      }
+    }
     // --- Orbs: first LIVING player within radius collects (server decides)
     const orbScore = (player) =>
       SERVER.orb.score * (player.effects.has('double') ? SERVER.powerUps.double.multiplier : 1);

@@ -413,6 +413,33 @@ const drainUpgradeCards = async (sr, ...clients) => {
 }
 
 
+// --- Wave-clear orb vacuum (FR-RET-02) ----------------------------------------
+{
+  const host = await newRoom('Vacuum');
+  const sr = roomOf(host.r);
+  try {
+    const me = sr.state.players.get(host.r.sessionId);
+    const orb = sr.state.orbs[0];
+    // Control: while PLAYING a distant orb stays put (no magnet, no vacuum).
+    me.effects.delete('magnet');
+    sr.state.matchState = 'playing';
+    orb.x = me.x + 60; orb.z = me.z;
+    sr.updatePickups(0.1);
+    assert.equal(orb.x, me.x + 60, 'no vacuum while playing');
+
+    // Intermission: every living player is a full-map magnet — even a 60u
+    // leftover orb converges and pays before the breather ends.
+    sr.state.matchState = 'intermission';
+    let ticks = 0;
+    const xpBefore = me.xp;
+    while (me.xp === xpBefore && ticks++ < 400) sr.updatePickups(0.1);
+    assert.ok(me.xp > xpBefore, `intermission vacuum converged within budget (${ticks} ticks)`);
+  } finally {
+    host.r.leave();
+  }
+}
+
+
 // --- Wave finale (PRD-wave-finale.md) -----------------------------------------
 {
   const prevFinale = SERVER.wave.finaleWave;
