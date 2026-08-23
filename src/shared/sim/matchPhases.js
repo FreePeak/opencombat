@@ -140,6 +140,7 @@ export function resetMatchState(ctx, opts = {}) {
     if (p.rotY !== undefined) player.rotY = p.rotY;
     player.hp = classStats(player.character).hp; // Phase 3: per-class base HP
     player.score = 0;
+    player.kills = 0; // FR-RET-03: run counters never carry across matches
     player.anim = 'idle';
     player.blocking = false;
     player.attackCd = 0;

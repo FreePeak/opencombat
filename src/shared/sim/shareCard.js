@@ -46,6 +46,9 @@ export function buildShareCard(run) {
   if (r.kills != null) {
     stats.push({ label: 'Kills', value: r.kills }); // FR-GAME-03
   }
+  if (r.timeSec != null) {
+    stats.push({ label: 'Time', value: formatRunTime(r.timeSec) }); // FR-RET-03
+  }
   if (extras.has('objectives') && r.objectivesTotal != null) {
     stats.push({ label: 'Objectives', value: `${r.objectivesDone ?? 0}/${r.objectivesTotal}` });
   }
@@ -105,4 +108,11 @@ export function chooseShareMode({ canShareFiles, clipboardImage }) {
   if (canShareFiles) return 'native';
   if (clipboardImage) return 'image';
   return 'text';
+}
+
+/** M:SS run-time rendering; junk/negative inputs clamp to 0:00. */
+export function formatRunTime(sec) {
+  const s = Math.max(0, Math.min(3599, Math.floor(Number(sec))));
+  if (!Number.isFinite(s)) return '0:00';
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

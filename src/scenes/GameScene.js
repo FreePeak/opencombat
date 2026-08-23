@@ -34,7 +34,7 @@ import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { CombatRadar } from '../ui/CombatRadar.js';
-import { buildShareCard, shareText, layoutShareCard, chooseShareMode } from '../shared/sim/shareCard.js';
+import { buildShareCard, shareText, layoutShareCard, chooseShareMode, formatRunTime } from '../shared/sim/shareCard.js';
 import { objectiveProgress } from '../shared/sim/objectivesHud.js';
 import { lowHpFx } from '../shared/sim/lowHpFx.js';
 import { resolveFxSettings, loadFxSettings, saveFxSettings } from '../shared/sim/fxSettings.js';
@@ -1873,7 +1873,11 @@ export default class GameScene {
         this.overlay.classList.remove('visible');
         this.deadShown = false;
       }
-      if (state.matchState === 'playing') { this.sound.go(); this.countdownEl.textContent = ''; }
+      if (state.matchState === 'playing') {
+        this.sound.go(); this.countdownEl.textContent = '';
+        // FR-RET-03 run clock: wave-1 playing is a fresh run's start tick.
+        if (state.wave === 1) this._runStartPerf = performance.now();
+      }
       if (state.matchState === 'intermission') {
         // WAVE CLEARED popup: now AUTO-ADVANCES after intermissionMs (click
         // still skips the wait). While up every player is invulnerable and
@@ -1930,13 +1934,16 @@ export default class GameScene {
           ? 'THE HORDE IS BROKEN — VICTORY!'
           : state.winnerId === this.room.sessionId
             ? 'YOU WIN!' : state.winnerName + ' WINS!';
+        const timeSec = this._runStartPerf != null
+          ? (performance.now() - this._runStartPerf) / 1000 : null; // FR-RET-03
+        const survived = timeSec != null ? `   · SURVIVED ${formatRunTime(timeSec)}` : '';
         const scores = [...state.players.values()]
           .sort((a, b) => b.score - a.score).slice(0, 3)
           .map((p) => `${p.name}: ${p.score}`).join('   ');
         const mine = this.careerBySid?.[this.room.sessionId];
         const careerLine = mine
           ? `   · RUNS ${mine.runs} · WINS ${mine.victories} · BEST WAVE ${mine.bestWave}` : '';
-        this.overlaySub.textContent = scores + careerLine + '   — PLAY AGAIN →';
+        this.overlaySub.textContent = scores + survived + careerLine + '   — PLAY AGAIN →';
         // SHARE (PRD-share-card.md): one-click copyable run summary on the
         // match-over card only — the death/respawn overlay hides it.
         const me2 = state.players.get(this.room.sessionId);
@@ -1946,6 +1953,7 @@ export default class GameScene {
           wave: state.wave,
           score: me2?.score ?? 0,
           kills: me2?.kills ?? 0,
+          timeSec,
           name: me2?.name,
         });
         this._showShareButton(card);

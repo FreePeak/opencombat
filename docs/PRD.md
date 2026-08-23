@@ -300,3 +300,19 @@ Leftover XP orbs rotted on the field at wave-clear — wasted value and a
   construction); no schema/payload changes.
 AC pinned by waves.test vacuum block (playing control + convergence budget)
 and a magnetPull Infinity-radius unit pin. Full gate green.
+
+## FR-RET-03: replay counter reset + time survived (cycle 26h)
+Two gaps closed together:
+- BUG (FR-GAME-03 follow-up): PlayerState.kills was not in resetMatchState's
+  player loop — kill counts carried across replays. Now reset with score.
+  Pinned by test/runSummary.test.mjs.
+- Time survived: pure formatRunTime(sec) M:SS renderer in shareCard.js
+  (clamps junk/negative to 0:00); GameScene stamps a client-side run clock on
+  the wave-1 playing transition and surfaces "SURVIVED M:SS" + a Time stat
+  line on the gameover card/share card when known.
+- STABILITY: daily.test clearWave was the only clear helper draining level-up
+  cards AFTER intermission — a pause-wall freeze mid-clear or stray contact
+  death could end the run pre-victory (3/5 fail rate reproduced on clean
+  HEAD). Fixed to swing-until-clear polling with mid-clear card drains +
+  death-proofed player hp; 8/8 consecutive green.
+AC pinned by test/runSummary.test.mjs. Full gate green.

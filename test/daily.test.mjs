@@ -195,25 +195,32 @@ const rmPlayerFile = (name) => { try { fs.rmSync(playerFile(name)); } catch {} }
 
     const me = sr.state.players.get(r.sessionId);
     me.x = 0; me.z = 0; me.rotY = Math.PI / 2;
+    me.hp = 99999; // flake-proof: a stray contact hit must NEVER end the run
     const clearWave = async () => {
-      const alive = [...sr.state.enemies].filter((e) => e.hp > 0);
-      // Finale SURGE may field the whole pool: cone-safe adaptive fan.
-      const spacing = Math.min(0.3, 0.9 / Math.max(1, alive.length - 1));
-      alive.forEach((e, i) => {
-        e.hp = 1;
-        const ang = (i - (alive.length - 1) / 2) * spacing;
-        e.x = 1.8 * Math.cos(ang);
-        e.z = 1.8 * Math.sin(ang);
-        sr.enemyStunUntil.set(e, Date.now() + 5000);
-      });
-      r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+      // Swing until the wave actually clears: re-stun + re-place survivors
+      // each pass (surge fans can exceed the melee cone) and drain level-up
+      // cards DURING the clear so the global pause wall can never freeze the
+      // sim between swings (D7 trap). Polls server truth, never wall clock.
+      for (let attempt = 0; attempt < 40 && sr.state.matchState !== 'intermission'; attempt++) {
+        const alive = [...sr.state.enemies].filter((e) => e.hp > 0);
+        // Finale SURGE may field the whole pool: cone-safe adaptive fan.
+        const spacing = Math.min(0.3, 0.9 / Math.max(1, alive.length - 1));
+        alive.forEach((e, i) => {
+          e.hp = 1;
+          const ang = (i - (alive.length - 1) / 2) * spacing;
+          e.x = 1.8 * Math.cos(ang);
+          e.z = 1.8 * Math.sin(ang);
+          sr.enemyStunUntil.set(e, Date.now() + 5000);
+        });
+        r.send('input', { dirX: 0, dirZ: 0, attack: true, anim: 'attack' });
+        while (me.pendingChoices.length > 0) {
+          r.send('chooseUpgrade', { choice: me.pendingChoices[0] });
+          await waitMs(60);
+        }
+        await waitMs(120);
+      }
       await waitFor(() => sr.state.matchState === 'intermission', 3000,
         'victory-run clear');
-      // Drain level-up cards (pause wall would block the next advance).
-      for (let i = 0; i < 12 && me.pendingChoices.length > 0; i++) {
-        r.send('chooseUpgrade', { choice: me.pendingChoices[0] });
-        await waitMs(80);
-      }
     };
 
     await clearWave();
