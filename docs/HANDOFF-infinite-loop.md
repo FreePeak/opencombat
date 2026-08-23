@@ -124,6 +124,8 @@ Full detail lives in `docs/PROGRESS.md` (rows R3-R40 era) +
 | E2E HUD feedback asserts with mutation red-proof | d3dab63 |
 | Arena shield-pickup flake fix (power-ups parked, CI red proof 32646704386) | b6beefd |
 | Run kill counter (PlayerState.kills credited in shared combatBook both sites) | e45e807 |
+| Wave-clear orb vacuum (intermission = full-map magnet, both rooms) | f73fd60 |
+| Replay kills reset + time survived + daily.test pause-wall-safe clear | 09e9fd8 |
 
 **Session C — 2026-08-22 continuation (rows 2.22–2.25, R43; all pushed + CI green + peer-audited):**
 
