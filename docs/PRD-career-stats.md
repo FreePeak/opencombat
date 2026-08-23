@@ -152,3 +152,6 @@ deletes forget them.
 - FR-GAME-03 kill counter (e45e807): credits live ONLY in shared combatBook
   (both kill sites); schema addition is additive — no room logic duplicated.
   Gate 256 pass / 0 fail, smoke 8/8. Compose-clean.
+- FR-RET-02 orb vacuum (f73fd60): reuses shipped magnetPull math with
+  radius Infinity inside the existing updatePickups — no new sim surface.
+  Gate 257 pass / 0 fail, smoke 8/8. Compose-clean.
