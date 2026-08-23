@@ -329,3 +329,13 @@ Shooters and off-screen rushers were invisible threats.
   GameScene rotates it at hit time and fades over 0.7s in the flash block.
 AC pinned by test/damageDir.test.mjs (cardinals, range+determinism,
 degenerate, LocalRoom emission incl. shield-silence). Full gate green.
+
+## FR-HUD-05: hp denominators use the class max (cycle 26j)
+Dogfooding caught it: knight (150 base hp) rendered a 150% hp bar at spawn
+and the FR-HUD-02 vignette armed late — all three client sites divided by
+CONFIG.player.maxHp (100) while classes ship 150/80/90/80.
+- Fix: effectiveMaxHp(me.character, me.upgrades) (already shared + tested)
+  at the music hpPct signal, the hudFill width, and the danger vignette.
+- Pinned red-first as an e2e assertion in assert_hud_feedback: hp fill must
+  never exceed 100% (was failing live: '150%').
+Full gate green; waves e2e RED -> GREEN verified locally.

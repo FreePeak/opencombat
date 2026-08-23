@@ -28,7 +28,7 @@ import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
   joinWorld, joinLobby, sendQueue, consumeReservation, spectateMatch, fetchJoinTicket } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
-import { getUpgrade, xpProgress } from '../shared/progression.js';
+import { getUpgrade, xpProgress, effectiveMaxHp } from '../shared/progression.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
 import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
@@ -1635,7 +1635,8 @@ export default class GameScene {
     // are stamped at their own trigger sites (see _lastDamageAt/_lastMilestoneAt).
     if (this.music) {
       const me = this.local?.state;
-      const maxHp = me ? (me.maxHp || CONFIG.player.maxHp) : 0;
+      // FR-HUD-05: denominator is the CLASS max (+ vitality), never CONFIG 100.
+      const maxHp = me ? effectiveMaxHp(me.character, me.upgrades) : 0;
       this.music.setSignals({
         matchState: this.room?.state?.matchState ?? '',
         paused,
@@ -1998,7 +1999,8 @@ export default class GameScene {
     }
 
     // --- HUD: hp bar, score, players, cooldown bar -----------------------
-    const pct = Math.max(0, me.hp) / CONFIG.player.maxHp * 100;
+    // FR-HUD-05: class max (+ vitality) denominator — knight is 150 base.
+    const pct = Math.max(0, me.hp) / effectiveMaxHp(me.character, me.upgrades) * 100;
     this.hudFill.style.width = pct + '%';
     this.hudFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
     this.hudText.textContent =
@@ -2031,7 +2033,7 @@ export default class GameScene {
     // Persistent low-HP danger vignette (FR-HUD-02): intensity from the pure
     // evaluator; pulse via a cheap sine so it reads as alive without a timer.
     if (this.dangerEl) {
-      const fx = lowHpFx(me.hp, me.maxHp ?? CONFIG.player.maxHp);
+      const fx = lowHpFx(me.hp, effectiveMaxHp(me.character, me.upgrades)); // FR-HUD-05
       const pulse = fx.on ? 0.75 + 0.25 * Math.sin(performance.now() / 180) : 0;
       this.dangerEl.style.opacity = String(fx.intensity * pulse);
     }

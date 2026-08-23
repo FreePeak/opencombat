@@ -334,8 +334,19 @@ def assert_hud_feedback(page, label):
         dangerOp: document.getElementById('danger')?.style.opacity ?? null,
         settingsPresent: !!document.getElementById('fx-settings'),
         vol: document.querySelector('#fx-settings input[type=range]')?.value ?? null,
+        hpW: document.getElementById('hp-fill')?.style.width ?? null,
+        hp: window.__gameScene?.room?.state
+            ?.players.get(window.__gameScene.room.sessionId)?.hp ?? null,
+        char: window.__gameScene?.room?.state
+            ?.players.get(window.__gameScene.room.sessionId)?.character ?? null,
     })""")
     import re as _re
+    # FR-HUD-05: hp bar denominator must be the CLASS max, not CONFIG 100 —
+    # knight (150 base) used to render a 150% fill at spawn.
+    if probe["hp"] is not None and probe["hpW"]:
+        hpw = float(probe["hpW"].rstrip("%") or 0)
+        assert hpw <= 100.5, \
+            f"[{label}] hp fill {probe['hpW']} exceeds 100% (wrong denominator): {probe}"
     assert probe["xpW"] is not None and probe["xpW"].endswith("%"), \
         f"[{label}] xp bar fill never driven: {probe}"
     assert probe["waveLabel"] and _re.match(r"^WAVE \d", probe["waveLabel"]), \
