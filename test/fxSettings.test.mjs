@@ -9,7 +9,7 @@ import { resolveFxSettings, loadFxSettings, saveFxSettings, FX_KEY } from '../sr
 
 test('defaults: full volume, full fx when nothing saved', () => {
   assert.deepEqual(resolveFxSettings(), {
-    volume: 1, reducedFx: false, particleScale: 1, shakeScale: 1,
+    volume: 1, reducedFx: false, particleScale: 1, shakeScale: 1, shadows: true,
   });
 });
 
@@ -21,11 +21,12 @@ test('volume clamps into 0..1 and coerces junk to 0', () => {
   assert.equal(resolveFxSettings({ volume: NaN }).volume, 0);
 });
 
-test('reducedFx scales particles and removes shake entirely', () => {
+test('reducedFx scales particles, removes shake, disables the shadow pass', () => {
   const s = resolveFxSettings({ volume: 0.5, reducedFx: true });
   assert.equal(s.reducedFx, true);
   assert.equal(s.particleScale, 0.35);
   assert.equal(s.shakeScale, 0);
+  assert.equal(s.shadows, false); // FR-UX-01 completion: shadow pass ~2x geometry cost
 });
 
 test('load/save round-trip through an injected storage', () => {

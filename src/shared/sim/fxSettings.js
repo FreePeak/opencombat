@@ -26,6 +26,7 @@ export function resolveFxSettings(prefs) {
     reducedFx,
     particleScale: reducedFx ? 0.35 : 1,
     shakeScale: reducedFx ? 0 : 1,
+    shadows: !reducedFx, // shadow pass ~2x geometry cost; first thing weak devices lose
   };
 }
 

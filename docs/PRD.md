@@ -339,3 +339,14 @@ CONFIG.player.maxHp (100) while classes ship 150/80/90/80.
 - Pinned red-first as an e2e assertion in assert_hud_feedback: hp fill must
   never exceed 100% (was failing live: '150%').
 Full gate green; waves e2e RED -> GREEN verified locally.
+
+## FR-UX-01 completion: REDUCED FX kills the shadow pass (cycle 26k)
+The shadow pass roughly doubles geometry cost — the first thing a weak
+device should lose when it asks for reduced fx.
+- resolveFxSettings gains `shadows: !reducedFx` (pure, pinned).
+- GameScene applies at boot and live in the settings-strip apply path
+  (needsUpdate nudge on re-enable so stale maps never render garbage).
+- Profiling evidence (headless SwiftShader): scene is cheap (117 calls /
+  228k tris / 2 lights); absolute low fps there is software-raster overhead,
+  not client cost — real-GPU players unaffected.
+Full gate green.

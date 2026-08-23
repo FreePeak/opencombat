@@ -135,6 +135,7 @@ export default class GameScene {
     const rawBurst = this.particles.spawnBurst.bind(this.particles);
     this.particles.spawnBurst = (pos, color, count, speed, life) =>
       rawBurst(pos, color, Math.max(1, Math.round(count * this.fxSettings.particleScale)), speed, life);
+    this.renderer.shadowMap.enabled = this.fxSettings.shadows;
     this._buildSettingsStrip();
     this.floatTexts = new FloatingTextPool(document.getElementById('float-layer'), 24);
     this.skillFx = new SkillFx(this.scene); // Phase 3 cast visuals (slash/ring/arcs)
@@ -2316,6 +2317,10 @@ export default class GameScene {
       });
       saveFxSettings(localStorage, this.fxSettings);
       this.sound.setVolume(this.fxSettings.volume);
+      // Shadow pass toggle (FR-UX-01): needsUpdate forces the map to rebuild
+      // when re-enabled (a stale map renders garbage for one frame otherwise).
+      this.renderer.shadowMap.enabled = this.fxSettings.shadows;
+      if (this.fxSettings.shadows) this.renderer.shadowMap.needsUpdate = true;
     };
     vol.addEventListener('input', apply);
     box.addEventListener('change', apply);
