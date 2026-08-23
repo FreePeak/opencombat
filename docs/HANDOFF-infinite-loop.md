@@ -129,6 +129,8 @@ Full detail lives in `docs/PROGRESS.md` (rows R3-R40 era) +
 | Damage direction wedge (dirAngleDeg pure, targeted 'damaged' both rooms) | 39f9fd4 |
 | HP denominator fix (class max via effectiveMaxHp; e2e-pinned) | 331587a |
 | Block-guard deterministic rewrite (hand-driven arrow, invuln cleared) | 6d9fa12 |
+| Dead hudText write removal (dogfood catch) | 13e91ad |
+| REDUCED FX disables shadow pass (pure shadows flag) | 972a43b |
 
 **Session C — 2026-08-22 continuation (rows 2.22–2.25, R43; all pushed + CI green + peer-audited):**
 
