@@ -134,3 +134,6 @@ deletes forget them.
 - FR-HUD-01 xp bar (eb5dde9): pure xpProgress beside xpForLevel; bar is a
   client-only projection of synced {level,xp} — no sim/schema surface touched.
   Combined gate 239 pass / 0 fail, smoke 8/8. Compose-clean.
+- FR-HUD-02 danger vignette (b85d26b): lowHpFx pure module, overlay is a
+  client-only projection — zero sim/schema overlap. Gate 243 pass / 0 fail,
+  smoke 8/8. Compose-clean.
