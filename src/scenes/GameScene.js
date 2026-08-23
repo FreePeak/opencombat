@@ -1999,17 +1999,12 @@ export default class GameScene {
     }
 
     // --- HUD: hp bar, score, players, cooldown bar -----------------------
+    // (hudText itself is written once at the bottom of updateMatchUi — an
+    // earlier duplicate write here was dead work overwritten every frame.)
     // FR-HUD-05: class max (+ vitality) denominator — knight is 150 base.
     const pct = Math.max(0, me.hp) / effectiveMaxHp(me.character, me.upgrades) * 100;
     this.hudFill.style.width = pct + '%';
     this.hudFill.style.background = pct > 50 ? '#4caf50' : pct > 25 ? '#ff9800' : '#f44336';
-    this.hudText.textContent =
-      `wave ${state.wave}   score ${me.score}   players ${state.players.size}   target ${CONFIG.match.targetScore}` +
-      (state.matchState === 'intermission' ? '   ★ INVULNERABLE — wave cleared' : '') +
-      (me.blocking ? '   🛡 BLOCKING' : '') +
-      (this.touchControls?.active
-        ? '   joystick move · ⚔ attack · ✨ skill · 🛡 block'
-        : '   WASD move · J attack · K skill · L block (hold) · M mute');
     // Cooldown bar: drains while J is on cooldown (server mirrors it).
     const cdMs = Math.max(me.attackCd, this.local.attackCd * 1000);
     this.cooldownFill.style.width = Math.min(100, cdMs / CONFIG.player.attackCooldownMs * 100) + '%';
