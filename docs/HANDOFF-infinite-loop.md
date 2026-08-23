@@ -120,6 +120,10 @@ Full detail lives in `docs/PROGRESS.md` (rows R3-R40 era) +
 | XP progress bar (xpProgress pure beside xpForLevel, #xp-bar client projection) | eb5dde9 |
 | Low-HP danger vignette (lowHpFx pure arm-at-30% ramp, pulsing #danger overlay) | b85d26b |
 | Wave-progress chip (waveChip pure in waves.js, WAVE N/M track, red finale styling) | a570ba1 |
+| Settings strip (fxSettings pure, volume slider + reduced-FX gating shake/particles) | 93a1257 |
+| E2E HUD feedback asserts with mutation red-proof | d3dab63 |
+| Arena shield-pickup flake fix (power-ups parked, CI red proof 32646704386) | b6beefd |
+| Run kill counter (PlayerState.kills credited in shared combatBook both sites) | e45e807 |
 
 **Session C — 2026-08-22 continuation (rows 2.22–2.25, R43; all pushed + CI green + peer-audited):**
 
