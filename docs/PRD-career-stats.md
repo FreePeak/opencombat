@@ -140,3 +140,6 @@ deletes forget them.
 - FR-HUD-03 wave chip (a570ba1): pure waveChip in shared/waves.js; chip is a
   static-config projection — no schema/room surface touched. Gate 247 pass /
   0 fail, smoke 8/8. Compose-clean.
+- FR-UX-01 settings strip (93a1257): fxSettings pure module; FX gating is a
+  client-only projection via spawnBurst wrap + shakeScale — no sim/schema
+  overlap. Gate 252 pass / 0 fail, smoke 8/8. Compose-clean.
