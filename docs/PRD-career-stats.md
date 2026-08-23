@@ -171,3 +171,5 @@ deletes forget them.
   Gate 264 pass / 0 fail. Compose-clean.
 - Block-guard rewrite (6d9fa12): supersedes 31d05c1's partial splice fix;
   test-harness only. Gate 264 pass / 0 fail. Compose-clean.
+- Shadows toggle (972a43b): pure flag + renderer toggle only — no sim
+  surface. Gate 264 pass / 0 fail. Compose-clean.
