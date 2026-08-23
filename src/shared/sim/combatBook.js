@@ -67,6 +67,7 @@ export function resolveEnemyHit(ctx, enemy, damage, srcX, srcZ, killerSid = null
     const killer = killerSid != null ? ctx.players.get(killerSid) : undefined;
     if (killer) {
       killer.score += SERVER.enemy.killScore;
+      killer.kills = (killer.kills ?? 0) + 1; // FR-GAME-03 run kill counter
       payKillXp(ctx, enemy, killerSid); // charge-or-grant; elite doubles inside
     }
     ctx.log?.('enemy_killed', { wave: ctx.state.wave, by: killer?.name });
@@ -241,6 +242,7 @@ export function tickBurns(ctx, now) {
       if (dies && burn.killerSid != null && ctx.players.has(burn.killerSid)) {
         const killer = ctx.players.get(burn.killerSid);
         killer.score += SERVER.enemy.killScore;
+        killer.kills = (killer.kills ?? 0) + 1; // FR-GAME-03 run kill counter
         payKillXp(ctx, enemy, burn.killerSid);
         ctx.creditKill?.(burn.killerSid);
         ctx.log?.('enemy_killed', { wave: ctx.state.wave, by: killer?.name });

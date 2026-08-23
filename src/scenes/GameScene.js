@@ -1945,6 +1945,7 @@ export default class GameScene {
           victory: !!state.victory,
           wave: state.wave,
           score: me2?.score ?? 0,
+          kills: me2?.kills ?? 0,
           name: me2?.name,
         });
         this._showShareButton(card);
@@ -2125,7 +2126,7 @@ export default class GameScene {
       this.waveChipEl.classList.toggle('finale', c.isFinale);
     }
     this.hudText.textContent =
-      `Lv ${me.level} (${me.xp} XP)  wave ${state.wave}  score ${me.score}  players ${state.players.size}  target ${CONFIG.match.targetScore}` +
+      `Lv ${me.level} (${me.xp} XP)  wave ${state.wave}  score ${me.score}  kills ${me.kills ?? 0}  players ${state.players.size}  target ${CONFIG.match.targetScore}` +
       (state.matchState === 'intermission' ? '  ★ INVULNERABLE — wave cleared' : '') +
       (state.paused ? '  ⏸ PAUSED' : '') +
       (me.blocking ? '  🛡 BLOCKING' : '') +

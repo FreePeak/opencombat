@@ -43,6 +43,9 @@ export function buildShareCard(run) {
   if (extras.has('streak') && r.streak != null) {
     stats.push({ label: 'Streak', value: r.streak });
   }
+  if (r.kills != null) {
+    stats.push({ label: 'Kills', value: r.kills }); // FR-GAME-03
+  }
   if (extras.has('objectives') && r.objectivesTotal != null) {
     stats.push({ label: 'Objectives', value: `${r.objectivesDone ?? 0}/${r.objectivesTotal}` });
   }

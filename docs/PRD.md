@@ -276,3 +276,15 @@ non-negotiable; accessibility and weak-device players had no lever.
 - Bottom-right strip: range slider + REDUCED FX checkbox, persists on input,
   live-applies via sound.setVolume.
 AC pinned by test/fxSettings.test.mjs (5 tests). Full gate green.
+
+## FR-GAME-03: run kill counter (cycle 26f)
+Players had no persistent "how many did I kill" feedback — score mixes orbs,
+pickups and kills into one opaque number.
+- PlayerState.kills (synced number, additive); LocalRoom uses the same class
+  so offline parity is by construction.
+- Shared combatBook credits at BOTH kill sites — resolveEnemyHit direct kills
+  and tickBurns fatal sourced-burn ticks — via killer.kills = (kills ?? 0)+1;
+  unattributed deaths credit nobody.
+- Surfaced on hudText ("kills N") and the share card ({label:'Kills'} only
+  when provided — old cards byte-identical).
+AC pinned by test/killCounter.test.mjs. Full gate green.

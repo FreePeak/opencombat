@@ -31,6 +31,7 @@ export class PlayerState extends Schema {
     // Phase 4: leveling + upgrade cards
     this.level = 1;
     this.xp = 0;
+    this.kills = 0; // FR-GAME-03: lifetime-of-run kill counter (shared combatBook credits)
     this.pendingChoices = new ArraySchema(); // 3 ids while a level-up is pending (empty otherwise)
     this.upgrades = new MapSchema();        // upgrade id -> stack count
     // Phase 5: arena team assignment (−1 = unassigned, 0/1 for duel/team, index for FFA)
@@ -51,6 +52,7 @@ defineTypes(PlayerState, {
   skillCd: 'number',
   blocking: 'boolean',
   level: 'number',
+  kills: 'number',
   xp: 'number',
   pendingChoices: ['string'],
   upgrades: { map: 'number' },
