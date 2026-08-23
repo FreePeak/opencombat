@@ -224,3 +224,19 @@ Each question lists the working default. Items already locked by the repo are ma
 | 6 | Trademark clearance for the name "Ashfall" | Default: treat as working title; run clearance search before any paid marketing push (COMPETITORS.md risk note). |
 | 7 | Minors/COPPA exposure at school-adjacent events | Default: no birthdate collection ever; event organizers own attendance data; document data-flow so Ashfall stays out of scope for child-data processing. |
 | 8 | Where does deterministic replay (FR-FAIR-04) land? | Default: stretch goal after 1.0; market the integrity story early (no competitor can cheaply copy it) but do not commit engineering before revenue signals. |
+
+## FR-HUD-01: XP progress bar (cycle 26b)
+Problem: level-ups arrive with no visible progression — XP appears only as a
+raw number in hudText (GameScene.js "Lv N (M XP)"). In the survivors genre
+the XP bar is the core continuous feedback loop; its absence makes upgrade
+cadence feel random.
+Solution:
+- `xpProgress(level, xp)` pure evaluator in src/shared/progression.js next to
+  xpForLevel -> {level, into, need, pct} where into = xp - xpForLevel(level),
+  need = xpForLevel(level+1) - xpForLevel(level), pct clamped 0..1. Handles
+  level<1 and xp beyond current threshold defensively.
+- index.html: #xp-bar/#xp-fill styled after #hp-bar; GameScene sets fill
+  width per HUD tick from synced PlayerState {level,xp} — client-only.
+Out of scope: server changes, reward animations.
+AC1 pct math pinned by node tests (exact values at known thresholds,
+clamping, monotonic). AC2 full gate green.

@@ -28,7 +28,7 @@ import { SERVER } from '../server/config.js';
 import { joinGame, reconnectRoom, sendRespawn, sendPlayAgain, sendNextWave, sendChooseUpgrade, sendChooseShop, joinErrorMessage, serverAvailable,
   joinWorld, joinLobby, sendQueue, consumeReservation, spectateMatch, fetchJoinTicket } from '../network.js';
 import { LocalRoom } from '../LocalRoom.js';
-import { getUpgrade } from '../shared/progression.js';
+import { getUpgrade, xpProgress } from '../shared/progression.js';
 import { stripRootMotion, frameDamp, cameraOffset, subclipAnims } from '../anim/AnimUtils.js';
 import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
@@ -172,6 +172,7 @@ export default class GameScene {
 
     // HUD handles (index.html).
     this.hudFill = document.getElementById('hp-fill');
+    this.xpFill = document.getElementById('xp-fill'); // FR-HUD-01 xp bar
     this.hudText = document.getElementById('hud-text');
     this.cooldownFill = document.getElementById('cooldown-fill');
     this.skillCooldownFill = document.getElementById('skill-cooldown-fill');
@@ -2090,7 +2091,12 @@ export default class GameScene {
     // Paused badge (global PVE pause while choosing upgrade)
     if (this.pausedBadge) this.pausedBadge.style.display = state.paused ? 'block' : 'none';
 
-    // HUD: show level + XP alongside score
+    // HUD: show level + XP alongside score; xp bar driven by the pure
+    // FR-HUD-01 evaluator so fill width matches shared leveling math exactly.
+    if (this.xpFill) {
+      const p = xpProgress(me.level, me.xp);
+      this.xpFill.style.width = `${Math.round(p.pct * 100)}%`;
+    }
     this.hudText.textContent =
       `Lv ${me.level} (${me.xp} XP)  wave ${state.wave}  score ${me.score}  players ${state.players.size}  target ${CONFIG.match.targetScore}` +
       (state.matchState === 'intermission' ? '  ★ INVULNERABLE — wave cleared' : '') +

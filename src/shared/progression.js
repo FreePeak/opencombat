@@ -45,6 +45,21 @@ export function xpToNextLevel(xp) {
   return xpForLevel(lvl + 1) - Math.max(0, xp);
 }
 
+/**
+ * XP-bar evaluator (PRD.md FR-HUD-01): progress of `xp` through the bracket
+ * between reaching `level` and reaching `level + 1`.
+ * Returns {level, into, need, pct} with pct clamped to 0..1 so runaway or
+ * negative inputs render a sane bar instead of NaN/overflow widths.
+ */
+export function xpProgress(level, xp) {
+  const lvl = Math.max(1, Math.floor(level));
+  const base = xpForLevel(lvl);
+  const next = xpForLevel(lvl + 1);
+  const into = Math.max(0, Math.min(next - base, Math.floor(xp) - base));
+  const need = next - base;
+  return { level: lvl, into, need, pct: need > 0 ? into / need : 0 };
+}
+
 // ---------------------------------------------------------------------------
 // Upgrade definitions (~16: passives + skill-specific)
 // ---------------------------------------------------------------------------
