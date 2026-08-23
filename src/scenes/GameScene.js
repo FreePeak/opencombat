@@ -34,7 +34,7 @@ import TouchControls from '../ui/TouchControls.js';
 import { ChunkManager } from '../client/ChunkManager.js';
 import { Minimap } from '../ui/Minimap.js';
 import { CombatRadar } from '../ui/CombatRadar.js';
-import { buildShareCard, shareText } from '../shared/sim/shareCard.js';
+import { buildShareCard, shareText, layoutShareCard, chooseShareMode } from '../shared/sim/shareCard.js';
 import { objectiveProgress } from '../shared/sim/objectivesHud.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -2231,9 +2231,10 @@ export default class GameScene {
     el.classList.add('visible');
   }
 
-  /** SHARE pill (PRD-share-card.md): lazily-created button inside the
-   *  gameover card; copies the composed share text, acks with COPIED.
-   *  Clipboard-unavailable environments degrade to a no-op label. */
+  /** SHARE pill (PRD-share-card.md "Cycle: image rendering"): lazily-created
+   *  button inside the gameover card. Walks the capability ladder — native
+   *  file share, ClipboardItem png copy, then the cycle-21 text copy — and
+   *  acks with SHARED / IMAGE COPIED / COPIED / COPY FAILED. */
   _showShareButton(card) {
     if (!this.shareBtn) {
       const cardEl = this.overlay?.querySelector('.card');
@@ -2245,10 +2246,7 @@ export default class GameScene {
         'background:#1d2330;color:#fff;border:1px solid #44a;cursor:pointer;';
       btn.addEventListener('click', async (e) => {
         e.stopPropagation(); // the overlay itself restarts on click
-        try {
-          await navigator.clipboard.writeText(this._shareCardText ?? '');
-          btn.textContent = 'COPIED';
-        } catch { btn.textContent = 'COPY FAILED'; }
+        btn.textContent = await this._shareRun(this._shareCard ?? buildShareCard({}));
         setTimeout(() => { btn.textContent = 'SHARE'; }, 1500);
       });
       cardEl.appendChild(btn);
@@ -2257,7 +2255,71 @@ export default class GameScene {
     // Stash the latest composition at show-time (click handler reads it).
     this.shareBtn.textContent = 'SHARE';
     this.shareBtn.style.display = '';
+    this._shareCard = card;
     this._shareCardText = shareText(card);
+  }
+
+  /** Draw-only renderer: consumes layoutShareCard output verbatim (zero
+   *  layout logic here); returns an offscreen canvas for blob/share use. */
+  _renderShareCanvas(card) {
+    const L = layoutShareCard(card);
+    const canvas = document.createElement('canvas');
+    canvas.width = L.w; canvas.height = L.h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = L.bg;
+    ctx.fillRect(0, 0, L.w, L.h);
+    ctx.strokeStyle = L.accent;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, L.w - 4, L.h - 4);
+    ctx.fillStyle = L.text;
+    ctx.font = `bold ${L.title.size}px monospace`;
+    ctx.fillText(L.title.text, L.title.x, L.title.y);
+    for (const row of L.rows) {
+      ctx.fillStyle = L.dim;
+      ctx.font = `${Math.round(row.size * 0.75)}px monospace`;
+      ctx.fillText(String(row.label).toUpperCase(), row.labelX, row.y);
+      ctx.fillStyle = L.text;
+      ctx.font = `${row.size}px monospace`;
+      ctx.fillText(String(row.value), row.valueX, row.y);
+    }
+    ctx.fillStyle = L.dim;
+    ctx.font = `${L.footer.size}px monospace`;
+    ctx.fillText(L.footer.text, L.footer.x, L.footer.y);
+    return canvas;
+  }
+
+  /** Capability-ladder SHARE (PRD-share-card.md): native Web Share files ->
+   *  ClipboardItem image copy -> plain text copy. Resolves to the button ack. */
+  async _shareRun(card) {
+    const text = shareText(card);
+    if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
+      try {
+        const blob = await new Promise((res) => this._renderShareCanvas(card).toBlob(res, 'image/png'));
+        const file = new File([blob], 'ashfall-run.png', { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], text });
+          return 'SHARED';
+        }
+      } catch (err) {
+        if (err?.name === 'AbortError') return 'SHARE CANCELLED';
+        // fall through to clipboard ladder
+      }
+    }
+    const mode = chooseShareMode({
+      canShareFiles: false,
+      clipboardImage: typeof ClipboardItem !== 'undefined',
+    });
+    if (mode === 'image') {
+      try {
+        const blob = await new Promise((res) => this._renderShareCanvas(card).toBlob(res, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        return 'IMAGE COPIED';
+      } catch { /* fall through to text */ }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      return 'COPIED';
+    } catch { return 'COPY FAILED'; }
   }
 
   _hideShareButton() {

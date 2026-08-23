@@ -1,6 +1,6 @@
 # PRD: Results Share Card (Cycle 21)
 
-Status: PLANNED (cycle 21) — backlog #3 in docs/vampire-survivors-research.md §6.
+Status: SHIPPED cycle 21; IMAGE RENDERING shipped as follow-up cycle (see "Cycle: image rendering" below).
 
 ## Problem
 
@@ -42,3 +42,25 @@ gameover overlay:
 5. SHARE button appears only on the match-over overlay (not death/respawn),
    copies without throwing where clipboard exists.
 6. Full gate green: `npm run check && npm test && npm run smoke`.
+
+## Cycle: image rendering (follow-up, shipped)
+Research basis: text-only shares underperform on Discord/X/mobile where image
+posts dominate; the platform pattern is a rendered PNG card offered through
+Web Share API Level 2 files (mobile share sheet), ClipboardItem image copy
+(desktop), and plain-text fallback everywhere else. buildShareCard was built
+deterministic in cycle 21 specifically to enable this.
+- `layoutShareCard(card)` (pure, shareCard.js): deterministic pixel geometry +
+  color data for an 800x450 card — title, stat rows at fixed x/y with distinct
+  baselines, footer. No DOM; node tests pin deep-equal determinism, bounds,
+  row spacing.
+- `chooseShareMode({canShareFiles, clipboardImage})` (pure): 'native' |
+  'image' | 'text' — capability ladder resolved once, tested without mocks.
+- GameScene `_renderShareCanvas()`: thin offscreen-canvas renderer consuming
+  layoutShareCard verbatim (draw-only, zero layout logic); SHARE click walks
+  the chosen mode: navigator.share({files:[png]}) -> ClipboardItem png copy
+  (ack IMAGE COPIED) -> existing text copy (ack COPIED).
+- Out of scope: server og-image endpoints, per-mode art themes.
+- AC1 layoutShareCard same card -> deep-equal layout; every stat appears as a
+  row inside canvas bounds, distinct y. AC2 chooser maps all 4 boolean combos
+  correctly. AC3 client renderer draws only from layout fields (code review).
+  AC4 full gate green.
