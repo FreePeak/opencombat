@@ -159,3 +159,6 @@ deletes forget them.
   line, both rooms); time is a client-side projection — no new sim surface.
   Daily.test flake fixed at the test-harness level (pause-wall-safe clear).
   Gate 260 pass / 0 fail, smoke 8/8. Compose-clean.
+- FR-HUD-04 damage wedge (39f9fd4): evaluator pure; emission rides the
+  existing targeted-send pattern (no schema change); rendering client-only.
+  Gate 264 pass / 0 fail, smoke 8/8. Compose-clean.
