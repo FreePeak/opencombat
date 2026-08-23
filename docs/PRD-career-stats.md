@@ -155,3 +155,7 @@ deletes forget them.
 - FR-RET-02 orb vacuum (f73fd60): reuses shipped magnetPull math with
   radius Infinity inside the existing updatePickups — no new sim surface.
   Gate 257 pass / 0 fail, smoke 8/8. Compose-clean.
+- FR-RET-03 (09e9fd8): kills reset lives in shared resetMatchState (one
+  line, both rooms); time is a client-side projection — no new sim surface.
+  Daily.test flake fixed at the test-harness level (pause-wall-safe clear).
+  Gate 260 pass / 0 fail, smoke 8/8. Compose-clean.
