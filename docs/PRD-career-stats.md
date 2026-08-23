@@ -149,3 +149,6 @@ deletes forget them.
   run 32646121821), both GREEN on --failed rerun with identical trees —
   consistent with the residual contention class R43 documented; no code
   action taken. Compose-clean.
+- FR-GAME-03 kill counter (e45e807): credits live ONLY in shared combatBook
+  (both kill sites); schema addition is additive — no room logic duplicated.
+  Gate 256 pass / 0 fail, smoke 8/8. Compose-clean.
