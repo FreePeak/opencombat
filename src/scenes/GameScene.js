@@ -37,6 +37,7 @@ import { CombatRadar } from '../ui/CombatRadar.js';
 import { buildShareCard, shareText, layoutShareCard, chooseShareMode, formatRunTime } from '../shared/sim/shareCard.js';
 import { objectiveProgress } from '../shared/sim/objectivesHud.js';
 import { lowHpFx } from '../shared/sim/lowHpFx.js';
+import { dirAngleDeg } from '../shared/sim/damageDir.js';
 import { resolveFxSettings, loadFxSettings, saveFxSettings } from '../shared/sim/fxSettings.js';
 import { makeTuftGeometry, makeFlowerGeometry, makeBushGeometry, makeOrbGeometry, makeSpeedGeometry, makeShieldGeometry, makeDoubleGroup } from '../client/Grass.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -192,6 +193,7 @@ export default class GameScene {
     this.countdownEl = document.getElementById('countdown');
     this.flashEl = document.getElementById('flash');
     this.dangerEl = document.getElementById('danger'); // FR-HUD-02 low-hp vignette
+    this.dmgDirEl = document.getElementById('dmg-dir'); // FR-HUD-04 hit direction
     this.leaderboardEl = document.getElementById('leaderboard');
     this.overlay = document.getElementById('gameover');
     this.overlayTitle = document.getElementById('gameover-title');
@@ -1000,6 +1002,15 @@ export default class GameScene {
       const z = d?.z ?? this.local?.root.position.z ?? 0;
       this.floatTexts.spawn(x, 2.6, z, 'BLOCKED', '#7ec8ff');
       this.particles.spawnBurst({ x, y: 1.2, z }, CONFIG.effects.block.color, 14, 3, 0.45);
+    });
+
+    // FR-HUD-04: aim the damage wedge at the hit source; the per-frame
+    // flash block below fades it out.
+    this.room.onMessage('damaged', (d) => {
+      const px = this.local?.root.position.x ?? 0;
+      const pz = this.local?.root.position.z ?? 0;
+      this._dmgDirDeg = dirAngleDeg(d?.x ?? px, d?.z ?? pz, px, pz);
+      this._dmgDirT = 0.7;
     });
 
     // Phase 4: leveling toasts + upgrade results
@@ -2023,6 +2034,16 @@ export default class GameScene {
       const fx = lowHpFx(me.hp, me.maxHp ?? CONFIG.player.maxHp);
       const pulse = fx.on ? 0.75 + 0.25 * Math.sin(performance.now() / 180) : 0;
       this.dangerEl.style.opacity = String(fx.intensity * pulse);
+    }
+    // Damage wedge fade (FR-HUD-04): rotate once at hit time, decay here.
+    if (this.dmgDirEl) {
+      this._dmgDirT = Math.max(0, (this._dmgDirT ?? 0) - dt);
+      if (this._dmgDirT > 0) {
+        this.dmgDirEl.style.opacity = String(Math.min(1, this._dmgDirT / 0.7));
+        this.dmgDirEl.style.transform = `rotate(${this._dmgDirDeg ?? 0}deg)`;
+      } else if (this.dmgDirEl.style.opacity !== '0') {
+        this.dmgDirEl.style.opacity = '0';
+      }
     }
 
     // --- Pickup detection for sounds -------------------------------------

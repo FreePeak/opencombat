@@ -1053,6 +1053,8 @@ export default class GameRoom extends Room {
     // victim flinch — mirrors the enemy hit-stun pattern.
     victim.anim = 'hit';
     this.animUntil.set(sid, now + 300);
+    // FR-HUD-04: point the victim's damage wedge at the hit source.
+    this.clients.find((c) => c.sessionId === sid)?.send('damaged', { x: srcX, z: srcZ });
     return true;
   }
 

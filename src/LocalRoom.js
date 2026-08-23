@@ -894,6 +894,8 @@ export class LocalRoom {
     // Knockback 0: the offline sim has never shoved the player (server does,
     // via strikePlayer with the configured nudge) — one code path, per-room.
     strikePlayer(player, amount, source?.x ?? player.x, source?.z ?? player.z, 0, SERVER.world.size / 2);
+    // FR-HUD-04: point the client's damage wedge at the hit source.
+    this._emitMessage('damaged', { x: source?.x ?? player.x, z: source?.z ?? player.z });
     // Hit react: brief 'hit' anim override so the player flinches.
     player.anim = 'hit';
     player.animUntil = performance.now() + 300;

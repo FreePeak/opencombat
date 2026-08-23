@@ -316,3 +316,16 @@ Two gaps closed together:
   HEAD). Fixed to swing-until-clear polling with mid-clear card drains +
   death-proofed player hp; 8/8 consecutive green.
 AC pinned by test/runSummary.test.mjs. Full gate green.
+
+## FR-HUD-04: damage direction wedge (cycle 26i)
+Hits flashed the screen but never said WHERE the damage came from — ranged
+Shooters and off-screen rushers were invisible threats.
+- `dirAngleDeg(srcX, srcZ, px, pz)` pure in shared/sim/damageDir.js: clockwise
+  degrees from screen-up, CSS-rotation ready, degenerate -> 0, [0,360).
+- Both rooms emit a targeted 'damaged' {x,z} on SUCCESSFUL hits only (blocked/
+  shield/invuln stay silent): GameRoom.damagePlayer targeted send; LocalRoom
+  _damagePlayer _emitMessage (parity by construction).
+- #dmg-dir centered pivot with an ::after arrow 120px out along screen-up;
+  GameScene rotates it at hit time and fades over 0.7s in the flash block.
+AC pinned by test/damageDir.test.mjs (cardinals, range+determinism,
+degenerate, LocalRoom emission incl. shield-silence). Full gate green.

@@ -139,6 +139,15 @@
        stays readable; opacity driven per-frame from shared/sim/lowHpFx. */
     #danger { position: fixed; inset: 0; z-index: 11; opacity: 0; pointer-events: none;
       background: radial-gradient(ellipse at center, transparent 55%, rgba(248,113,113,0.5) 100%); }
+    /* Damage direction wedge (FR-HUD-04): centered pivot; the ::after arrow
+       sits 120px out along screen-up and the whole element rotates so the
+       arrow points at the hit source. Opacity fades in GameScene. */
+    #dmg-dir { position: fixed; left: 50%; top: 50%; width: 0; height: 0; z-index: 11;
+      opacity: 0; pointer-events: none; }
+    #dmg-dir::after { content: ''; position: absolute; left: -12px; top: -146px;
+      border-left: 12px solid transparent; border-right: 12px solid transparent;
+      border-bottom: 24px solid rgba(248,113,113,0.9);
+      filter: drop-shadow(0 0 6px rgba(248,113,113,0.6)); }
 
     /* ============ overlays ============ */
     #gameover, #reconnect, #upgrade-overlay, #shop-overlay, #login {
@@ -347,6 +356,7 @@
   <div id="countdown"></div>
   <div id="flash"></div>
   <div id="danger"></div>
+  <div id="dmg-dir"></div>
 
   <div id="gameover">
     <div class="card"><div id="gameover-title">GAME OVER</div><div class="sub" id="gameover-sub">click to respawn</div></div>
