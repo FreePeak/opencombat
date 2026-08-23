@@ -127,3 +127,7 @@ deletes forget them.
   admin-skip), all green. Compose-clean.
 - CYCLE-BA health cert (post-handoff-refresh): gate 132 files / 230 tests
   (1 intentional admin-skip) green; CI success on handoff refresh. Steady.
+- 2.24b share card image (8ce8c44): layoutShareCard/chooseShareMode stay
+  pure in shareCard.js; GameScene renderer is draw-only over layout fields,
+  no overlap with objectives chip or career surfaces. Combined gate 235 pass
+  / 0 fail, smoke 8/8. Compose-clean.
