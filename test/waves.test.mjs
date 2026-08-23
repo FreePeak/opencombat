@@ -362,6 +362,13 @@ const drainUpgradeCards = async (sr, ...clients) => {
     sr.state.enemies.forEach((e) => {
       if (e !== sh) { e.x = 40; e.z = 40; sr.enemyStunUntil.set(e, Date.now() + 15000); }
     });
+    // Flake proof (CI 32654162989): the live-fire phase above leaves an arrow
+    // mid-flight; landing it BEFORE blocking engages costs hp and failed the
+    // zero-loss assert. Clear in-flight enemy shots so only post-arm volleys
+    // reach the guard.
+    for (let i = sr.state.projectiles.length - 1; i >= 0; i--) {
+      if (!sr.state.projectiles[i].ownerIsPlayer) sr.state.projectiles.splice(i, 1);
+    }
     me.rotY = Math.atan2(sh.x - me.x, sh.z - me.z); // face the shooter
     me.blocking = true;
     const hpAtBlock = me.hp;
