@@ -143,3 +143,9 @@ deletes forget them.
 - FR-UX-01 settings strip (93a1257): fxSettings pure module; FX gating is a
   client-only projection via spawnBurst wrap + shakeScale — no sim/schema
   overlap. Gate 252 pass / 0 fail, smoke 8/8. Compose-clean.
+- E2E HUD asserts (d3dab63) + CI stability note: real-browser pins added for
+  all four Session-D surfaces with mutation red-proof. Two CI flakes observed
+  same day (postgres raw-storage contract run 32645328357; waves integration
+  run 32646121821), both GREEN on --failed rerun with identical trees —
+  consistent with the residual contention class R43 documented; no code
+  action taken. Compose-clean.
