@@ -52,3 +52,27 @@ test('AC2 chooser: image copy when ClipboardItem exists but no file share', () =
 test('AC2 chooser: text fallback when neither capability exists', () => {
   assert.equal(chooseShareMode({ canShareFiles: false, clipboardImage: false }), 'text');
 });
+
+test('FR-GAME-03/RET-03 regression: max-width cards keep every row inside the canvas and clear of the footer', () => {
+  // Worst realistic cards after the Kills + Time rows shipped:
+  const waves = layoutShareCard(buildShareCard({
+    mode: 'waves', victory: true, wave: 12, score: 9999, kills: 87, timeSec: 754, name: 'Ash',
+  })); // 6 rows
+  const weekly = layoutShareCard(buildShareCard({
+    mode: 'weekly', victory: false, wave: 12, score: 9999, kills: 87, timeSec: 754,
+    objectivesDone: 3, objectivesTotal: 4, name: 'Ash',
+  })); // 7 rows
+  const footerTop = waves.h - 32 - 16; // footer baseline minus its size
+  for (const [label, L] of [['waves', waves], ['weekly', weekly]]) {
+    assert.ok(L.rows.length >= 6, `${label} card has ${L.rows.length} rows`);
+    for (const row of L.rows) {
+      assert.ok(row.y < L.h, `${label} row "${row.label}" baseline ${row.y} off-canvas`);
+      assert.ok(row.y <= 382,
+        `${label} row "${row.label}" baseline ${row.y} collides with footer glyphs (~${footerTop})`);
+    }
+    // monotone spacing preserved when compressed
+    for (let i = 1; i < L.rows.length; i++) {
+      assert.ok(L.rows[i].y > L.rows[i - 1].y, `${label} rows must stay strictly descending in y`);
+    }
+  }
+});

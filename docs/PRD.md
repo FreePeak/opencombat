@@ -350,3 +350,13 @@ device should lose when it asks for reduced fx.
   228k tris / 2 lights); absolute low fps there is software-raster overhead,
   not client cost — real-GPU players unaffected.
 Full gate green.
+
+## Share-card row overflow fix (cycle 26l)
+Cycles 8/10 added Kills + Time lines but layoutShareCard kept a fixed 44px
+step — the real waves card (6 rows) drew its last baseline at y=400, grazing
+the footer glyphs (~402), and a weekly max-width card (7 rows) drew at y=444,
+off-canvas. All prior pins used <=5-row cards and missed it.
+- Fix: LAYOUT.maxLastRowY=382; step = min(44, (382-180)/(n-1)) — only >5-row
+  cards compress; <=5-row layouts stay byte-identical.
+AC pinned red-first in shareCardImage.test.mjs (6+7-row cards: every baseline
+on-canvas, <=382, strictly descending). Full gate green.

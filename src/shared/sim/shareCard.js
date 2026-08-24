@@ -68,7 +68,7 @@ const LAYOUT = {
   w: 800, h: 450,
   bg: '#0b0e14', accent: '#4466aa', text: '#cfd8ea', dim: '#8a93a6',
   titleY: 96, titleSize: 34,
-  firstRowY: 180, rowStep: 44,
+  firstRowY: 180, rowStep: 44, maxLastRowY: 382,
   labelX: 48, valueX: 240, rowSize: 24, labelSize: 18,
   footerSize: 16,
 };
@@ -82,6 +82,13 @@ const LAYOUT = {
  */
 export function layoutShareCard(card) {
   const c = card ?? { headline: '', stats: [] };
+  // Row band [firstRowY .. maxLastRowY]: wide cards (Kills + Time shipped)
+  // compress the step so the last baseline stays clear of the footer glyphs;
+  // <=5-row cards keep the original fixed step byte-for-byte.
+  const n = (c.stats ?? []).length;
+  const step = n > 1
+    ? Math.min(LAYOUT.rowStep, (LAYOUT.maxLastRowY - LAYOUT.firstRowY) / (n - 1))
+    : LAYOUT.rowStep;
   return {
     w: LAYOUT.w, h: LAYOUT.h,
     bg: LAYOUT.bg, accent: LAYOUT.accent, text: LAYOUT.text, dim: LAYOUT.dim,
@@ -89,7 +96,7 @@ export function layoutShareCard(card) {
     rows: (c.stats ?? []).map((s, i) => ({
       label: s.label, value: s.value,
       labelX: LAYOUT.labelX, valueX: LAYOUT.valueX,
-      y: LAYOUT.firstRowY + i * LAYOUT.rowStep,
+      y: LAYOUT.firstRowY + i * step,
       size: LAYOUT.rowSize,
     })),
     footer: {
