@@ -173,3 +173,6 @@ deletes forget them.
   test-harness only. Gate 264 pass / 0 fail. Compose-clean.
 - Shadows toggle (972a43b): pure flag + renderer toggle only — no sim
   surface. Gate 264 pass / 0 fail. Compose-clean.
+- Share-card row overflow (bc8cb07): layout-only fix inside the pure
+  layoutShareCard — renderer untouched. Gate 265 pass / 0 fail.
+  Compose-clean.
