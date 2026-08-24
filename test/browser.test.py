@@ -364,6 +364,24 @@ def assert_hud_feedback(page, label):
     assert probe["vol"] is not None, f"[{label}] volume slider missing: {probe}"
 
 
+def assert_share_pipeline(page, label):
+    """Share card (PRD-share-card.md): the pure pipeline must import and
+    layout correctly inside the REAL page — guards the served module graph
+    and pins widest-card bounds (7-row weekly) in a browser, not just node."""
+    probe = page.evaluate("""async () => {
+        const m = await import('/src/shared/sim/shareCard.js');
+        const L = m.layoutShareCard(m.buildShareCard({
+            mode: 'weekly', victory: false, wave: 12, score: 9999,
+            kills: 87, timeSec: 754, objectivesDone: 3, objectivesTotal: 4,
+            name: 'Ash',
+        }));
+        return { n: L.rows.length, ys: L.rows.map((r) => r.y), h: L.h };
+    }""")
+    assert probe["n"] == 7, f"[{label}] widest card must layout 7 rows: {probe}"
+    assert all(0 < y < probe["h"] and y <= 382 for y in probe["ys"]), \
+        f"[{label}] share rows out of bounds in real page: {probe}"
+
+
 def flow_waves(browser):
     """Original smoke: default waves mode joins the 'game' room and plays."""
     errors, console = [], []
@@ -394,6 +412,7 @@ def flow_waves(browser):
     assert_pickups(page, "waves")
     assert_bloom(page, "waves")
     assert_hud_feedback(page, "waves")
+    assert_share_pipeline(page, "waves")
 
     page.close()
     bones_ok = bool(bones) and bones["total"] > 0 and bones["inClone"] == bones["total"]
